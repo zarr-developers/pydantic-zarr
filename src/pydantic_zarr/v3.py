@@ -1,42 +1,37 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import (
     Any,
-    Dict,
     Generic,
-    List,
     Literal,
-    Mapping,
-    Sequence,
-    Tuple,
     TypeVar,
     Union,
     cast,
     overload,
 )
-from zarr.storage import BaseStore
-import zarr
+
 import numpy.typing as npt
+import zarr
+from zarr.storage import BaseStore
 
 from pydantic_zarr.core import StrictBase
 from pydantic_zarr.v2 import DtypeStr
 
-TAttr = TypeVar("TAttr", bound=Dict[str, Any])
+TAttr = TypeVar("TAttr", bound=dict[str, Any])
 TItem = TypeVar("TItem", bound=Union["GroupSpec", "ArraySpec"])
 
-NodeType = Union[Literal["group"], Literal["array"]]
+NodeType = Literal["group", "array"]
 
 # todo: introduce a type that represents hexadecimal representations of floats
 FillValue = Union[
+    Literal["Infinity", "-Infinity", "NaN"],
     bool,
     int,
     float,
-    Literal["Infinity"],
-    Literal["-Infinity"],
-    Literal["NaN"],
     str,
-    Tuple[float, float],
-    Tuple[int, ...],
+    tuple[float, float],
+    tuple[int, ...],
 ]
 
 
@@ -46,7 +41,7 @@ class NamedConfig(StrictBase):
 
 
 class RegularChunkingConfig(StrictBase):
-    chunk_shape: List[int]
+    chunk_shape: list[int]
 
 
 class RegularChunking(NamedConfig):
@@ -164,9 +159,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         """
         raise NotImplementedError
 
-    def to_zarr(
-        self, store: BaseStore, path: str, overwrite: bool = False
-    ) -> zarr.Array:
+    def to_zarr(self, store: BaseStore, path: str, overwrite: bool = False) -> zarr.Array:
         """
         Serialize an ArraySpec to a zarr array at a specific path in a zarr store.
 
@@ -253,16 +246,14 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
 
 
 @overload
-def from_zarr(element: zarr.Array) -> ArraySpec:
-    ...
+def from_zarr(element: zarr.Array) -> ArraySpec: ...
 
 
 @overload
-def from_zarr(element: zarr.Group) -> GroupSpec:
-    ...
+def from_zarr(element: zarr.Group) -> GroupSpec: ...
 
 
-def from_zarr(element: Union[zarr.Array, zarr.Group]) -> Union[ArraySpec, GroupSpec]:
+def from_zarr(element: zarr.Array | zarr.Group) -> ArraySpec | GroupSpec:
     """
     Recursively parse a Zarr group or Zarr array into an ArraySpec or GroupSpec.
 
@@ -285,8 +276,7 @@ def to_zarr(
     store: BaseStore,
     path: str,
     overwrite: bool = False,
-) -> zarr.Array:
-    ...
+) -> zarr.Array: ...
 
 
 @overload
@@ -295,16 +285,15 @@ def to_zarr(
     store: BaseStore,
     path: str,
     overwrite: bool = False,
-) -> zarr.Group:
-    ...
+) -> zarr.Group: ...
 
 
 def to_zarr(
-    spec: Union[ArraySpec, GroupSpec],
+    spec: ArraySpec | GroupSpec,
     store: BaseStore,
     path: str,
     overwrite: bool = False,
-) -> Union[zarr.Array, zarr.Group]:
+) -> zarr.Array | zarr.Group:
     """
     Serialize a GroupSpec or ArraySpec to a zarr group or array at a specific path in
     a zarr store.
@@ -328,9 +317,7 @@ def to_zarr(
     This operation will create metadata documents in the store.
 
     """
-    if isinstance(spec, ArraySpec):
-        result = spec.to_zarr(store, path, overwrite=overwrite)
-    elif isinstance(spec, GroupSpec):
+    if isinstance(spec, ArraySpec) or isinstance(spec, GroupSpec):
         result = spec.to_zarr(store, path, overwrite=overwrite)
     else:
         msg = ("Invalid argument for spec. Expected an instance of GroupSpec or ",)

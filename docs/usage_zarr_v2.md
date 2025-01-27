@@ -107,7 +107,7 @@ instances, then providing those objects as `members` to the constructor of anoth
 other words, with this approach we create "child nodes" and give those nodes to the "parent node",
 recursively.
 
-Constructing deeply nested hierarchies this way can be tedious. 
+Constructing deeply nested hierarchies this way can be tedious.
 For this reason, `pydantic-zarr` supports an alternative representation of the Zarr
 hierarchy in the form of a dictionary with `str` keys and `ArraySpec` / `GroupSpec` values, and
 methods to convert to / from these dictionaries.
@@ -118,11 +118,11 @@ This example demonstrates how to create a `GroupSpec` from a `dict` representati
 
 ```python
 from pydantic_zarr.v2 import GroupSpec, ArraySpec
-# other than the key representing the root path "", 
+# other than the key representing the root path "",
 # the keys must be valid paths in the Zarr storage hierarchy
 # note that the `members` attribute is `None` for the `GroupSpec` instances in this `dict`.
 tree = {
-    "": GroupSpec(members=None, attributes={"root": True}), 
+    "": GroupSpec(members=None, attributes={"root": True}),
     "/a": GroupSpec(members=None, attributes={"root": False}),
     "/a/b": ArraySpec(shape=(10,10), dtype="uint8", chunks=(1,1))
     }
@@ -158,12 +158,12 @@ print(GroupSpec.from_flat(tree).model_dump())
 
 #### flattening `GroupSpec` objects
 
-This is similar to the example above, except that we are working in reverse -- we are making the 
+This is similar to the example above, except that we are working in reverse -- we are making the
 flat `dict` from the `GroupSpec` object.
 
 ```python
 from pydantic_zarr.v2 import GroupSpec, ArraySpec
-# other than the key representing the root path "", 
+# other than the key representing the root path "",
 # the keys must be valid paths in the Zarr storage hierarchy
 # note that the `members` attribute is `None` for the `GroupSpec` instances in this `dict`.
 
@@ -193,9 +193,9 @@ print(root.to_flat())
 ```
 
 #### Implicit groups
-`zarr-python` supports creating Zarr arrays or groups deep in the 
-hierarchy without explicitly creating the intermediate groups first. 
-`from_flat` models this behavior. For example, `{'/a/b/c': ArraySpec(...)}` implicitly defines the existence of a groups named `a` and `b` (which is contained in `a`). `from_flat` will create the expected `GroupSpec` object from such `dict` instances. 
+`zarr-python` supports creating Zarr arrays or groups deep in the
+hierarchy without explicitly creating the intermediate groups first.
+`from_flat` models this behavior. For example, `{'/a/b/c': ArraySpec(...)}` implicitly defines the existence of a groups named `a` and `b` (which is contained in `a`). `from_flat` will create the expected `GroupSpec` object from such `dict` instances.
 
 ```python
 from pydantic_zarr.v2 import GroupSpec, ArraySpec
@@ -237,7 +237,7 @@ print(GroupSpec.from_flat(tree).model_dump())
 
 ## Comparing `GroupSpec` and `ArraySpec` models
 
-`GroupSpec` and `ArraySpec` both have `like` methods that take another `GroupSpec` or `ArraySpec` as an argument and return `True` (the models are like each other) or `False` (the models are not like each other). 
+`GroupSpec` and `ArraySpec` both have `like` methods that take another `GroupSpec` or `ArraySpec` as an argument and return `True` (the models are like each other) or `False` (the models are not like each other).
 
 The `like` method works by converting both input models to `dict` via `pydantic.BaseModel.model_dump`, and comparing the `dict` representation of the models. This means that instances of two different subclasses of `GroupSpec`, which would not be considered equal according to the `==` operator, will be considered `like` if and only if they serialize to identical `dict` instances.
 
@@ -251,7 +251,7 @@ arr_a = ArraySpec(shape=(1,), dtype='uint8', chunks=(1,))
 arr_b = ArraySpec(shape=(2,), dtype='uint8', chunks=(1,))
 
 # Returns False, because of mismatched shape
-print(arr_a.like(arr_b)) 
+print(arr_a.like(arr_b))
 #> False
 
 # Returns True, because we exclude shape.
@@ -264,11 +264,11 @@ store = zarr.MemoryStore()
 arr_a_stored = arr_a.to_zarr(store, path='arr_a')
 
 # arr_a is like the zarr.Array version of itself
-print(arr_a.like(arr_a_stored)) 
+print(arr_a.like(arr_a_stored))
 #> True
 
 # Returns False, because of mismatched shape
-print(arr_b.like(arr_a_stored)) 
+print(arr_b.like(arr_a_stored))
 #> False
 
 # Returns True, because we exclude shape.
@@ -284,7 +284,7 @@ print(g_a.like(g_a))
 #> True
 
 # Returns False, because of mismatched attributes
-print(g_a.like(g_b)) 
+print(g_a.like(g_b))
 #> False
 
 # Returns True, because we ignore attributes
@@ -335,7 +335,7 @@ print(SpecificAttrsGroup(attributes={'a': 100, 'b': 100}))
 #> zarr_version=2 attributes={'a': 100, 'b': 100} members={}
 
 # a Zarr group that only contains arrays -- no subgroups!
-# we re-use the TAttr type variable defined in pydantic_zarr.core
+# we reuse the TAttr type variable defined in pydantic_zarr.core
 ArraysOnlyGroup = GroupSpec[TAttr, ArraySpec]
 
 try:

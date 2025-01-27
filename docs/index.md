@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/pydantic-zarr)](https://pypi.python.org/pypi/pydantic-zarr)
 
-Static typing and runtime validation for Zarr hierachies.
+Static typing and runtime validation for Zarr hierarchies.
 
 ## Overview
 
