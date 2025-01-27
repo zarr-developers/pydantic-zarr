@@ -56,7 +56,7 @@ jobs:
         pip install hatch
     - name: Run Tests
       run: |
-        hatch env run --env test.py${{ matrix.python-version }} run-coverage
+        hatch run test.py${{ matrix.python-version }}:test-cov
     - name: Upload coverage
       uses: codecov/codecov-action@v5
       with:
