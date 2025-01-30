@@ -14,7 +14,7 @@ This project is under flux -- I want to add [zarr version 3](https://zarr-specs.
 ## Getting help
 
 - Docs: see the [documentation](https://zarr.dev/pydantic-zarr/) for detailed information about this project.
-- Chat: We use [Zulip](https://ossci.zulipchat.com/#narrow/channel/423692-Zarr) for project-related chat. 
+- Chat: We use [Zulip](https://ossci.zulipchat.com/#narrow/channel/423692-Zarr) for project-related chat.
 
 ## Example
 

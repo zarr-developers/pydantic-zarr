@@ -1,30 +1,208 @@
-[tool.poetry]
-name = "pydantic-zarr"
-version = "0.7.0"
-description = "pydantic models for zarr"
-authors = ["Davis Vann Bennett <davis.v.bennett@gmail.com>"]
-readme = "README.md"
-packages = [{include = "pydantic_zarr", from = "src"}]
-
-[tool.poetry.dependencies]
-python = "^3.9"
-zarr = "^2.14.2"
-pydantic = "^2.0.0"
-typing-extensions = {version = "^4.7.1", python = "<3.12"}
-eval-type-backport = "^0.1.3"
-
-[tool.poetry.group.dev.dependencies]
-pytest = "^7.3.1"
-pytest-cov = "^4.1.0"
-mypy = "^1.3.0"
-pre-commit = "^3.3.3"
-
-[tool.poetry.group.docs.dependencies]
-mkdocs = "^1.4.3"
-mkdocs-material = "^9.1.18"
-mkdocstrings = {extras = ["python"], version = "^0.22.0"}
-pytest-examples = "^0.0.9"
-
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pydantic-zarr"
+dynamic = ["version"]
+description = 'Pydantic models for the Zarr file format'
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.11"
+license = "MIT"
+keywords = ["zarr", "pydantic"]
+authors = [
+  { name = "Davis Bennett", email = "davis.v.bennett@gmail.com" },
+]
+maintainers = [
+    { name = "David Stansby"}
+    ]
+
+classifiers = [
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: Implementation :: CPython",
+]
+dependencies = [
+    "zarr<3",
+    "pydantic>2.0.0"
+    ]
+
+[project.urls]
+Documentation = "https://zarr.dev/pydantic-zarr/"
+Issues = "https://github.com/zarr-developers/pydantic-zarr/issues"
+Source = "https://github.com/zarr-developers/pydantic-zarr"
+
+[project.optional-dependencies]
+test = [
+    "coverage",
+    "pytest",
+    "pytest-cov",
+    "pytest-examples",
+    ]
+
+docs = [
+    "mkdocs-material",
+    "mkdocstrings[python]",
+    "pytest-examples",
+    "pydantic==2.6"
+    ]
+
+[tool.hatch]
+version.source = "vcs"
+build.hooks.vcs.version-file = "src/pydantic_zarr/_version.py"
+
+[tool.hatch.envs.test]
+features = ["test"]
+
+[tool.hatch.envs.test.scripts]
+test = "pytest tests/test_pydantic_zarr/"
+test-cov = "pytest --cov-config=pyproject.toml --cov=pkg --cov-report html --cov=src tests/test_pydantic_zarr"
+
+[[tool.hatch.envs.test.matrix]]
+python = ["3.11", "3.12", "3.13"]
+
+[tool.hatch.envs.docs]
+features = ['docs']
+
+[tool.hatch.envs.docs.scripts]
+build = "mkdocs build --clean --strict"
+serve = "mkdocs serve --watch src"
+deploy = "mkdocs gh-deploy"
+test = "pytest tests/test_docs"
+
+[tool.hatch.envs.types]
+extra-dependencies = [
+  "mypy>=1.0.0",
+  "pydantic"
+]
+[tool.hatch.envs.types.scripts]
+check = "mypy --install-types --non-interactive {args:src/pydantic_zarr tests}"
+
+[tool.coverage.run]
+source_pkgs = ["pydantic_zarr", "tests"]
+branch = true
+parallel = true
+omit = [
+  "src/pydantic_zarr/__about__.py",
+]
+
+[tool.coverage.paths]
+pydantic_zarr = ["src/pydantic_zarr", "*/pydantic-zarr/src/pydantic_zarr"]
+tests = ["tests", "*/pydantic-zarr/tests"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "no cov",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+]
+
+[tool.ruff]
+line-length = 100
+force-exclude = true
+extend-exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".ruff_cache",
+    ".venv",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "venv",
+    "docs",
+]
+
+[tool.ruff.lint]
+extend-select = [
+    "ANN",  # flake8-annotations
+    "B",    # flake8-bugbear
+    "EXE",  # flake8-executable
+    "C4",   # flake8-comprehensions
+    "FA",   # flake8-future-annotations
+    "FLY",  # flynt
+    "FURB", # refurb
+    "G",    # flake8-logging-format
+    "I",    # isort
+    "ISC",  # flake8-implicit-str-concat
+    "LOG",  # flake8-logging
+    "PERF", # Perflint
+    "PIE",  # flake8-pie
+    "PGH",  # pygrep-hooks
+    "PT",   # flake8-pytest-style
+    "PYI",  # flake8-pyi
+    "RET",  # flake8-return
+    "RSE",  # flake8-raise
+    "RUF",
+    "SIM",  # flake8-simplify
+    "SLOT", # flake8-slots
+    "TCH",  # flake8-type-checking
+    "TRY",  # tryceratops
+    "UP",   # pyupgrade
+    "W",    # pycodestyle warnings
+]
+ignore = [
+    "ANN401",
+    "PT011",  # TODO: apply this rule
+    "PT012",  # TODO: apply this rule
+    "RET505",
+    "RET506",
+    "RUF005",
+    "SIM108",
+    "TRY003",
+    "UP038",  # https://github.com/astral-sh/ruff/issues/7871
+    # https://docs.astral.sh/ruff/formatter/#conflicting-lint-rules
+    "W191",
+    "E111",
+    "E114",
+    "E117",
+    "D206",
+    "D300",
+    "Q000",
+    "Q001",
+    "Q002",
+    "Q003",
+    "COM812",
+    "COM819",
+]
+
+[tool.ruff.lint.extend-per-file-ignores]
+"tests/**" = ["ANN001", "ANN201", "RUF029", "SIM117", "SIM300"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+namespace_packages = false
+strict = true
+warn_unreachable = true
+plugins = "pydantic.mypy"
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+
+[tool.pytest.ini_options]
+minversion = "7"
+xfail_strict = true
+testpaths = ["tests"]
+log_cli_level = "INFO"
+addopts = [
+    "--durations=10", "-ra", "--strict-config", "--strict-markers",
+]
+filterwarnings = [
+    "error"
+]
+
+[tool.repo-review]
+ignore = [
+	"PC111",  # black formatting for docs, not sure if want,
+    "PC180",  # markdown formatter, no thanks
+    "RTD100", # read the docs, no thanks,
+    "RTD101", # read the docs, no thanks
+    "RTD102", # read the docs, no thanks,
+    "RTD103", # read the docs, no thanks
+]

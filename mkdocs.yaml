@@ -13,11 +13,11 @@ copyright: Copyright &copy; 2016 - 2024 HHMI / Janelia
 
 theme:
   name: material
-  palette: 
+  palette:
   # Palette toggle for light mode
   - scheme: default
     toggle:
-      icon: material/brightness-7 
+      icon: material/brightness-7
       name: Switch to dark mode
 
   # Palette toggle for dark mode

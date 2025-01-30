@@ -1,15 +1,24 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING, Any, Union
-from pydantic import ValidationError
+
 import pytest
 import zarr
-from zarr.errors import ContainsGroupError, ContainsArrayError
+from pydantic import ValidationError
+from zarr.errors import ContainsArrayError, ContainsGroupError
 
 if TYPE_CHECKING:
-    from typing import Literal, Optional
+    from typing import Literal
+
+import sys
+from dataclasses import dataclass
 
 import numcodecs
+import numpy as np
+import numpy.typing as npt
+from numcodecs import GZip
 from numcodecs.abc import Codec
+
 from pydantic_zarr.v2 import (
     ArraySpec,
     GroupSpec,
@@ -20,16 +29,11 @@ from pydantic_zarr.v2 import (
     auto_fill_value,
     auto_filters,
     auto_order,
+    from_flat,
+    from_zarr,
     to_flat,
     to_zarr,
-    from_zarr,
-    from_flat,
 )
-from dataclasses import dataclass
-import numpy as np
-import numpy.typing as npt
-import sys
-from numcodecs import GZip
 
 if sys.version_info < (3, 12):
     from typing_extensions import TypedDict
@@ -50,11 +54,11 @@ def test_array_spec(
     order: str,
     dtype: str,
     dimension_separator: str,
-    compressor: Optional[Codec],
-    filters: Optional[tuple[str, ...]],
+    compressor: Codec | None,
+    filters: tuple[str, ...] | None,
 ):
     store = zarr.MemoryStore()
-    _filters: Optional[list[Codec]]
+    _filters: list[Codec] | None
     if filters is not None:
         _filters = []
         for filter in filters:
@@ -143,14 +147,8 @@ def test_array_spec(
     # test that mode and write_empty_chunks get passed through
     assert spec_2.to_zarr(store, path="foo", mode="a").read_only is False
     assert spec_2.to_zarr(store, path="foo", mode="r").read_only is True
-    assert (
-        spec_2.to_zarr(store, path="foo", write_empty_chunks=False)._write_empty_chunks
-        is False
-    )
-    assert (
-        spec_2.to_zarr(store, path="foo", write_empty_chunks=True)._write_empty_chunks
-        is True
-    )
+    assert spec_2.to_zarr(store, path="foo", write_empty_chunks=False)._write_empty_chunks is False
+    assert spec_2.to_zarr(store, path="foo", write_empty_chunks=True)._write_empty_chunks is True
 
 
 @dataclass
@@ -170,13 +168,11 @@ class WithChunksize:
 
 
 @dataclass
-class FakeDaskArray(FakeArray, WithChunksize):
-    ...
+class FakeDaskArray(FakeArray, WithChunksize): ...
 
 
 @dataclass
-class FakeXarray(FakeDaskArray, WithAttrs):
-    ...
+class FakeXarray(FakeDaskArray, WithAttrs): ...
 
 
 @pytest.mark.parametrize(
@@ -185,9 +181,7 @@ class FakeXarray(FakeDaskArray, WithAttrs):
         np.zeros((100), dtype="uint8"),
         FakeArray(shape=(11,), dtype=np.dtype("float64")),
         FakeDaskArray(shape=(22,), dtype=np.dtype("uint8"), chunksize=(11,)),
-        FakeXarray(
-            shape=(22,), dtype=np.dtype("uint8"), chunksize=(11,), attrs={"foo": "bar"}
-        ),
+        FakeXarray(shape=(22,), dtype=np.dtype("uint8"), chunksize=(11,), attrs={"foo": "bar"}),
     ),
 )
 @pytest.mark.parametrize("chunks", ("omit", "auto", (10,)))
@@ -271,9 +265,7 @@ def test_array_spec_from_array(
 @pytest.mark.parametrize("order", ("C", "F"))
 @pytest.mark.parametrize("dtype", ("bool", "uint8", np.dtype("uint8"), "float64"))
 @pytest.mark.parametrize("dimension_separator", (".", "/"))
-@pytest.mark.parametrize(
-    "compressor", (numcodecs.LZMA().get_config(), numcodecs.GZip())
-)
+@pytest.mark.parametrize("compressor", (numcodecs.LZMA().get_config(), numcodecs.GZip()))
 @pytest.mark.parametrize(
     "filters", (None, ("delta",), ("scale_offset",), ("delta", "scale_offset"))
 )
@@ -283,9 +275,9 @@ def test_serialize_deserialize_groupspec(
     dtype: str,
     dimension_separator: Literal[".", "/"],
     compressor: Any,
-    filters: Optional[tuple[str, ...]],
+    filters: tuple[str, ...] | None,
 ):
-    _filters: Optional[list[Codec]]
+    _filters: list[Codec] | None
     if filters is not None:
         _filters = []
         for filter in filters:
@@ -374,7 +366,7 @@ def test_shape_chunks():
     """
     Test that the length of the chunks and the shape match
     """
-    for a, b in zip(range(1, 5), range(2, 6)):
+    for a, b in zip(range(1, 5), range(2, 6), strict=False):
         with pytest.raises(ValidationError):
             ArraySpec(shape=(1,) * a, chunks=(1,) * b, dtype="uint8", attributes={})
         with pytest.raises(ValidationError):
@@ -494,9 +486,7 @@ def test_member_name(data: str):
         (
             GroupSpec(
                 attributes={"foo": 10},
-                members={
-                    "a": ArraySpec.from_array(np.arange(5), attributes={"foo": 100})
-                },
+                members={"a": ArraySpec.from_array(np.arange(5), attributes={"foo": 100})},
             ),
             {
                 "": GroupSpec(attributes={"foo": 10}, members=None),
@@ -509,11 +499,7 @@ def test_member_name(data: str):
                 members={
                     "a": GroupSpec(
                         attributes={"foo": 10},
-                        members={
-                            "a": ArraySpec.from_array(
-                                np.arange(5), attributes={"foo": 100}
-                            )
-                        },
+                        members={"a": ArraySpec.from_array(np.arange(5), attributes={"foo": 100})},
                     ),
                     "b": ArraySpec.from_array(np.arange(2), attributes={"foo": 3}),
                 },
@@ -560,12 +546,8 @@ def test_group_like() -> None:
     group = GroupSpec.from_flat(tree)
     assert group.like(group)
     assert not group.like(group.model_copy(update={"attributes": None}))
-    assert group.like(
-        group.model_copy(update={"attributes": None}), exclude={"attributes"}
-    )
-    assert group.like(
-        group.model_copy(update={"attributes": None}), include={"members"}
-    )
+    assert group.like(group.model_copy(update={"attributes": None}), exclude={"attributes"})
+    assert group.like(group.model_copy(update={"attributes": None}), include={"members"})
 
 
 # todo: parametrize
@@ -575,9 +557,7 @@ def test_from_zarr_depth():
         "/1": GroupSpec(members=None, attributes={"level": 1, "type": "group"}),
         "/1/2": GroupSpec(members=None, attributes={"level": 2, "type": "group"}),
         "/1/2/1": GroupSpec(members=None, attributes={"level": 3, "type": "group"}),
-        "/1/2/2": ArraySpec.from_array(
-            np.arange(20), attributes={"level": 3, "type": "array"}
-        ),
+        "/1/2/2": ArraySpec.from_array(np.arange(20), attributes={"level": 3, "type": "array"}),
     }
 
     store = zarr.MemoryStore()
