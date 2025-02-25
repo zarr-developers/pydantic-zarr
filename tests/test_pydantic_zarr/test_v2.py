@@ -1,23 +1,24 @@
+"""
+Testts for pydantic_zarr.v2.
+"""
+
 from __future__ import annotations
-
-from typing import TYPE_CHECKING, Any, Union
-
-import pytest
-import zarr
-from pydantic import ValidationError
-from zarr.errors import ContainsArrayError, ContainsGroupError
-
-if TYPE_CHECKING:
-    from typing import Literal
 
 import sys
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from numcodecs.abc import Codec
 
 import numcodecs
 import numpy as np
 import numpy.typing as npt
+import pytest
+import zarr
 from numcodecs import GZip
-from numcodecs.abc import Codec
+from pydantic import ValidationError
+from zarr.errors import ContainsArrayError, ContainsGroupError
 
 from pydantic_zarr.v2 import (
     ArraySpec,
@@ -40,23 +41,50 @@ if sys.version_info < (3, 12):
 else:
     from typing import TypedDict
 
+ArrayMemoryOrder = Literal["C", "F"]
+DimensionSeparator = Literal[".", "/"]
 
-@pytest.mark.parametrize("chunks", ((1,), (1, 2), ((1, 2, 3))))
-@pytest.mark.parametrize("order", ("C", "F"))
-@pytest.mark.parametrize("dtype", ("bool", "uint8", "float64"))
-@pytest.mark.parametrize("dimension_separator", (".", "/"))
-@pytest.mark.parametrize("compressor", (None, numcodecs.LZMA(), numcodecs.GZip()))
+
+@pytest.fixture(params=("C", "F"), ids=["C", "F"])
+def memory_order(request: pytest.FixtureRequest) -> ArrayMemoryOrder:
+    """
+    Fixture that returns either "C" or "F"
+    """
+    if request.param == "C":
+        return "C"
+    elif request.param == "F":
+        return "F"
+    msg = f"Invalid array memory order requested. Got {request.param}, expected one of (C, F)."
+    raise ValueError(msg)
+
+
+@pytest.fixture(params=("/", "."), ids=["/", "."])
+def dimension_separator(request: pytest.FixtureRequest) -> DimensionSeparator:
+    """
+    Fixture that returns either "." or "/"
+    """
+    if request.param == ".":
+        return "."
+    elif request.param == "/":
+        return "/"
+    msg = f"Invalid dimension separator requested. Got {request.param}, expected one of (., /)."
+    raise ValueError(msg)
+
+
+@pytest.mark.parametrize("chunks", [(1,), (1, 2), ((1, 2, 3))])
+@pytest.mark.parametrize("dtype", ["bool", "uint8", "float64"])
+@pytest.mark.parametrize("compressor", [None, numcodecs.LZMA(), numcodecs.GZip()])
 @pytest.mark.parametrize(
-    "filters", (None, ("delta",), ("scale_offset",), ("delta", "scale_offset"))
+    "filters", [(None,), ("delta",), ("scale_offset",), ("delta", "scale_offset")]
 )
 def test_array_spec(
     chunks: tuple[int, ...],
-    order: str,
+    memory_order: ArrayMemoryOrder,
     dtype: str,
-    dimension_separator: str,
+    dimension_separator: DimensionSeparator,
     compressor: Codec | None,
     filters: tuple[str, ...] | None,
-):
+) -> None:
     store = zarr.MemoryStore()
     _filters: list[Codec] | None
     if filters is not None:
@@ -75,7 +103,7 @@ def test_array_spec(
         store=store,
         chunks=chunks,
         dtype=dtype,
-        order=order,
+        order=memory_order,
         dimension_separator=dimension_separator,
         compressor=compressor,
         filters=_filters,
@@ -154,7 +182,7 @@ def test_array_spec(
 @dataclass
 class FakeArray:
     shape: tuple[int, ...]
-    dtype: tuple[int, ...]
+    dtype: np.dtype[Any]
 
 
 @dataclass
@@ -177,33 +205,33 @@ class FakeXarray(FakeDaskArray, WithAttrs): ...
 
 @pytest.mark.parametrize(
     "array",
-    (
+    [
         np.zeros((100), dtype="uint8"),
         FakeArray(shape=(11,), dtype=np.dtype("float64")),
         FakeDaskArray(shape=(22,), dtype=np.dtype("uint8"), chunksize=(11,)),
         FakeXarray(shape=(22,), dtype=np.dtype("uint8"), chunksize=(11,), attrs={"foo": "bar"}),
-    ),
+    ],
 )
-@pytest.mark.parametrize("chunks", ("omit", "auto", (10,)))
-@pytest.mark.parametrize("attributes", ("omit", "auto", {"foo": 10}))
-@pytest.mark.parametrize("fill_value", ("omit", "auto", 15))
-@pytest.mark.parametrize("order", ("omit", "auto", "F"))
-@pytest.mark.parametrize("filters", ("omit", "auto", []))
-@pytest.mark.parametrize("dimension_separator", ("omit", "auto", "."))
-@pytest.mark.parametrize("compressor", ("omit", "auto", GZip().get_config()))
+@pytest.mark.parametrize("chunks", ["omit", "auto", (10,)])
+@pytest.mark.parametrize("attributes", ["omit", "auto", {"foo": 10}])
+@pytest.mark.parametrize("fill_value", ["omit", "auto", 15])
+@pytest.mark.parametrize("order", ["omit", "auto", "F"])
+@pytest.mark.parametrize("filters", ["omit", "auto", []])
+@pytest.mark.parametrize("dimension_separator", ["omit", "auto", "."])
+@pytest.mark.parametrize("compressor", ["omit", "auto", GZip().get_config()])
 def test_array_spec_from_array(
     *,
     array: npt.NDArray[Any],
-    chunks,
-    attributes,
-    fill_value,
-    order,
-    filters,
-    dimension_separator,
-    compressor,
-):
+    chunks: str | tuple[int, ...],
+    attributes: str | dict[str, object],
+    fill_value: object,
+    order: str,
+    filters: str | list[Codec],
+    dimension_separator: str,
+    compressor: str | dict[str, object],
+) -> None:
     auto_options = ("omit", "auto")
-    kwargs_out = {}
+    kwargs_out: dict[str, object] = {}
 
     kwargs_out["chunks"] = chunks
     kwargs_out["attributes"] = attributes
@@ -231,7 +259,7 @@ def test_array_spec_from_array(
         assert spec.chunks == chunks
 
     if attributes in auto_options:
-        spec.attributes == auto_attributes(array)
+        assert spec.attributes == auto_attributes(array)
     else:
         assert spec.attributes == attributes
 
@@ -261,22 +289,21 @@ def test_array_spec_from_array(
         assert spec.compressor == compressor
 
 
-@pytest.mark.parametrize("chunks", ((1,), (1, 2), ((1, 2, 3))))
-@pytest.mark.parametrize("order", ("C", "F"))
-@pytest.mark.parametrize("dtype", ("bool", "uint8", np.dtype("uint8"), "float64"))
-@pytest.mark.parametrize("dimension_separator", (".", "/"))
-@pytest.mark.parametrize("compressor", (numcodecs.LZMA().get_config(), numcodecs.GZip()))
+@pytest.mark.parametrize("chunks", [(1,), (1, 2), ((1, 2, 3))])
+@pytest.mark.parametrize("dtype", ["bool", "uint8", np.dtype("uint8"), "float64"])
+@pytest.mark.parametrize("dimension_separator", [".", "/"])
+@pytest.mark.parametrize("compressor", [numcodecs.LZMA().get_config(), numcodecs.GZip()])
 @pytest.mark.parametrize(
-    "filters", (None, ("delta",), ("scale_offset",), ("delta", "scale_offset"))
+    "filters", [None, ("delta",), ("scale_offset",), ("delta", "scale_offset")]
 )
 def test_serialize_deserialize_groupspec(
     chunks: tuple[int, ...],
-    order: Literal["C", "F"],
+    memory_order: ArrayMemoryOrder,
     dtype: str,
     dimension_separator: Literal[".", "/"],
     compressor: Any,
     filters: tuple[str, ...] | None,
-):
+) -> None:
     _filters: list[Codec] | None
     if filters is not None:
         _filters = []
@@ -303,7 +330,7 @@ def test_serialize_deserialize_groupspec(
 
     store = zarr.MemoryStore()
 
-    spec = GroupSpec[RootAttrs, Union[ArraySpec, SubGroup]](
+    spec = GroupSpec[RootAttrs, ArraySpec | SubGroup](
         attributes=RootAttrs(foo=10, bar=[0, 1, 2]),
         members={
             "s0": ArraySpec[ArrayAttrs](
@@ -312,7 +339,7 @@ def test_serialize_deserialize_groupspec(
                 dtype=dtype,
                 filters=_filters,
                 compressor=compressor,
-                order=order,
+                order=memory_order,
                 dimension_separator=dimension_separator,
                 attributes=ArrayAttrs(scale=[1.0]),
             ),
@@ -322,7 +349,7 @@ def test_serialize_deserialize_groupspec(
                 dtype=dtype,
                 filters=_filters,
                 compressor=compressor,
-                order=order,
+                order=memory_order,
                 dimension_separator=dimension_separator,
                 attributes=ArrayAttrs(scale=[2.0]),
             ),
@@ -362,15 +389,15 @@ def test_serialize_deserialize_groupspec(
     assert observed == spec
 
 
-def test_shape_chunks():
+@pytest.mark.parametrize("base", range(1, 5))
+def test_shape_chunks(base: int) -> None:
     """
     Test that the length of the chunks and the shape match
     """
-    for a, b in zip(range(1, 5), range(2, 6), strict=False):
-        with pytest.raises(ValidationError):
-            ArraySpec(shape=(1,) * a, chunks=(1,) * b, dtype="uint8", attributes={})
-        with pytest.raises(ValidationError):
-            ArraySpec(shape=(1,) * b, chunks=(1,) * a, dtype="uint8", attributes={})
+    with pytest.raises(ValidationError):
+        ArraySpec(shape=(1,) * base, chunks=(1,) * (base + 1), dtype="uint8", attributes={})
+    with pytest.raises(ValidationError):
+        ArraySpec(shape=(1,) * (base + 1), chunks=(1,) * base, dtype="uint8", attributes={})
 
 
 def test_validation() -> None:
@@ -452,9 +479,9 @@ def test_validation() -> None:
         GroupA.from_zarr(groupBMat)
 
 
-@pytest.mark.parametrize("shape", ((1,), (2, 2), (3, 4, 5)))
-@pytest.mark.parametrize("dtype", (None, "uint8", "float32"))
-def test_from_array(shape, dtype):
+@pytest.mark.parametrize("shape", [(1,), (2, 2), (3, 4, 5)])
+@pytest.mark.parametrize("dtype", [None, "uint8", "float32"])
+def test_from_array(shape: tuple[int, ...], dtype: str | None) -> None:
     template = np.zeros(shape=shape, dtype=dtype)
     spec = ArraySpec.from_array(template)
 
@@ -471,13 +498,13 @@ def test_from_array(shape, dtype):
 
 
 @pytest.mark.parametrize("data", ["/", "a/b/c"])
-def test_member_name(data: str):
+def test_member_name(data: str) -> None:
     with pytest.raises(ValidationError, match='Strings containing "/" are invalid.'):
         GroupSpec(attributes={}, members={data: GroupSpec(attributes={}, members={})})
 
 
 @pytest.mark.parametrize(
-    ("data, expected"),
+    ("data", "expected"),
     [
         (
             ArraySpec.from_array(np.arange(10)),
@@ -513,7 +540,9 @@ def test_member_name(data: str):
         ),
     ],
 )
-def test_flatten_unflatten(data, expected) -> None:
+def test_flatten_unflatten(
+    data: ArraySpec | GroupSpec, expected: dict[str, ArraySpec | GroupSpec]
+) -> None:
     flattened = to_flat(data)
     assert flattened == expected
     assert from_flat(flattened) == data
@@ -551,7 +580,7 @@ def test_group_like() -> None:
 
 
 # todo: parametrize
-def test_from_zarr_depth():
+def test_from_zarr_depth() -> None:
     tree = {
         "": GroupSpec(members=None, attributes={"level": 0, "type": "group"}),
         "/1": GroupSpec(members=None, attributes={"level": 1, "type": "group"}),
@@ -567,14 +596,17 @@ def test_from_zarr_depth():
 
     group_in_1 = GroupSpec.from_zarr(group_out, depth=1)
     assert group_in_1.attributes == tree[""].attributes
+    assert group_in_1.members is not None
     assert group_in_1.members["1"] == tree["/1"]
 
     group_in_2 = GroupSpec.from_zarr(group_out, depth=2)
+    assert group_in_2.members is not None
     assert group_in_2.members["1"].members["2"] == tree["/1/2"]
     assert group_in_2.attributes == tree[""].attributes
     assert group_in_2.members["1"].attributes == tree["/1"].attributes
 
     group_in_3 = GroupSpec.from_zarr(group_out, depth=3)
+    assert group_in_3.members is not None
     assert group_in_3.members["1"].members["2"].members["1"] == tree["/1/2/1"]
     assert group_in_3.attributes == tree[""].attributes
     assert group_in_3.members["1"].attributes == tree["/1"].attributes

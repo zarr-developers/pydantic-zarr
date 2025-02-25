@@ -206,3 +206,19 @@ ignore = [
     "RTD102", # read the docs, no thanks,
     "RTD103", # read the docs, no thanks
 ]
+
+[tool.numpydoc_validation]
+# See https://numpydoc.readthedocs.io/en/latest/validation.html#built-in-validation-checks for list of checks
+checks = [
+    "GL06",
+    "GL07",
+    # Currently broken; see https://github.com/numpy/numpydoc/issues/573
+    # "GL09",
+    "GL10",
+    "SS02",
+    "SS04",
+    "PR02",
+    "PR03",
+    "PR05",
+    "PR06",
+]
