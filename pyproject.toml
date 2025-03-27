@@ -24,8 +24,8 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: CPython",
 ]
 dependencies = [
-    "zarr<3",
-    "pydantic>2.0.0"
+    "pydantic>2.0.0",
+    "tensorstore"
     ]
 
 [project.urls]
@@ -34,6 +34,8 @@ Issues = "https://github.com/zarr-developers/pydantic-zarr/issues"
 Source = "https://github.com/zarr-developers/pydantic-zarr"
 
 [project.optional-dependencies]
+zarr = ["zarr>=2.18"]
+tensorstore = ["tensorstore"]
 test = [
     "coverage",
     "pytest",
@@ -53,7 +55,7 @@ version.source = "vcs"
 build.hooks.vcs.version-file = "src/pydantic_zarr/_version.py"
 
 [tool.hatch.envs.test]
-features = ["test"]
+features = ["test", "zarr"]
 
 [tool.hatch.envs.test.scripts]
 test = "pytest tests/test_pydantic_zarr/"
@@ -63,7 +65,7 @@ test-cov = "pytest --cov-config=pyproject.toml --cov=pkg --cov-report html --cov
 python = ["3.11", "3.12", "3.13"]
 
 [tool.hatch.envs.docs]
-features = ['docs']
+features = ['docs', 'zarr']
 
 [tool.hatch.envs.docs.scripts]
 build = "mkdocs build --clean --strict"

@@ -9,11 +9,18 @@ from typing import (
 
 from pydantic import BaseModel, ConfigDict
 
+__all__ = [
+    'AccessMode',
+    'IncEx',
+    'StrictBase',
+    'ensure_key_no_path',
+    'ensure_member_name',
+    'model_like'
+    ]
+
 IncEx: TypeAlias = set[int] | set[str] | dict[int, Any] | dict[str, Any] | None
 
 AccessMode: TypeAlias = Literal["w", "w+", "r", "a"]
-
-
 class StrictBase(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -44,10 +51,12 @@ def model_like(a: BaseModel, b: BaseModel, exclude: IncEx = None, include: IncEx
     """
     A similarity check for a pair pydantic.BaseModel, parametrized over included or excluded fields.
 
-
     """
 
     a_dict = a.model_dump(exclude=exclude, include=include)
     b_dict = b.model_dump(exclude=exclude, include=include)
 
     return a_dict == b_dict
+
+
+

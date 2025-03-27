@@ -1,36 +1,37 @@
 from __future__ import annotations
 
-import os
-from collections.abc import Mapping
 from typing import (
-    Annotated,
     Any,
+    Dict,
     Generic,
     Literal,
+    Mapping,
     Self,
     TypeVar,
     Union,
     cast,
     overload,
 )
-
-import numcodecs
-import numpy as np
-import numpy.typing as npt
-import zarr
-from numcodecs.abc import Codec
+from typing_extensions import Annotated
 from pydantic import AfterValidator, model_validator
 from pydantic.functional_validators import BeforeValidator
-from zarr.errors import ContainsArrayError, ContainsGroupError
-from zarr.storage import BaseStore, contains_array, contains_group, init_group
-from zarr.util import guess_chunks
 
+import numcodecs
+import zarr
+from zarr.util import guess_chunks
+import os
+import numpy as np
+import numpy.typing as npt
+from numcodecs.abc import Codec
+from zarr.errors import ContainsGroupError, ContainsArrayError
 from pydantic_zarr.core import (
     IncEx,
     StrictBase,
+    _require_zarr_python,
     ensure_key_no_path,
     model_like,
 )
+
 
 TAttr = TypeVar("TAttr", bound=Mapping[str, Any])
 TItem = TypeVar("TItem", bound=Union["GroupSpec", "ArraySpec"])
@@ -59,7 +60,7 @@ DtypeStr = Annotated[str, BeforeValidator(stringify_dtype)]
 def dictify_codec(value: dict[str, Any] | Codec) -> dict[str, Any]:
     """
     Ensure that a `numcodecs.abc.Codec` is converted to a `dict`. If the input is not an
-    instance of `numcodecs.abc.Codec`, then it is assumed to be a `dict` with string keys
+    insance of `numcodecs.abc.Codec`, then it is assumed to be a `dict` with string keys
     and it is returned unaltered.
 
     Parameters
@@ -172,8 +173,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         """
         if (lshape := len(self.shape)) != (lchunks := len(self.chunks)):
             msg = (
-                f"Length of shape must match length of chunks. Got {lshape} elements "
-                f"for shape and {lchunks} elements for chunks."
+                f"Length of shape must match length of chunks. Got {lshape} elements",
+                f"for shape and {lchunks} elements for chunks.",
             )
             raise ValueError(msg)
         return self
@@ -184,12 +185,12 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         array: npt.NDArray[Any],
         chunks: Literal["auto"] | tuple[int, ...] = "auto",
         attributes: Literal["auto"] | TAttr = "auto",
-        fill_value: Literal["auto"] | float | None = "auto",
+        fill_value: Literal["auto"] | int | float | None = "auto",
         order: Literal["auto", "C", "F"] = "auto",
         filters: Literal["auto"] | list[CodecDict] | None = "auto",
         dimension_separator: Literal["auto", "/", "."] = "auto",
         compressor: Literal["auto"] | CodecDict | None = "auto",
-    ) -> Self:
+    ):
         """
         Create an `ArraySpec` from an array-like object. This is a convenience method for when Zarr array will be modelled from an existing array.
         This method takes nearly the same arguments as the `ArraySpec` constructor, minus `shape` and `dtype`, which will be inferred from the `array` argument.
@@ -276,7 +277,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
         return cls(
             shape=shape_actual,
-            dtype=stringify_dtype(dtype_actual),
+            dtype=dtype_actual,
             chunks=chunks_actual,
             attributes=attributes_actual,
             fill_value=fill_value_actual,
@@ -350,12 +351,19 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         zarr.Array
             A Zarr array that is structurally identical to `self`.
         """
+        try:
+            _require_zarr_python()
+        except ImportError as e:
+            raise NotImplementedError('to_zarr requires zarr-python.') from e
+        
         spec_dict = self.model_dump()
         attrs = spec_dict.pop("attributes")
         if self.compressor is not None:
             spec_dict["compressor"] = numcodecs.get_codec(spec_dict["compressor"])
         if self.filters is not None:
-            spec_dict["filters"] = [numcodecs.get_codec(f) for f in spec_dict["filters"]]
+            spec_dict["filters"] = [
+                numcodecs.get_codec(f) for f in spec_dict["filters"]
+            ]
         if contains_array(store, path):
             extant_array = zarr.open_array(store, path=path, mode="r")
 
@@ -374,7 +382,9 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
                     return zarr.open_array(
                         store=extant_array.store, path=extant_array.path, **kwargs
                     )
-        result = zarr.create(store=store, path=path, overwrite=overwrite, **spec_dict, **kwargs)
+        result = zarr.create(
+            store=store, path=path, overwrite=overwrite, **spec_dict, **kwargs
+        )
         result.attrs.put(attrs)
         return result
 
@@ -462,7 +472,9 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
     members: Annotated[dict[str, TItem] | None, AfterValidator(ensure_key_no_path)] = {}
 
     @classmethod
-    def from_zarr(cls, group: zarr.Group, *, depth: int = -1) -> Self:
+    def from_zarr(
+        cls, group: zarr.Group, *, depth: int = -1
+    ) -> "GroupSpec[TAttr, TItem]":
         """
         Create a GroupSpec from an instance of `zarr.Group`. Subgroups and arrays contained in the
         Zarr group will be converted to instances of `GroupSpec` and `ArraySpec`, respectively,
@@ -509,7 +521,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
                 item_out = GroupSpec.from_zarr(item, depth=new_depth).model_dump()
             else:
                 msg = (
-                    f"Unparsable object encountered: {type(item)}. Expected zarr.Array"
+                    f"Unparseable object encountered: {type(item)}. Expected zarr.Array"
                     " or zarr.Group."
                 )
 
@@ -519,7 +531,9 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         result = cls(attributes=attributes, members=members)
         return result
 
-    def to_zarr(self, store: BaseStore, path: str, *, overwrite: bool = False, **kwargs):
+    def to_zarr(
+        self, store: BaseStore, path: str, *, overwrite: bool = False, **kwargs: object
+    ) -> object:
         """
         Serialize this `GroupSpec` to a Zarr group at a specific path in a `zarr.BaseStore`.
         This operation will create metadata documents in the store.
@@ -540,6 +554,11 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
             A zarr group that is structurally identical to `self`.
 
         """
+        try:
+            _require_zarr_python()
+        except ImportError as e:
+            raise NotImplementedError('to_zarr requires zarr-python.') from e
+
         spec_dict = self.model_dump(exclude={"members": True})
         attrs = spec_dict.pop("attributes")
         if contains_group(store, path):
@@ -676,7 +695,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         return to_flat(self, root_path=root_path)
 
     @classmethod
-    def from_flat(cls, data: dict[str, ArraySpec | GroupSpec]) -> Self:
+    def from_flat(cls, data: Dict[str, ArraySpec | GroupSpec]):
         """
         Create a `GroupSpec` from a flat hierarchy representation. The flattened hierarchy is a
         `dict` with the following constraints: keys must be valid paths; values must
@@ -710,14 +729,18 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
 
 
 @overload
-def from_zarr(element: zarr.Group) -> GroupSpec: ...
+def from_zarr(element: zarr.Group) -> GroupSpec:
+    ...
 
 
 @overload
-def from_zarr(element: zarr.Array) -> ArraySpec: ...
+def from_zarr(element: zarr.Array) -> ArraySpec:
+    ...
 
 
-def from_zarr(element: zarr.Array | zarr.Group, depth: int = -1) -> ArraySpec | GroupSpec:
+def from_zarr(
+    element: zarr.Array | zarr.Group, depth: int = -1
+) -> ArraySpec | GroupSpec:
     """
     Recursively parse a `zarr.Group` or `zarr.Array` into an `ArraySpec` or `GroupSpec`.
 
@@ -738,9 +761,11 @@ def from_zarr(element: zarr.Array | zarr.Group, depth: int = -1) -> ArraySpec | 
     """
 
     if isinstance(element, zarr.Array):
-        return ArraySpec.from_zarr(element)
-    else:
-        return GroupSpec.from_zarr(element, depth=depth)
+        result = ArraySpec.from_zarr(element)
+        return result
+
+    result = GroupSpec.from_zarr(element, depth=depth)
+    return result
 
 
 @overload
@@ -751,7 +776,8 @@ def to_zarr(
     *,
     overwrite: bool = False,
     **kwargs,
-) -> zarr.Array: ...
+) -> zarr.Array:
+    ...
 
 
 @overload
@@ -762,7 +788,8 @@ def to_zarr(
     *,
     overwrite: bool = False,
     **kwargs,
-) -> zarr.Group: ...
+) -> zarr.Group:
+    ...
 
 
 def to_zarr(
@@ -800,7 +827,9 @@ def to_zarr(
     return result
 
 
-def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, ArraySpec | GroupSpec]:
+def to_flat(
+    node: ArraySpec | GroupSpec, root_path: str = ""
+) -> Dict[str, ArraySpec | GroupSpec]:
     """
     Flatten a `GroupSpec` or `ArraySpec`.
     Converts a `GroupSpec` or `ArraySpec` and a string, into a `dict` with string keys and
@@ -855,7 +884,7 @@ def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, Array
     return result_sorted_keys
 
 
-def from_flat(data: dict[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
+def from_flat(data: Dict[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
     """
     Wraps `from_flat_group`, handling the special case where a Zarr array is defined at the root of
     a hierarchy and thus is not contained by a Zarr group.
@@ -886,7 +915,7 @@ def from_flat(data: dict[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
 
     # minimal check that the keys are valid
     invalid_keys = []
-    for key in data:
+    for key in data.keys():
         if key.endswith("/"):
             invalid_keys.append(key)
     if len(invalid_keys) > 0:
@@ -899,7 +928,7 @@ def from_flat(data: dict[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
         return from_flat_group(data)
 
 
-def from_flat_group(data: dict[str, ArraySpec | GroupSpec]) -> GroupSpec:
+def from_flat_group(data: Dict[str, ArraySpec | GroupSpec]) -> GroupSpec:
     """
     Generate a `GroupSpec` from a flat representation of a hierarchy, i.e. a `dict` with
     string keys (paths) and `ArraySpec` / `GroupSpec` values (nodes).
@@ -925,14 +954,14 @@ def from_flat_group(data: dict[str, ArraySpec | GroupSpec]) -> GroupSpec:
     root_name = ""
     sep = "/"
     # arrays that will be members of the returned GroupSpec
-    member_arrays: dict[str, ArraySpec] = {}
+    member_arrays: Dict[str, ArraySpec] = {}
     # groups, and their members, that will be members of the returned GroupSpec.
     # this dict is populated by recursively applying `from_flat_group` function.
-    member_groups: dict[str, GroupSpec] = {}
+    member_groups: Dict[str, GroupSpec] = {}
     # this dict collects the arrayspecs and groupspecs that belong to one of the members of the
     # groupspecs we are constructing. They will later be aggregated in a recursive step that
     # populates member_groups
-    submember_by_parent_name: dict[str, dict[str, ArraySpec | GroupSpec]] = {}
+    submember_by_parent_name: Dict[str, Dict[str, ArraySpec | GroupSpec]] = {}
     # copy the input to ensure that mutations are contained inside this function
     data_copy = data.copy()
     # Get the root node
@@ -949,7 +978,9 @@ def from_flat_group(data: dict[str, ArraySpec | GroupSpec]) -> GroupSpec:
     for key, value in data_copy.items():
         key_parts = key.split(sep)
         if key_parts[0] != root_name:
-            raise ValueError(f'Invalid path: {key} does not start with "{root_name}{sep}".')
+            raise ValueError(
+                f'Invalid path: {key} does not start with "{root_name}{sep}".'
+            )
 
         subparent_name = key_parts[1]
         if len(key_parts) == 2:
@@ -965,13 +996,17 @@ def from_flat_group(data: dict[str, ArraySpec | GroupSpec]) -> GroupSpec:
             # not great that we repeat this conditional dict initialization
             if subparent_name not in submember_by_parent_name:
                 submember_by_parent_name[subparent_name] = {}
-            submember_by_parent_name[subparent_name][sep.join([root_name, *key_parts[2:]])] = value
+            submember_by_parent_name[subparent_name][
+                sep.join([root_name, *key_parts[2:]])
+            ] = value
 
     # recurse
     for subparent_name, submemb in submember_by_parent_name.items():
         member_groups[subparent_name] = from_flat_group(submemb)
 
-    return GroupSpec(members={**member_groups, **member_arrays}, attributes=root_node.attributes)
+    return GroupSpec(
+        members={**member_groups, **member_arrays}, attributes=root_node.attributes
+    )
 
 
 def auto_chunks(data: Any) -> tuple[int, ...]:
