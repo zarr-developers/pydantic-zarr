@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from pydantic import AnyUrl, BaseModel, Field
 
-from pydantic_zarr._v2 import ArrayMetadataSpec
+from pydantic_zarr.v2 import ArrayMetadataSpec
 
 DataType = Literal[
     "bool",

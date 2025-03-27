@@ -3,9 +3,9 @@ from typing import Any, Literal
 import numpy as np
 import tensorstore as ts
 
-import pydantic_zarr._v2 as _v2
+import pydantic_zarr.v2 as _v2
 
-from ._models import DataType, ZarrDriver
+from .models import DataType, ZarrDriver
 
 
 def parse_dtype_name(dtype_name: str) -> DataType:
