@@ -164,3 +164,9 @@ cython_debug/
 
 # VCS versioning
 src/pydantic_zarr/_version.py
+
+# uv lockfile, remove this if we switch to uv for packaging
+uv.lock
+
+# osx metadata
+.DS_Store
