@@ -5,7 +5,6 @@ from collections.abc import Mapping
 from typing import (
     Annotated,
     Any,
-    Dict,
     Generic,
     Literal,
     Self,
@@ -119,6 +118,7 @@ class NodeSpec(StrictBase):
 
     zarr_format: Literal[2] = 2
 
+
 class ArrayMetadataSpec(NodeSpec):
     """
     A model of a Zarr Version 2 Array metadata. The specification for the data structure being modeled by
@@ -182,7 +182,7 @@ class ArrayMetadataSpec(NodeSpec):
         array: npt.NDArray[Any],
         *,
         chunks: Literal["auto"] | tuple[int, ...] = "auto",
-        fill_value: Literal["auto"] | int | float | None = "auto",
+        fill_value: Literal["auto"] | float | None = "auto",
         order: Literal["auto", "C", "F"] = "auto",
         filters: Literal["auto"] | list[CodecDict] | None = "auto",
         dimension_separator: Literal["auto", "/", "."] = "auto",
@@ -275,6 +275,7 @@ class ArrayMetadataSpec(NodeSpec):
             dimension_separator=dimension_separator_actual,
         )
 
+
 class ArraySpec(ArrayMetadataSpec, Generic[TAttr]):
     """
     A model of a Zarr Version 2 Array. The specification for the data structure being modeled by
@@ -317,7 +318,7 @@ class ArraySpec(ArrayMetadataSpec, Generic[TAttr]):
         *,
         chunks: Literal["auto"] | tuple[int, ...] = "auto",
         attributes: Literal["auto"] | TAttr = "auto",
-        fill_value: Literal["auto"] | int | float | None = "auto",
+        fill_value: Literal["auto"] | float | None = "auto",
         order: Literal["auto", "C", "F"] = "auto",
         filters: Literal["auto"] | list[CodecDict] | None = "auto",
         dimension_separator: Literal["auto", "/", "."] = "auto",
@@ -377,13 +378,14 @@ class ArraySpec(ArrayMetadataSpec, Generic[TAttr]):
             order=order,
             filters=filters,
             dimension_separator=dimension_separator,
-            compressor=compressor)
+            compressor=compressor,
+        )
         if attributes == "auto":
             attributes_actual = auto_attributes(array)
         else:
             attributes_actual = attributes
         return cls(
-            shape=metadata_model.shape, 
+            shape=metadata_model.shape,
             chunks=metadata_model.chunks,
             dtype=metadata_model.dtype,
             fill_value=metadata_model.fill_value,
@@ -391,7 +393,8 @@ class ArraySpec(ArrayMetadataSpec, Generic[TAttr]):
             filters=metadata_model.filters,
             dimension_separator=metadata_model.dimension_separator,
             compressor=metadata_model.compressor,
-            attributes=attributes_actual)
+            attributes=attributes_actual,
+        )
 
     @classmethod
     def from_zarr(cls, array: zarr.Array) -> Self:
@@ -460,16 +463,14 @@ class ArraySpec(ArrayMetadataSpec, Generic[TAttr]):
         try:
             _require_zarr_python()
         except ImportError as e:
-            raise NotImplementedError('to_zarr requires zarr-python.') from e
+            raise NotImplementedError("to_zarr requires zarr-python.") from e
 
         spec_dict = self.model_dump()
         attrs = spec_dict.pop("attributes")
         if self.compressor is not None:
             spec_dict["compressor"] = numcodecs.get_codec(spec_dict["compressor"])
         if self.filters is not None:
-            spec_dict["filters"] = [
-                numcodecs.get_codec(f) for f in spec_dict["filters"]
-            ]
+            spec_dict["filters"] = [numcodecs.get_codec(f) for f in spec_dict["filters"]]
         if contains_array(store, path):
             extant_array = zarr.open_array(store, path=path, mode="r")
 
@@ -488,9 +489,7 @@ class ArraySpec(ArrayMetadataSpec, Generic[TAttr]):
                     return zarr.open_array(
                         store=extant_array.store, path=extant_array.path, **kwargs
                     )
-        result = zarr.create(
-            store=store, path=path, overwrite=overwrite, **spec_dict, **kwargs
-        )
+        result = zarr.create(store=store, path=path, overwrite=overwrite, **spec_dict, **kwargs)
         result.attrs.put(attrs)
         return result
 
@@ -578,9 +577,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
     members: Annotated[dict[str, TItem] | None, AfterValidator(ensure_key_no_path)] = {}
 
     @classmethod
-    def from_zarr(
-        cls, group: zarr.Group, *, depth: int = -1
-    ) -> "GroupSpec[TAttr, TItem]":
+    def from_zarr(cls, group: zarr.Group, *, depth: int = -1) -> GroupSpec[TAttr, TItem]:
         """
         Create a GroupSpec from an instance of `zarr.Group`. Subgroups and arrays contained in the
         Zarr group will be converted to instances of `GroupSpec` and `ArraySpec`, respectively,
@@ -663,7 +660,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         try:
             _require_zarr_python()
         except ImportError as e:
-            raise NotImplementedError('to_zarr requires zarr-python.') from e
+            raise NotImplementedError("to_zarr requires zarr-python.") from e
 
         spec_dict = self.model_dump(exclude={"members": True})
         attrs = spec_dict.pop("attributes")
@@ -801,7 +798,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         return to_flat(self, root_path=root_path)
 
     @classmethod
-    def from_flat(cls, data: Dict[str, ArraySpec | GroupSpec]):
+    def from_flat(cls, data: dict[str, ArraySpec | GroupSpec]):
         """
         Create a `GroupSpec` from a flat hierarchy representation. The flattened hierarchy is a
         `dict` with the following constraints: keys must be valid paths; values must
@@ -835,18 +832,14 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
 
 
 @overload
-def from_zarr(element: zarr.Group) -> GroupSpec:
-    ...
+def from_zarr(element: zarr.Group) -> GroupSpec: ...
 
 
 @overload
-def from_zarr(element: zarr.Array) -> ArraySpec:
-    ...
+def from_zarr(element: zarr.Array) -> ArraySpec: ...
 
 
-def from_zarr(
-    element: zarr.Array | zarr.Group, depth: int = -1
-) -> ArraySpec | GroupSpec:
+def from_zarr(element: zarr.Array | zarr.Group, depth: int = -1) -> ArraySpec | GroupSpec:
     """
     Recursively parse a `zarr.Group` or `zarr.Array` into an `ArraySpec` or `GroupSpec`.
 
@@ -882,8 +875,7 @@ def to_zarr(
     *,
     overwrite: bool = False,
     **kwargs,
-) -> zarr.Array:
-    ...
+) -> zarr.Array: ...
 
 
 @overload
@@ -894,8 +886,7 @@ def to_zarr(
     *,
     overwrite: bool = False,
     **kwargs,
-) -> zarr.Group:
-    ...
+) -> zarr.Group: ...
 
 
 def to_zarr(
@@ -933,9 +924,7 @@ def to_zarr(
     return result
 
 
-def to_flat(
-    node: ArraySpec | GroupSpec, root_path: str = ""
-) -> Dict[str, ArraySpec | GroupSpec]:
+def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, ArraySpec | GroupSpec]:
     """
     Flatten a `GroupSpec` or `ArraySpec`.
     Converts a `GroupSpec` or `ArraySpec` and a string, into a `dict` with string keys and
@@ -990,7 +979,7 @@ def to_flat(
     return result_sorted_keys
 
 
-def from_flat(data: Dict[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
+def from_flat(data: dict[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
     """
     Wraps `from_flat_group`, handling the special case where a Zarr array is defined at the root of
     a hierarchy and thus is not contained by a Zarr group.
@@ -1021,7 +1010,7 @@ def from_flat(data: Dict[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
 
     # minimal check that the keys are valid
     invalid_keys = []
-    for key in data.keys():
+    for key in data:
         if key.endswith("/"):
             invalid_keys.append(key)
     if len(invalid_keys) > 0:
@@ -1034,7 +1023,7 @@ def from_flat(data: Dict[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
         return from_flat_group(data)
 
 
-def from_flat_group(data: Dict[str, ArraySpec | GroupSpec]) -> GroupSpec:
+def from_flat_group(data: dict[str, ArraySpec | GroupSpec]) -> GroupSpec:
     """
     Generate a `GroupSpec` from a flat representation of a hierarchy, i.e. a `dict` with
     string keys (paths) and `ArraySpec` / `GroupSpec` values (nodes).
@@ -1060,14 +1049,14 @@ def from_flat_group(data: Dict[str, ArraySpec | GroupSpec]) -> GroupSpec:
     root_name = ""
     sep = "/"
     # arrays that will be members of the returned GroupSpec
-    member_arrays: Dict[str, ArraySpec] = {}
+    member_arrays: dict[str, ArraySpec] = {}
     # groups, and their members, that will be members of the returned GroupSpec.
     # this dict is populated by recursively applying `from_flat_group` function.
-    member_groups: Dict[str, GroupSpec] = {}
+    member_groups: dict[str, GroupSpec] = {}
     # this dict collects the arrayspecs and groupspecs that belong to one of the members of the
     # groupspecs we are constructing. They will later be aggregated in a recursive step that
     # populates member_groups
-    submember_by_parent_name: Dict[str, Dict[str, ArraySpec | GroupSpec]] = {}
+    submember_by_parent_name: dict[str, dict[str, ArraySpec | GroupSpec]] = {}
     # copy the input to ensure that mutations are contained inside this function
     data_copy = data.copy()
     # Get the root node
@@ -1084,9 +1073,7 @@ def from_flat_group(data: Dict[str, ArraySpec | GroupSpec]) -> GroupSpec:
     for key, value in data_copy.items():
         key_parts = key.split(sep)
         if key_parts[0] != root_name:
-            raise ValueError(
-                f'Invalid path: {key} does not start with "{root_name}{sep}".'
-            )
+            raise ValueError(f'Invalid path: {key} does not start with "{root_name}{sep}".')
 
         subparent_name = key_parts[1]
         if len(key_parts) == 2:
@@ -1102,17 +1089,13 @@ def from_flat_group(data: Dict[str, ArraySpec | GroupSpec]) -> GroupSpec:
             # not great that we repeat this conditional dict initialization
             if subparent_name not in submember_by_parent_name:
                 submember_by_parent_name[subparent_name] = {}
-            submember_by_parent_name[subparent_name][
-                sep.join([root_name, *key_parts[2:]])
-            ] = value
+            submember_by_parent_name[subparent_name][sep.join([root_name, *key_parts[2:]])] = value
 
     # recurse
     for subparent_name, submemb in submember_by_parent_name.items():
         member_groups[subparent_name] = from_flat_group(submemb)
 
-    return GroupSpec(
-        members={**member_groups, **member_arrays}, attributes=root_node.attributes
-    )
+    return GroupSpec(members={**member_groups, **member_arrays}, attributes=root_node.attributes)
 
 
 def auto_chunks(data: Any) -> tuple[int, ...]:

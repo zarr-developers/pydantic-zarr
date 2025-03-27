@@ -4,9 +4,11 @@ def _zarr_python_version() -> None | str:
     """
     try:
         import zarr
+
         return str(zarr.__version__)
     except ImportError:
         return None
+
 
 def _require_zarr_python() -> None:
     """
@@ -15,7 +17,7 @@ def _require_zarr_python() -> None:
     if _zarr_python_version() is None:
         msg = (
             'The python package "zarr" is not installed. '
-            'Install zarr-python with `pip install zarr`, or ',
-            're-install this package with `pip install pydantic-zarr[zarr]`, '
-            )
+            "Install zarr-python with `pip install zarr`, or ",
+            "re-install this package with `pip install pydantic-zarr[zarr]`, ",
+        )
         raise ImportError(msg)

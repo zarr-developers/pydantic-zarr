@@ -40,6 +40,7 @@ ArrayMemoryOrder = Literal["C", "F"]
 DimensionSeparator = Literal[".", "/"]
 has_zarr_python = _zarr_python_version() is not None
 
+
 @pytest.fixture(params=("C", "F"), ids=["C", "F"])
 def memory_order(request: pytest.FixtureRequest) -> ArrayMemoryOrder:
     """
@@ -69,7 +70,7 @@ def dimension_separator(request: pytest.FixtureRequest) -> DimensionSeparator:
 @pytest.mark.skipif(not has_zarr_python, reason="zarr-python not installed")
 @pytest.mark.parametrize("chunks", [(1,), (1, 2), ((1, 2, 3))])
 @pytest.mark.parametrize("dtype", ["bool", "uint8", "float64"])
-@pytest.mark.parametrize("compressor", [None, {'id': 'lzma'}, {'id': 'gzip'}])
+@pytest.mark.parametrize("compressor", [None, {"id": "lzma"}, {"id": "gzip"}])
 @pytest.mark.parametrize(
     "filters", [(None,), ("delta",), ("scale_offset",), ("delta", "scale_offset")]
 )
@@ -84,6 +85,7 @@ def test_array_spec(
     import numcodecs
     import zarr
     from numcodecs.abc import Codec  # noqa: TC002
+
     store = zarr.MemoryStore()
     _filters: list[Codec] | None
     if filters is not None:
@@ -220,7 +222,7 @@ class FakeXarray(FakeDaskArray, WithAttrs): ...
 @pytest.mark.parametrize("order", ["omit", "auto", "F"])
 @pytest.mark.parametrize("filters", ["omit", "auto", []])
 @pytest.mark.parametrize("dimension_separator", ["omit", "auto", "."])
-@pytest.mark.parametrize("compressor", ["omit", "auto", {'id': 'gzip'}])
+@pytest.mark.parametrize("compressor", ["omit", "auto", {"id": "gzip"}])
 def test_array_spec_from_array(
     *,
     array: npt.NDArray[Any],
@@ -295,9 +297,13 @@ def test_array_spec_from_array(
 @pytest.mark.parametrize("chunks", [(1,), (1, 2), ((1, 2, 3))])
 @pytest.mark.parametrize("dtype", ["bool", "uint8", np.dtype("uint8"), "float64"])
 @pytest.mark.parametrize("dimension_separator", [".", "/"])
-@pytest.mark.parametrize("compressor", [
-    {'id': 'lzma', 'format': 1, 'check': -1, 'preset': None, 'filters': None}, 
-    {'id': 'gzip', 'level': 1}])
+@pytest.mark.parametrize(
+    "compressor",
+    [
+        {"id": "lzma", "format": 1, "check": -1, "preset": None, "filters": None},
+        {"id": "gzip", "level": 1},
+    ],
+)
 @pytest.mark.parametrize(
     "filters", [None, ("delta",), ("scale_offset",), ("delta", "scale_offset")]
 )
@@ -312,6 +318,7 @@ def test_serialize_deserialize_groupspec(
     import numcodecs
     import zarr
     from numcodecs.abc import Codec  # noqa: TC002
+
     _filters: list[Codec] | None
     if filters is not None:
         _filters = []
@@ -415,6 +422,7 @@ def test_validation() -> None:
     the wrong inputs without a ValidationError.
     """
     import zarr
+
     class GroupAttrsA(TypedDict):
         group_a: bool
 
@@ -599,6 +607,7 @@ def test_from_zarr_depth() -> None:
         "/1/2/2": ArraySpec.from_array(np.arange(20), attributes={"level": 3, "type": "array"}),
     }
     import zarr
+
     store = zarr.MemoryStore()
     group_out = GroupSpec.from_flat(tree).to_zarr(store, path="test")
     group_in_0 = GroupSpec.from_zarr(group_out, depth=0)
