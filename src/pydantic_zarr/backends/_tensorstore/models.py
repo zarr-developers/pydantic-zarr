@@ -55,8 +55,20 @@ class OutputIndexMap(BaseModel, frozen=True):
     broadcast_dimensions: tuple[int, ...] | None = Field(None, description="Broadcast dimensions")
 
 
+KVStoreDriver = Literal["memory", "file"]
+
+
 class KVStore(BaseModel, frozen=True):
-    driver: Literal["file", "memory"]
+    driver: KVStoreDriver
+    path: str
+
+
+class FileDriver(KVStore, frozen=True):
+    driver: Literal["file"] = "file"
+
+
+class MemoryDriver(KVStore, frozen=True):
+    driver: Literal["memory"] = "memory"
 
 
 class ZarrDriver(BaseModel, frozen=True):

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Any, Literal
 
 import numpy as np
@@ -5,7 +7,7 @@ import tensorstore as ts
 
 import pydantic_zarr.v2 as _v2
 
-from .models import DataType, ZarrDriver
+from .models import DataType, KVStore, ZarrDriver
 
 
 def parse_dtype_name(dtype_name: str) -> DataType:
@@ -15,7 +17,7 @@ def parse_dtype_name(dtype_name: str) -> DataType:
 async def create_array(
     model: _v2.ArrayMetadataSpec,
     *,
-    driver: Literal["file", "memory"],
+    kvstore: KVStore | dict[str, Any],
     open: bool = True,
     create: bool = False,
     delete_existing: bool = False,
@@ -24,7 +26,7 @@ async def create_array(
 ) -> ts.TensorStore:
     spec = ZarrDriver(
         driver="zarr",
-        kvstore={"driver": driver},
+        kvstore=kvstore,
         metadata=model,
         open=open,
         create=create,
