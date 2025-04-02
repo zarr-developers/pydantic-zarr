@@ -1,28 +1,25 @@
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 from typing import (
     Annotated,
     Any,
     Generic,
     Literal,
+    Protocol,
     Self,
     TypeVar,
     Union,
     cast,
+    get_args,
     overload,
+    runtime_checkable,
 )
 
-import numcodecs
 import numpy as np
 import numpy.typing as npt
-import zarr
-from numcodecs.abc import Codec
 from pydantic import AfterValidator, model_validator
 from pydantic.functional_validators import BeforeValidator
-from zarr.errors import ContainsArrayError, ContainsGroupError
-from zarr.util import guess_chunks
 
 from pydantic_zarr.core import (
     IncEx,
@@ -31,8 +28,11 @@ from pydantic_zarr.core import (
     model_like,
 )
 
-TAttr = TypeVar("TAttr", bound=Mapping[str, Any])
-TItem = TypeVar("TItem", bound=Union["GroupSpec", "ArraySpec"])
+BaseAttr = Mapping[str, object]
+BaseItem = Union["GroupSpec", "ArraySpec"]
+TAttr_co = TypeVar("TAttr_co", bound=BaseAttr, covariant=True)
+TItem_co = TypeVar("TItem_co", bound=BaseItem, covariant=True)
+DimensionSeparator = Literal["/", "."]
 
 
 def stringify_dtype(value: npt.DTypeLike) -> str:
@@ -49,13 +49,19 @@ def stringify_dtype(value: npt.DTypeLike) -> str:
 
     A numpy dtype string representation of `value`.
     """
+    # TODO: handle string dtypes and structured dtypes
     return np.dtype(value).str
 
 
-DtypeStr = Annotated[str, BeforeValidator(stringify_dtype)]
+DTypeString = Annotated[str, BeforeValidator(stringify_dtype)]
 
 
-def dictify_codec(value: dict[str, Any] | Codec) -> dict[str, Any]:
+@runtime_checkable
+class CodecProtocol(Protocol):
+    def get_config(self) -> dict[str, Any]: ...
+
+
+def dictify_codec(value: dict[str, Any] | CodecProtocol) -> dict[str, Any]:
     """
     Ensure that a `numcodecs.abc.Codec` is converted to a `dict`. If the input is not an
     insance of `numcodecs.abc.Codec`, then it is assumed to be a `dict` with string keys
@@ -74,12 +80,12 @@ def dictify_codec(value: dict[str, Any] | Codec) -> dict[str, Any]:
         object is returned. This should be a dict with string keys. All other values pass
         through unaltered.
     """
-    if isinstance(value, Codec):
+    if isinstance(value, CodecProtocol):
         return value.get_config()
     return value
 
 
-def parse_dimension_separator(data: Any) -> Literal["/", "."]:
+def parse_dimension_separator(data: object) -> DimensionSeparator:
     """
     Parse the dimension_separator metadata as per the Zarr version 2 specification.
     If the input is `None`, this returns ".".
@@ -97,8 +103,8 @@ def parse_dimension_separator(data: Any) -> Literal["/", "."]:
     """
     if data is None:
         return "."
-    if data in ("/", "."):
-        return data
+    if data in get_args(DimensionSeparator):
+        return cast(DimensionSeparator, data)
     raise ValueError(f'Invalid data, expected one of ("/", ".", None), got {data}')
 
 
@@ -154,7 +160,7 @@ class ArrayMetadataSpec(NodeSpec):
 
     shape: tuple[int, ...]
     chunks: tuple[int, ...]
-    dtype: DtypeStr
+    dtype: DTypeString
     fill_value: int | float | None = 0
     order: Literal["C", "F"] = "C"
     filters: list[CodecDict] | None = None
@@ -177,7 +183,7 @@ class ArrayMetadataSpec(NodeSpec):
         return self
 
     @classmethod
-    def from_array(
+    def from_arraylike(
         cls,
         array: npt.NDArray[Any],
         *,
@@ -232,7 +238,7 @@ class ArrayMetadataSpec(NodeSpec):
 
         """
         shape_actual = array.shape
-        dtype_actual = array.dtype
+        dtype_str = stringify_dtype(array.dtype)
 
         if chunks == "auto":
             chunks_actual = auto_chunks(array)
@@ -266,7 +272,7 @@ class ArrayMetadataSpec(NodeSpec):
 
         return cls(
             shape=shape_actual,
-            dtype=dtype_actual,
+            dtype=dtype_str,
             chunks=chunks_actual,
             fill_value=fill_value_actual,
             order=order_actual,
@@ -276,7 +282,7 @@ class ArrayMetadataSpec(NodeSpec):
         )
 
 
-class ArraySpec(ArrayMetadataSpec, Generic[TAttr]):
+class ArraySpec(ArrayMetadataSpec, Generic[TAttr_co]):
     """
     A model of a Zarr Version 2 Array. The specification for the data structure being modeled by
     this class can be found in the
@@ -309,15 +315,15 @@ class ArraySpec(ArrayMetadataSpec, Generic[TAttr]):
         The default is "/".
     """
 
-    attributes: TAttr = cast(TAttr, {})
+    attributes: TAttr_co = cast(TAttr_co, {})
 
     @classmethod
-    def from_array(
+    def from_arraylike(
         cls,
         array: npt.NDArray[Any],
         *,
         chunks: Literal["auto"] | tuple[int, ...] = "auto",
-        attributes: Literal["auto"] | TAttr = "auto",
+        attributes: Literal["auto"] | TAttr_co = "auto",
         fill_value: Literal["auto"] | float | None = "auto",
         order: Literal["auto", "C", "F"] = "auto",
         filters: Literal["auto"] | list[CodecDict] | None = "auto",
@@ -371,7 +377,7 @@ class ArraySpec(ArrayMetadataSpec, Generic[TAttr]):
 
         """
 
-        metadata_model = super().from_array(
+        metadata_model = super().from_arraylike(
             array=array,
             chunks=chunks,
             fill_value=fill_value,
@@ -396,8 +402,7 @@ class ArraySpec(ArrayMetadataSpec, Generic[TAttr]):
             attributes=attributes_actual,
         )
 
-    @classmethod
-    def from_zarr(cls, array: zarr.Array) -> Self:
+    def from_store(cls, array: zarr.Array) -> Self:
         """
         Create an `ArraySpec` from an instance of `zarr.Array`.
 
@@ -546,7 +551,7 @@ class ArraySpec(ArrayMetadataSpec, Generic[TAttr]):
 
         other_parsed: ArraySpec
         if isinstance(other, zarr.Array):
-            other_parsed = ArraySpec.from_zarr(other)
+            other_parsed = ArraySpec.from_store(other)
         else:
             other_parsed = other
 
@@ -554,9 +559,17 @@ class ArraySpec(ArrayMetadataSpec, Generic[TAttr]):
         return result
 
 
-class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
+class LeafGroupSpec(NodeSpec, Generic[TAttr_co]):
     """
-    A model of a Zarr Version 2 Group.
+    A Zarr group with no members.
+    """
+
+    attributes: TAttr_co
+
+
+class GroupSpec(NodeSpec, Generic[TAttr_co, TItem_co]):
+    """
+    A model of a Zarr Version 2 Group with members.
     The specification for the data structure being modeled by this
     class can be found in the
     [Zarr specification](https://zarr.readthedocs.io/en/stable/spec/v2.html#groups).
@@ -566,138 +579,15 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
 
     attributes: TAttr, default = {}
         The user-defined attributes of this group. Should be JSON-serializable.
-    members: dict[str, TItem] | None, default = {}
+    members: dict[str, TItem], default = {}
         The members of this group. `members` may be `None`, which models the condition
         where the members are unknown, e.g., because they have not been discovered yet.
         If `members` is not s`None`, then it must be a dict with string keys and values that
         are either `ArraySpec` or `GroupSpec`.
     """
 
-    attributes: TAttr = cast(TAttr, {})
-    members: Annotated[dict[str, TItem] | None, AfterValidator(ensure_key_no_path)] = {}
-
-    @classmethod
-    def from_zarr(cls, group: zarr.Group, *, depth: int = -1) -> GroupSpec[TAttr, TItem]:
-        """
-        Create a GroupSpec from an instance of `zarr.Group`. Subgroups and arrays contained in the
-        Zarr group will be converted to instances of `GroupSpec` and `ArraySpec`, respectively,
-        and these spec instances will be stored in the `members` attribute of the parent
-        `GroupSpec`.
-
-        This is a recursive function, and the depth of recursion can be controlled by the `depth`
-        keyword argument. The default value for `depth` is -1, which directs this function to
-        traverse the entirety of a `zarr.Group`. This may be slow for large hierarchies, in which
-        case setting `depth` to a positive integer can limit how deep into the hierarchy the
-        recursion goes.
-
-        Parameters
-        ----------
-        group : zarr.Group
-            The Zarr group to model.
-        depth: int
-            An integer which may be no lower than -1. Determines how far into the tree to parse.
-
-        Returns
-        -------
-        An instance of GroupSpec that represents the structure of the Zarr hierarchy.
-        """
-
-        result: GroupSpec[TAttr, TItem]
-        attributes = group.attrs.asdict()
-        members = {}
-
-        if depth < -1:
-            msg = (
-                f"Invalid value for depth. Got {depth}, expected an integer "
-                "greater than or equal to -1."
-            )
-            raise ValueError(msg)
-        if depth == 0:
-            return cls(attributes=attributes, members=None)
-        new_depth = max(depth - 1, -1)
-        for name, item in group.items():
-            if isinstance(item, zarr.Array):
-                # convert to dict before the final typed GroupSpec construction
-                item_out = ArraySpec.from_zarr(item).model_dump()
-            elif isinstance(item, zarr.Group):
-                # convert to dict before the final typed GroupSpec construction
-                item_out = GroupSpec.from_zarr(item, depth=new_depth).model_dump()
-            else:
-                msg = (
-                    f"Unparseable object encountered: {type(item)}. Expected zarr.Array"
-                    " or zarr.Group."
-                )
-
-                raise ValueError(msg)
-            members[name] = item_out
-
-        result = cls(attributes=attributes, members=members)
-        return result
-
-    def to_zarr(
-        self, store: BaseStore, path: str, *, overwrite: bool = False, **kwargs: object
-    ) -> object:
-        """
-        Serialize this `GroupSpec` to a Zarr group at a specific path in a `zarr.BaseStore`.
-        This operation will create metadata documents in the store.
-        Parameters
-        ----------
-        store : zarr.BaseStore
-            The storage backend that will manifest the group and its contents.
-        path : str
-            The location of the group inside the store.
-        overwrite: bool, default = False
-            Whether to overwrite existing objects in storage to create the Zarr group.
-        **kwargs : Any
-            Additional keyword arguments that will be passed to `zarr.create` for creating
-            sub-arrays.
-        Returns
-        -------
-        zarr.Group
-            A zarr group that is structurally identical to `self`.
-
-        """
-        try:
-            _require_zarr_python()
-        except ImportError as e:
-            raise NotImplementedError("to_zarr requires zarr-python.") from e
-
-        spec_dict = self.model_dump(exclude={"members": True})
-        attrs = spec_dict.pop("attributes")
-        if contains_group(store, path):
-            extant_group = zarr.group(store, path=path)
-            if not self.like(extant_group):
-                if not overwrite:
-                    msg = (
-                        f"A group already exists at path {path}. "
-                        "That group is structurally dissimilar to the group you are trying to store."
-                        "Call to_zarr with overwrite=True to overwrite that group."
-                    )
-                    raise ContainsGroupError(msg)
-            else:
-                if not overwrite:
-                    # if the extant group is structurally identical to self, and overwrite is false,
-                    # then just return the extant group
-                    return extant_group
-
-        elif contains_array(store, path) and not overwrite:
-            msg = (
-                f"An array already exists at path {path}. "
-                "Call to_zarr with overwrite=True to overwrite the array."
-            )
-            raise ContainsArrayError(msg)
-        else:
-            init_group(store=store, overwrite=overwrite, path=path)
-
-        result = zarr.group(store=store, path=path, overwrite=overwrite)
-        result.attrs.put(attrs)
-        # consider raising an exception if a partial GroupSpec is provided
-        if self.members is not None:
-            for name, member in self.members.items():
-                subpath = os.path.join(path, name)
-                member.to_zarr(store, subpath, overwrite=overwrite, **kwargs)
-
-        return result
+    attributes: TAttr_co = cast(TAttr_co, {})
+    members: Annotated[Mapping[str, TItem_co], AfterValidator(ensure_key_no_path)] = {}
 
     def like(
         self,
@@ -860,7 +750,7 @@ def from_zarr(element: zarr.Array | zarr.Group, depth: int = -1) -> ArraySpec | 
     """
 
     if isinstance(element, zarr.Array):
-        result = ArraySpec.from_zarr(element)
+        result = ArraySpec.from_store(element)
         return result
 
     result = GroupSpec.from_zarr(element, depth=depth)

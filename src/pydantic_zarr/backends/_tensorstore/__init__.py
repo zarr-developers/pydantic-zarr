@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+import json
+from collections import defaultdict
+from collections.abc import Sequence
 from typing import Any, Literal
 
 import numpy as np
@@ -9,12 +13,123 @@ import pydantic_zarr.v2 as _v2
 
 from .models import DataType, KVStore, ZarrDriver
 
+V2_ARRAY_KEY = b".zarray"
+V2_GROUP_KEY = b".zgroup"
+V2_ATTRS_KEY = b".zattrs"
+SEPARATOR = b"/"
+
 
 def parse_dtype_name(dtype_name: str) -> DataType:
     return np.dtype(dtype_name).name
 
 
-async def create_array(
+async def read_attrs_v2(store: ts.KvStore) -> dict[str, Any]:
+    zattrs_result = await store.read(V2_ATTRS_KEY)
+    if zattrs_result.state == "missing":
+        return {}
+    return json.loads(zattrs_result.value)
+
+
+async def read_group_v2(store: ts.KvStore) -> _v2.Group:
+    zgroup_result = await store.read(V2_GROUP_KEY)
+    if zgroup_result.state == "missing":
+        raise FileNotFoundError("No .zgroup file found in the store.")
+    attributes = await read_attrs_v2(store)
+    return _v2.Group(attributes=attributes)
+
+
+async def read_array_v2(store: ts.KvStore) -> _v2.ArraySpec:
+    zarray_result = await store.read(V2_ARRAY_KEY)
+    if zarray_result.state == "missing":
+        raise FileNotFoundError(f"No {V2_ARRAY_KEY} file found in the store.")
+    zarray_metadata = json.loads(zarray_result.value)
+    attributes = await read_attrs_v2(store)
+    return _v2.ArraySpec(**zarray_metadata, attributes=attributes)
+
+
+async def read_node_v2(store: ts.KvStore) -> _v2.ArraySpec | _v2.Group:
+    try:
+        return await read_array_v2(store)
+    except FileNotFoundError as e:
+        try:
+            return await read_group_v2(store)
+        except FileNotFoundError:
+            raise FileNotFoundError("No .zarray or .zgroup file found in the store.") from e
+
+
+def get_member_keys(prefixes: Sequence[bytes]) -> tuple[bytes, ...]:
+    member_prefixes = ()
+    meta_by_level = defaultdict(list)
+
+    # classify by the number of slashes in the prefix to ensure that we traverse breadth-first
+    for prefix in prefixes:
+        if prefix.endswith((V2_GROUP_KEY, V2_ARRAY_KEY)):
+            meta_by_level[prefix.count(SEPARATOR)].append(prefix)
+
+    for level, node_prefixes in meta_by_level.items():
+        if level == 0:
+            if node_prefixes == [V2_GROUP_KEY]:
+                member_prefixes += tuple(node_prefixes)
+            else:
+                raise ValueError(
+                    f"Invalid hierarchy: {node_prefixes} does not contain valid group metadata."
+                )
+        else:
+            for prefix in node_prefixes:
+                # check if the parent prefix is in the dict of group metadata documents
+                if level == 1:
+                    parent_group_meta = V2_GROUP_KEY
+                else:
+                    parent_group_meta = (
+                        SEPARATOR.join(prefix.split(SEPARATOR)[:-2]) + SEPARATOR + V2_GROUP_KEY
+                    )
+                if level - 1 in meta_by_level and parent_group_meta in meta_by_level[level - 1]:
+                    member_prefixes += (prefix,)
+
+    return member_prefixes
+
+
+async def read_members_v2(store: ts.KvStore) -> dict[bytes, _v2.ArraySpec | _v2.Group]:
+    """
+    Read the members of a group.
+    """
+    # TODO: handle proper hierarchy traversal. tensorstore list operation is not scoped to a particular
+    # group, so we need to filter out the members that are not in the group.
+    group = await read_group_v2(store)
+    maybe_member_names = tuple(
+        filter(lambda v: v not in (V2_GROUP_KEY,), get_member_keys(await store.list()))
+    )
+    read_futs = []
+    for member_name in maybe_member_names:
+        if member_name.endswith(b".zarray"):
+            read_futs.append(read_array_v2(store / member_name.removesuffix(b".zarray")))
+        elif member_name.endswith(b".zgroup"):
+            read_futs.append(read_group_v2(store / member_name.removesuffix(b".zgroup")))
+        else:
+            pass
+    members = await asyncio.gather(*read_futs, return_exceptions=True)
+    return {b"": group} | {
+        name.rsplit(b"/", 1)[0]: node
+        for name, node in zip(maybe_member_names, members, strict=True)
+    }
+
+
+async def read_group_v3(store: ts.KvStore):
+    result = await store.read("zarr.json")
+    return result
+
+
+async def create_group_v2(model: _v2.Group, *, kvstore: KVStore) -> Any:
+    futs = []
+    zgroup_meta = model.model_dump(exclude={"attributes"}, exclude_none=True)
+    attrs_meta = model.attributes
+    if len(attrs_meta) > 0:
+        futs.append(kvstore.write(b".zattrs", json.dumps(attrs_meta)))
+    futs.append(kvstore.write(b".zgroup", json.dumps(zgroup_meta)))
+    return await asyncio.gather(*futs, return_exceptions=True)
+
+
+async def create_array_v2(
     model: _v2.ArrayMetadataSpec,
     *,
     kvstore: KVStore | dict[str, Any],

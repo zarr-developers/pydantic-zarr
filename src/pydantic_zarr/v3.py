@@ -5,6 +5,7 @@ from typing import (
     Any,
     Generic,
     Literal,
+    Self,
     TypeVar,
     Union,
     cast,
@@ -16,23 +17,16 @@ import zarr
 from zarr.storage import BaseStore
 
 from pydantic_zarr.core import StrictBase
-from pydantic_zarr.v2 import DtypeStr
+from pydantic_zarr.v2 import DTypeString
 
 TAttr = TypeVar("TAttr", bound=dict[str, Any])
 TItem = TypeVar("TItem", bound=Union["GroupSpec", "ArraySpec"])
 
 NodeType = Literal["group", "array"]
 
-# todo: introduce a type that represents hexadecimal representations of floats
-FillValue = Union[
-    Literal["Infinity", "-Infinity", "NaN"],
-    bool,
-    int,
-    float,
-    str,
-    tuple[float, float],
-    tuple[int, ...],
-]
+# This is effectively open because it can only be validated in the
+# context of a particular data type
+FillValue = object
 
 
 class NamedConfig(StrictBase):
@@ -105,7 +99,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     node_type: Literal["array"] = "array"
     attributes: TAttr = cast(TAttr, {})
     shape: Sequence[int]
-    data_type: DtypeStr
+    data_type: DTypeString
     chunk_grid: NamedConfig  # todo: validate this against shape
     chunk_key_encoding: NamedConfig  # todo: validate this against shape
     fill_value: FillValue  # todo: validate this against the data type
@@ -114,7 +108,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     dimension_names: Sequence[str] | None  # todo: validate this against shape
 
     @classmethod
-    def from_array(cls, array: npt.NDArray[Any], **kwargs):
+    def from_array(cls, array: npt.NDArray[Any], **kwargs: object) -> Self:
         """
         Create an ArraySpec from a numpy array-like object.
 

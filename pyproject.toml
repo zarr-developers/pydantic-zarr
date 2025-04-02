@@ -25,7 +25,6 @@ classifiers = [
 ]
 dependencies = [
     "pydantic>2.0.0",
-    "tensorstore"
     ]
 
 [project.urls]
@@ -34,7 +33,7 @@ Issues = "https://github.com/zarr-developers/pydantic-zarr/issues"
 Source = "https://github.com/zarr-developers/pydantic-zarr"
 
 [project.optional-dependencies]
-zarr = ["zarr>=2.18"]
+zarr = ["zarr>=3.0.4"]
 tensorstore = ["tensorstore"]
 test = [
     "coverage",
@@ -56,7 +55,7 @@ version.source = "vcs"
 build.hooks.vcs.version-file = "src/pydantic_zarr/_version.py"
 
 [tool.hatch.envs.test]
-features = ["test", "zarr"]
+features = ["test", "zarr", "tensorstore"]
 
 [tool.hatch.envs.test.scripts]
 test = "pytest tests/test_pydantic_zarr/"
