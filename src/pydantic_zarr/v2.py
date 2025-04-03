@@ -390,7 +390,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
                     return zarr.open_array(
                         store=extant_array.store, path=extant_array.path, zarr_format=2, **kwargs
                     )
-        spec_dict["zarr_format"] = 2
+        spec_dict["zarr_format"] = spec_dict.pop("zarr_version", 2)
         result = zarr.create(store=store, path=path, overwrite=overwrite, **spec_dict, **kwargs)
         result.attrs.put(attrs)
         return result
