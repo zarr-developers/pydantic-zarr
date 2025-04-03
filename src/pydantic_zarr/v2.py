@@ -328,6 +328,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         ArraySpec(zarr_format=2, attributes={}, shape=(10, 10), chunks=(10, 10), dtype='<f8', fill_value=0.0, order='C', filters=None, dimension_separator='.', compressor={'id': 'blosc', 'cname': 'lz4', 'clevel': 5, 'shuffle': 1, 'blocksize': 0})
 
         """
+        filters = array.filters if len(array.filters) else None
         return cls(
             shape=array.shape,
             chunks=array.chunks,
@@ -336,7 +337,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             # so that int 0 isn't serialized as 0.0
             fill_value=array.dtype.type(array.fill_value).tolist(),
             order=array.order,
-            filters=array.filters,
+            filters=filters,
             dimension_separator=array.metadata.dimension_separator,
             compressor=array.compressors[0].get_config(),
             attributes=array.attrs.asdict(),
