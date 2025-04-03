@@ -515,7 +515,8 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         if depth == 0:
             return cls(attributes=attributes, members=None)
         new_depth = max(depth - 1, -1)
-        for name, item in group.items():
+        for name in group:
+            item = group[name]
             if isinstance(item, zarr.Array):
                 # convert to dict before the final typed GroupSpec construction
                 item_out = ArraySpec.from_zarr(item).model_dump()
