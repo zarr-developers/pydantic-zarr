@@ -132,10 +132,7 @@ def test_array_spec(
     assert spec.fill_value == array.fill_value
     # this is a sign that nullability is being misused in zarr-python
     # the correct approach would be to use an empty list to express "no filters".
-    if array.filters is not None:
-        assert spec.filters == [f.get_config() for f in array.filters]
-    else:
-        assert spec.filters == array.filters
+    assert spec.filters == [f.get_config() for f in array.filters]
 
     if array.compressors is not None:
         assert spec.compressor == array.compressors[0].get_config()
@@ -313,9 +310,7 @@ def test_array_spec_from_array(
 @pytest.mark.parametrize("dtype", ["bool", "uint8", np.dtype("uint8"), "float64"])
 @pytest.mark.parametrize("dimension_separator", [".", "/"])
 @pytest.mark.parametrize("compressor", [numcodecs.LZMA().get_config(), numcodecs.GZip()])
-@pytest.mark.parametrize(
-    "filters", [None, ("delta",), ("scale_offset",), ("delta", "scale_offset")]
-)
+@pytest.mark.parametrize("filters", [(), ("delta",), ("scale_offset",), ("delta", "scale_offset")])
 def test_serialize_deserialize_groupspec(
     chunks: tuple[int, ...],
     memory_order: ArrayMemoryOrder,

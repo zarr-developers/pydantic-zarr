@@ -204,7 +204,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         attributes: Literal["auto"] | TAttr = "auto",
         fill_value: Literal["auto"] | float | None = "auto",
         order: Literal["auto", "C", "F"] = "auto",
-        filters: Literal["auto"] | list[CodecDict] | None = "auto",
+        filters: Literal["auto"] | list[CodecDict] = "auto",
         dimension_separator: Literal["auto", "/", "."] = "auto",
         compressor: Literal["auto"] | CodecDict | None = "auto",
     ) -> Self:
@@ -328,7 +328,6 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         ArraySpec(zarr_format=2, attributes={}, shape=(10, 10), chunks=(10, 10), dtype='<f8', fill_value=0.0, order='C', filters=None, dimension_separator='.', compressor={'id': 'blosc', 'cname': 'lz4', 'clevel': 5, 'shuffle': 1, 'blocksize': 0})
 
         """
-        filters = array.filters if len(array.filters) else None
         return cls(
             shape=array.shape,
             chunks=array.chunks,
@@ -337,7 +336,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             # so that int 0 isn't serialized as 0.0
             fill_value=array.dtype.type(array.fill_value).tolist(),
             order=array.order,
-            filters=filters,
+            filters=array.filters,
             dimension_separator=array.metadata.dimension_separator,
             compressor=array.compressors[0].get_config(),
             attributes=array.attrs.asdict(),
@@ -897,7 +896,7 @@ def from_flat(data: dict[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
     >>> import numpy as np
     >>> tree = {'': ArraySpec.from_array(np.arange(10))}
     >>> from_flat(tree) # special case of a Zarr array at the root of the hierarchy
-    ArraySpec(zarr_format=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)
+    ArraySpec(zarr_format=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=[], dimension_separator='/', compressor=None)
     >>> tree = {'/foo': ArraySpec.from_array(np.arange(10))}
     >>> from_flat(tree) # note that an implicit Group is created
     GroupSpec(zarr_format=2, attributes={}, members={'foo': ArraySpec(zarr_format=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)})
