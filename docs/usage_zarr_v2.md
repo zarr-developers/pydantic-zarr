@@ -6,26 +6,25 @@
 
 The `GroupSpec` and `ArraySpec` classes represent Zarr v2 groups and arrays, respectively. To create an instance of a `GroupSpec` or `ArraySpec` from an existing Zarr group or array, pass the Zarr group / array to the `.from_zarr` method defined on the `GroupSpec` / `ArraySpec` classes. This will result in a `pydantic-zarr` model of the Zarr object.
 
->  By default `GroupSpec.from_zarr(zarr_group)` will traverse the entire hierarchy under `zarr_group`. This can be extremely slow if used on an extensive Zarr group on high latency storage. To limit the depth of traversal to a specific depth, use the `depth` keyword argument, e.g. `GroupSpec.from_zarr(zarr_group, depth=1)`
+> By default `GroupSpec.from_zarr(zarr_group)` will traverse the entire hierarchy under `zarr_group`. This can be extremely slow if used on an extensive Zarr group on high latency storage. To limit the depth of traversal to a specific depth, use the `depth` keyword argument, e.g. `GroupSpec.from_zarr(zarr_group, depth=1)`
 
-Note that `from_zarr` will *not* read the data inside an array.
+Note that `from_zarr` will _not_ read the data inside an array.
 
 ### Writing
 
 To write a hierarchy to some zarr-compatible storage backend, `GroupSpec` and `ArraySpec` have `to_zarr` methods that take a Zarr store and a path and return a Zarr array or group created in the store at the given path.
 
-Note that `to_zarr` will *not* write any array data. You have to do this separately.
+Note that `to_zarr` will _not_ write any array data. You have to do this separately.
 
 ```python
-from zarr import group
-from zarr.creation import create
+from zarr import group, create
 from zarr.storage import MemoryStore
 from pydantic_zarr.v2 import GroupSpec
 
 # create an in-memory Zarr group + array with attributes
 grp = group(path='foo')
 grp.attrs.put({'group_metadata': 10})
-arr = create(path='foo/bar', store=grp.store, shape=(10,), compressor=None)
+arr = create(path='foo/bar', store=grp.store, shape=(10,), compressor=None, zarr_format=2)
 arr.attrs.put({'array_metadata': True})
 
 spec = GroupSpec.from_zarr(grp)
@@ -100,6 +99,7 @@ print(ArraySpec.from_array(np.arange(10)).model_dump())
 }
 """
 ```
+
 ### Flattening and unflattening Zarr hierarchies
 
 In the previous section we built a model of a Zarr hierarchy by defining `GroupSpec` and `ArraySpec`
@@ -193,6 +193,7 @@ print(root.to_flat())
 ```
 
 #### Implicit groups
+
 `zarr-python` supports creating Zarr arrays or groups deep in the
 hierarchy without explicitly creating the intermediate groups first.
 `from_flat` models this behavior. For example, `{'/a/b/c': ArraySpec(...)}` implicitly defines the existence of a groups named `a` and `b` (which is contained in `a`). `from_flat` will create the expected `GroupSpec` object from such `dict` instances.
@@ -246,6 +247,8 @@ The `like` method takes keyword arguments `include` and `exclude`, which determi
 ```python
 from pydantic_zarr.v2 import ArraySpec, GroupSpec
 import zarr
+import zarr.storage
+
 arr_a = ArraySpec(shape=(1,), dtype='uint8', chunks=(1,))
 # make an array with a different shape
 arr_b = ArraySpec(shape=(2,), dtype='uint8', chunks=(1,))
@@ -259,7 +262,7 @@ print(arr_a.like(arr_b, exclude={'shape'}))
 #> True
 
 # `ArraySpec.like` will convert a zarr.Array to ArraySpec
-store = zarr.MemoryStore()
+store = zarr.storage.MemoryStore()
 # This is a zarr.Array
 arr_a_stored = arr_a.to_zarr(store, path='arr_a')
 

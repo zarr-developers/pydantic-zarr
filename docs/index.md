@@ -8,15 +8,14 @@ Static typing and runtime validation for Zarr hierarchies.
 
 `pydantic-zarr` expresses data stored in the [Zarr](https://zarr.readthedocs.io/en/stable/) format with [Pydantic](https://docs.pydantic.dev/1.10/). Specifically, `pydantic-zarr` encodes Zarr groups and arrays as [Pydantic models](https://docs.pydantic.dev/1.10/usage/models/). These models are useful for formalizing the structure of Zarr hierarchies, type-checking Zarr hierarchies, and runtime validation for Zarr-based data.
 
-
 ```python
 import zarr
 from pydantic_zarr.v2 import GroupSpec
 
 # create a Zarr group
-group = zarr.group(path='foo')
+group = zarr.group(path='foo', zarr_format=2)
 # put an array inside the group
-array = zarr.create(store = group.store, path='foo/bar', shape=10, dtype='uint8')
+array = zarr.create(store = group.store, path='foo/bar', shape=10, dtype='uint8', zarr_format=2)
 array.attrs.put({'metadata': 'hello'})
 
 # create a pydantic model to model the Zarr group
@@ -56,11 +55,11 @@ More examples can be found in the [usage guide](usage_zarr_v2.md).
 
 `pip install -U pydantic-zarr`
 
-
 ### Limitations
 
 #### No array data operations
-This library only provides tools to represent the *layout* of Zarr groups and arrays, and the structure of their attributes. `pydantic-zarr` performs no type checking or runtime validation of the multidimensional array data contained *inside* Zarr arrays, and `pydantic-zarr` does not contain any tools for efficiently reading or writing Zarr arrays.
+
+This library only provides tools to represent the _layout_ of Zarr groups and arrays, and the structure of their attributes. `pydantic-zarr` performs no type checking or runtime validation of the multidimensional array data contained _inside_ Zarr arrays, and `pydantic-zarr` does not contain any tools for efficiently reading or writing Zarr arrays.
 
 #### Supported Zarr versions
 
@@ -84,7 +83,7 @@ In `pydantic-zarr`, Zarr groups are modeled by the `GroupSpec` class, which is a
 
 Zarr arrays are represented by the `ArraySpec` class, which has a similar `attributes` field, as well as fields for all the Zarr array properties (`dtype`, `shape`, `chunks`, etc).
 
-`GroupSpec` and `ArraySpec` are both [generic models](https://docs.pydantic.dev/1.10/usage/models/#generic-models). `GroupSpec` takes two type parameters, the first specializing the type of `GroupSpec.attributes`, and the second specializing the type of the *values* of `GroupSpec.members` (the keys of `GroupSpec.members` are always strings). `ArraySpec` only takes one type parameter, which specializes the type of `ArraySpec.attributes`.
+`GroupSpec` and `ArraySpec` are both [generic models](https://docs.pydantic.dev/1.10/usage/models/#generic-models). `GroupSpec` takes two type parameters, the first specializing the type of `GroupSpec.attributes`, and the second specializing the type of the _values_ of `GroupSpec.members` (the keys of `GroupSpec.members` are always strings). `ArraySpec` only takes one type parameter, which specializes the type of `ArraySpec.attributes`.
 
 Examples using this generic typing functionality can be found in the [usage guide](usage_zarr_v2.md#using-generic-types).
 
