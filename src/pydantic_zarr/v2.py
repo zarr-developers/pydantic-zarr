@@ -390,7 +390,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
                     return zarr.open_array(
                         store=extant_array.store, path=extant_array.path, zarr_format=2, **kwargs
                     )
-        spec_dict["zarr_format"] = spec_dict.pop("zarr_version", 2)
+        spec_dict["zarr_format"] = 2
         result = zarr.create(store=store, path=path, overwrite=overwrite, **spec_dict, **kwargs)
         result.attrs.put(attrs)
         return result
@@ -564,7 +564,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         spec_dict = self.model_dump(exclude={"members": True})
         attrs = spec_dict.pop("attributes")
         if _contains_group(store, path):
-            extant_group = zarr.group(store, path=path)
+            extant_group = zarr.group(store, path=path, zarr_format=2)
             if not self.like(extant_group):
                 if not overwrite:
                     msg = (
@@ -588,7 +588,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         else:
             zarr.create_group(store=store, overwrite=overwrite, path=path, zarr_format=2)
 
-        result = zarr.group(store=store, path=path, overwrite=overwrite)
+        result = zarr.group(store=store, path=path, overwrite=overwrite, zarr_format=2)
         result.attrs.put(attrs)
         # consider raising an exception if a partial GroupSpec is provided
         if self.members is not None:
