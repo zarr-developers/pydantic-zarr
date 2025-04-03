@@ -48,7 +48,10 @@ def _contains_array(store: Store, path: str) -> bool:
 
 
 def _contains_group(store: Store, path: str) -> bool:
-    return isinstance(get_node(store, path, zarr_format=2), zarr.Group)
+    try:
+        return isinstance(get_node(store, path, zarr_format=2), zarr.Group)
+    except FileNotFoundError:
+        return False
 
 
 def stringify_dtype(value: npt.DTypeLike) -> str:
