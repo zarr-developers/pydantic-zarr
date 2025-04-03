@@ -387,7 +387,7 @@ def test_serialize_deserialize_groupspec(
     assert observed == spec
 
     # assert that we get the same group twice
-    assert to_zarr(spec, store, "/group_a") == group
+    assert to_zarr(spec, store, "/group_a", overwrite=True) == group
 
     # check that we can't call to_zarr targeting the original group with a different spec
     spec_2 = spec.model_copy(update={"attributes": RootAttrs(foo=99, bar=[0, 1, 2])})
@@ -395,9 +395,10 @@ def test_serialize_deserialize_groupspec(
         _ = to_zarr(spec_2, store, "/group_a")
 
     # check that we can't call to_zarr with the original spec if the group has changed
-    group.attrs.put({"foo": 100})
+    group.attrs["foo"] = 100
     with pytest.raises(ContainsGroupError):
         _ = to_zarr(spec, store, "/group_a")
+    group.attrs["foo"] = 10
 
     # materialize again with overwrite
     group2 = to_zarr(spec, store, "/group_a", overwrite=True)
