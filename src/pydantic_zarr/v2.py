@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Mapping
 from typing import (
+    TYPE_CHECKING,
     Annotated,
     Any,
     Generic,
@@ -21,9 +23,8 @@ import zarr
 from numcodecs.abc import Codec
 from pydantic import AfterValidator, model_validator
 from pydantic.functional_validators import BeforeValidator
+from zarr.core.sync_group import get_node
 from zarr.errors import ContainsArrayError, ContainsGroupError
-from zarr.storage import BaseStore, contains_array, contains_group, init_group
-from zarr.util import guess_chunks
 
 from pydantic_zarr.core import (
     IncEx,
@@ -32,8 +33,22 @@ from pydantic_zarr.core import (
     model_like,
 )
 
+if TYPE_CHECKING:
+    from zarr.abc.store import Store
+
 TAttr = TypeVar("TAttr", bound=Mapping[str, Any])
 TItem = TypeVar("TItem", bound=Union["GroupSpec", "ArraySpec"])  # type: ignore[type-arg]
+
+
+def _contains_array(store: Store, path: str) -> bool:
+    try:
+        return isinstance(get_node(store, path, zarr_format=2), zarr.Array)
+    except FileNotFoundError:
+        return False
+
+
+def _contains_group(store: Store, path: str) -> bool:
+    return isinstance(get_node(store, path, zarr_format=2), zarr.Group)
 
 
 def stringify_dtype(value: npt.DTypeLike) -> str:
@@ -41,8 +56,8 @@ def stringify_dtype(value: npt.DTypeLike) -> str:
     Convert a `numpy.dtype` object into a `str`.
 
     Parameters
-    ---------
-    value: `npt.DTypeLike`
+    ----------
+    value : `npt.DTypeLike`
         Some object that can be coerced to a numpy dtype
 
     Returns
@@ -63,7 +78,7 @@ def dictify_codec(value: dict[str, Any] | Codec) -> dict[str, Any]:
     and it is returned unaltered.
 
     Parameters
-    ---------
+    ----------
 
     value : dict[str, Any] | numcodecs.abc.Codec
         The value to be dictified if it is not already a dict.
@@ -319,14 +334,14 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             fill_value=array.dtype.type(array.fill_value).tolist(),
             order=array.order,
             filters=array.filters,
-            dimension_separator=array._dimension_separator,
-            compressor=array.compressor,
+            dimension_separator=array.metadata.dimension_separator,
+            compressor=array.compressors[0].get_config(),
             attributes=array.attrs.asdict(),
         )
 
     def to_zarr(
         self,
-        store: BaseStore,
+        store: Store,
         path: str,
         *,
         overwrite: bool = False,
@@ -338,7 +353,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
         Parameters
         ----------
-        store : instance of zarr.BaseStore
+        store : instance of zarr.abc.store.Store
             The storage backend that will manifest the array.
         path : str
             The location of the array inside the store.
@@ -358,24 +373,20 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             spec_dict["compressor"] = numcodecs.get_codec(spec_dict["compressor"])
         if self.filters is not None:
             spec_dict["filters"] = [numcodecs.get_codec(f) for f in spec_dict["filters"]]
-        if contains_array(store, path):
-            extant_array = zarr.open_array(store, path=path, mode="r")
+        if _contains_array(store, path):
+            extant_array = zarr.open_array(store, path=path, mode="r", zarr_format=2)
 
             if not self.like(extant_array):
                 if not overwrite:
-                    msg = (
-                        f"An array already exists at path {path}. "
-                        "That array is structurally dissimilar to the array you are trying to "
-                        "store. Call to_zarr with overwrite=True to overwrite that array."
-                    )
-                    raise ContainsArrayError(msg)
+                    raise ContainsArrayError(store, path)
             else:
                 if not overwrite:
                     # extant_array is read-only, so we make a new array handle that
                     # takes **kwargs
                     return zarr.open_array(
-                        store=extant_array.store, path=extant_array.path, **kwargs
+                        store=extant_array.store, path=extant_array.path, zarr_format=2, **kwargs
                     )
+        spec_dict["zarr_format"] = spec_dict.pop("zarr_version", 2)
         result = zarr.create(store=store, path=path, overwrite=overwrite, **spec_dict, **kwargs)
         result.attrs.put(attrs)
         return result
@@ -521,22 +532,24 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         return result
 
     def to_zarr(
-        self, store: BaseStore, path: str, *, overwrite: bool = False, **kwargs: Any
+        self, store: Store, path: str, *, overwrite: bool = False, **kwargs: Any
     ) -> zarr.Group:
         """
-        Serialize this `GroupSpec` to a Zarr group at a specific path in a `zarr.BaseStore`.
+        Serialize this `GroupSpec` to a Zarr group at a specific path in a `zarr.abc.store.Store`.
         This operation will create metadata documents in the store.
+
         Parameters
         ----------
-        store : zarr.BaseStore
+        store : zarr.abc.store.Store
             The storage backend that will manifest the group and its contents.
         path : str
             The location of the group inside the store.
-        overwrite: bool, default = False
+        overwrite : bool, default = False
             Whether to overwrite existing objects in storage to create the Zarr group.
         **kwargs : Any
             Additional keyword arguments that will be passed to `zarr.create` for creating
             sub-arrays.
+
         Returns
         -------
         zarr.Group
@@ -545,7 +558,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         """
         spec_dict = self.model_dump(exclude={"members": True})
         attrs = spec_dict.pop("attributes")
-        if contains_group(store, path):
+        if _contains_group(store, path):
             extant_group = zarr.group(store, path=path)
             if not self.like(extant_group):
                 if not overwrite:
@@ -561,14 +574,14 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
                     # then just return the extant group
                     return extant_group
 
-        elif contains_array(store, path) and not overwrite:
+        elif _contains_array(store, path) and not overwrite:
             msg = (
                 f"An array already exists at path {path}. "
                 "Call to_zarr with overwrite=True to overwrite the array."
             )
             raise ContainsArrayError(msg)
         else:
-            init_group(store=store, overwrite=overwrite, path=path)
+            zarr.create_group(store=store, overwrite=overwrite, path=path, zarr_format=2)
 
         result = zarr.group(store=store, path=path, overwrite=overwrite)
         result.attrs.put(attrs)
@@ -653,8 +666,8 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         character to the name of each member, and so on recursively for each sub-member.
 
         Parameters
-        ---------
-        root_path : `str`, default = ''.
+        ----------
+        root_path : `str`, default = ''
             The root path. The keys in `self.members` will be
             made relative to `root_path` when used as keys in the result dictionary.
 
@@ -748,7 +761,7 @@ def from_zarr(element: zarr.Array | zarr.Group, depth: int = -1) -> ArraySpec | 
 @overload
 def to_zarr(
     spec: ArraySpec,
-    store: BaseStore,
+    store: Store,
     path: str,
     *,
     overwrite: bool = False,
@@ -759,7 +772,7 @@ def to_zarr(
 @overload
 def to_zarr(
     spec: GroupSpec,
-    store: BaseStore,
+    store: Store,
     path: str,
     *,
     overwrite: bool = False,
@@ -769,7 +782,7 @@ def to_zarr(
 
 def to_zarr(
     spec: ArraySpec | GroupSpec,
-    store: BaseStore,
+    store: Store,
     path: str,
     *,
     overwrite: bool = False,
@@ -783,7 +796,7 @@ def to_zarr(
     ----------
     spec : ArraySpec | GroupSpec
         The `GroupSpec` or `ArraySpec` that will be serialized to storage.
-    store : zarr.BaseStore
+    store : zarr.abc.store.BaseStore
         The storage backend that will manifest the Zarr group or array modeled by `spec`.
     path : str
         The location of the Zarr group or array inside the store.
@@ -817,10 +830,10 @@ def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, Array
     sub-member.
 
     Parameters
-    ---------
-    node: `GroupSpec` | `ArraySpec`
+    ----------
+    node : `GroupSpec` | `ArraySpec`
         The node to flatten.
-    root_path: `str`, default = ''.
+    root_path : `str`, default = ''
         The root path. If `node` is a `GroupSpec`, then the keys in `node.members` will be
         made relative to `root_path` when used as keys in the result dictionary.
 
@@ -983,7 +996,7 @@ def auto_chunks(data: Any) -> tuple[int, ...]:
         return data.chunksize
     if hasattr(data, "chunks"):
         return data.chunks
-    return guess_chunks(data.shape, np.dtype(data.dtype).itemsize)
+    return _guess_chunks(data.shape, np.dtype(data.dtype).itemsize)
 
 
 def auto_attributes(data: Any) -> Mapping[str, Any]:
@@ -1043,3 +1056,55 @@ def auto_dimension_separator(data: Any) -> Literal["/", "."]:
     if hasattr(data, "dimension_separator"):
         return data.dimension_separator
     return "/"
+
+
+def _guess_chunks(shape: tuple[int, ...], typesize: int) -> tuple[int, ...]:
+    """
+    Vendored from zarr-python v2.
+
+    Guess an appropriate chunk layout for an array, given its shape and
+    the size of each element in bytes.  Will allocate chunks only as large
+    as MAX_SIZE.  Chunks are generally close to some power-of-2 fraction of
+    each axis, slightly favoring bigger values for the last index.
+    Undocumented and subject to change without warning.
+    """
+
+    CHUNK_BASE = 256 * 1024  # Multiplier by which chunks are adjusted
+    CHUNK_MIN = 128 * 1024  # Soft lower limit (128k)
+    CHUNK_MAX = 64 * 1024 * 1024  # Hard upper limit
+
+    ndims = len(shape)
+    # require chunks to have non-zero length for all dimensions
+    chunks = np.maximum(np.array(shape, dtype="=f8"), 1)
+
+    # Determine the optimal chunk size in bytes using a PyTables expression.
+    # This is kept as a float.
+    dset_size = np.prod(chunks) * typesize
+    target_size = CHUNK_BASE * (2 ** np.log10(dset_size / (1024.0 * 1024)))
+
+    if target_size > CHUNK_MAX:
+        target_size = CHUNK_MAX
+    elif target_size < CHUNK_MIN:
+        target_size = CHUNK_MIN
+
+    idx = 0
+    while True:
+        # Repeatedly loop over the axes, dividing them by 2.  Stop when:
+        # 1a. We're smaller than the target chunk size, OR
+        # 1b. We're within 50% of the target chunk size, AND
+        # 2. The chunk is smaller than the maximum chunk size
+
+        chunk_bytes = np.prod(chunks) * typesize
+
+        if (
+            chunk_bytes < target_size or abs(chunk_bytes - target_size) / target_size < 0.5
+        ) and chunk_bytes < CHUNK_MAX:
+            break
+
+        if np.prod(chunks) == 1:
+            break  # Element size larger than CHUNK_MAX
+
+        chunks[idx % ndims] = math.ceil(chunks[idx % ndims] / 2.0)
+        idx += 1
+
+    return tuple(int(x) for x in chunks)
