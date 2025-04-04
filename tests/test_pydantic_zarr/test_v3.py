@@ -1,4 +1,4 @@
-from pydantic_zarr.v3 import ArraySpec, GroupSpec, NamedConfig
+from pydantic_zarr.zarr_v3.v3 import ArraySpec, GroupSpec, NamedConfig
 
 
 def test_serialize_deserialize() -> None:

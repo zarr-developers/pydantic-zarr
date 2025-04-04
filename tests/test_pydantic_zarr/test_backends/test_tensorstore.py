@@ -1,11 +1,13 @@
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
 import tensorstore as ts
 
 import pydantic_zarr.v2 as v2
-from pydantic_zarr.backends._tensorstore import (
+from pydantic_zarr.backends._tensorstore.models import FileDriver, KVStore, MemoryDriver
+from pydantic_zarr.backends._tensorstore.v2 import (
     SEPARATOR,
     V2_ARRAY_KEY,
     V2_GROUP_KEY,
@@ -16,11 +18,10 @@ from pydantic_zarr.backends._tensorstore import (
     read_group_v2,
     read_members_v2,
 )
-from pydantic_zarr.backends._tensorstore.models import FileDriver, KVStore, MemoryDriver
 
 
 @pytest.fixture
-def kvstore(request, tmp_path):
+def kvstore(request: pytest.FixtureRequest, tmp_path: Path) -> FileDriver | MemoryDriver:
     if request.param == "file":
         return FileDriver(path=str(tmp_path) + "/")
     elif request.param == "memory":
@@ -76,7 +77,7 @@ async def test_read_members_v2(kvstore: KVStore) -> None:
     _ = store.write("array/.zarray", json.dumps(a_metadata)).result()
     print(store.path)
     result = await read_members_v2(store)
-    assert result == {b"": v2.Group(**g_metadata), b"array": v2.ArraySpec(**a_metadata)}
+    assert result == {b"": v2.GroupSpec(**g_metadata), b"array": v2.ArraySpec(**a_metadata)}
 
 
 @pytest.mark.parametrize("kvstore", ["memory", "file"], indirect=True)
@@ -99,17 +100,17 @@ async def test_create_array_v2(kvstore: KVStore, dtype: str, shape: tuple[int, .
 
 @pytest.mark.parametrize("kvstore", ["memory", "file"], indirect=True)
 @pytest.mark.parametrize("attrs", [{}, {"foo": "bar"}])
-async def test_create_group_v2(kvstore: KVStore, attrs: dict[str, str]):
+async def test_create_group_v2(kvstore: KVStore, attrs: dict[str, str]) -> None:
     """
     Test that creating a group with attributes works as expected.
     """
-    model = v2.Group(attributes=attrs)
+    model = v2.GroupSpec(attributes=attrs)
     store = await ts.KvStore.open(kvstore.model_dump(exclude_none=True))
     _ = await create_group_v2(model, kvstore=store)
     assert await read_group_v2(store) == model
 
 
-def test_get_member_keys():
+def test_get_member_keys() -> None:
     node_keys = (
         V2_GROUP_KEY,
         SEPARATOR.join([b"foo", V2_GROUP_KEY]),

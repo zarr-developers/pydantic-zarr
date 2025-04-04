@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import (
+    TYPE_CHECKING,
     Annotated,
     Any,
     Generic,
@@ -21,17 +22,26 @@ import numpy.typing as npt
 from pydantic import AfterValidator, model_validator
 from pydantic.functional_validators import BeforeValidator
 
-from pydantic_zarr.core import (
+from pydantic_zarr.base import (
+    ArrayLike,
+    ArrayV2Config,
+    GroupLike,
     IncEx,
     StrictBase,
+    TShape,
     ensure_key_no_path,
     model_like,
 )
+from pydantic_zarr.engine import zarrify_array_v2
+
+if TYPE_CHECKING:
+    from pydantic_zarr.io_proxy import ZarrV2IO
+    from pydantic_zarr.zarr_v2.array_proxy import ArrayV2Proxy
 
 BaseAttr = Mapping[str, object]
 BaseItem = Union["GroupSpec", "ArraySpec"]
-TAttr_co = TypeVar("TAttr_co", bound=BaseAttr, covariant=True)
-TItem_co = TypeVar("TItem_co", bound=BaseItem, covariant=True)
+TAttr = TypeVar("TAttr", bound=BaseAttr)
+TItem = TypeVar("TItem", bound=BaseItem)
 DimensionSeparator = Literal["/", "."]
 
 
@@ -50,7 +60,7 @@ def stringify_dtype(value: npt.DTypeLike) -> str:
     A numpy dtype string representation of `value`.
     """
     # TODO: handle string dtypes and structured dtypes
-    return np.dtype(value).str
+    return np.dtype(value).str  # type: ignore[no-any-return]
 
 
 DTypeString = Annotated[str, BeforeValidator(stringify_dtype)]
@@ -64,7 +74,7 @@ class CodecProtocol(Protocol):
 def dictify_codec(value: dict[str, Any] | CodecProtocol) -> dict[str, Any]:
     """
     Ensure that a `numcodecs.abc.Codec` is converted to a `dict`. If the input is not an
-    insance of `numcodecs.abc.Codec`, then it is assumed to be a `dict` with string keys
+    instance of `numcodecs.abc.Codec`, then it is assumed to be a `dict` with string keys
     and it is returned unaltered.
 
     Parameters
@@ -110,31 +120,25 @@ def parse_dimension_separator(data: object) -> DimensionSeparator:
 
 CodecDict = Annotated[dict[str, Any], BeforeValidator(dictify_codec)]
 
+T = TypeVar("T")
 
-class NodeSpec(StrictBase):
+
+def nullify_empty_list(value: list[T] | None) -> list[T] | None:
+    if value is not None and len(value) == 0:
+        return None
+    return value
+
+
+class ArraySpec(StrictBase):
     """
-    The base class for V2 `ArraySpec` and `GroupSpec`.
-
-    Attributes
-    ----------
-
-    zarr_format: Literal[2]
-        The Zarr version represented by this node. Must be 2.
-    """
-
-    zarr_format: Literal[2] = 2
-
-
-class ArrayMetadataSpec(NodeSpec):
-    """
-    A model of a Zarr Version 2 Array metadata. The specification for the data structure being modeled by
-    this class can be found in the
+    A model of a Zarr Version 2 array metadata document.
+    The specification for the data structure being modeled by this class can be found in the
     [Zarr specification](https://zarr.readthedocs.io/en/stable/spec/v2.html#arrays).
 
     Attributes
     ----------
-    attributes: TAttr, default = {}
-        User-defined metadata associated with this array. Should be JSON-serializable.
+    zarr_format: Literal[2] = 2
+        The Zarr format version of this metadata.
     shape: tuple[int, ...]
         The shape of this array.
     dtype: str
@@ -158,12 +162,14 @@ class ArrayMetadataSpec(NodeSpec):
         The default is "/".
     """
 
+    attributes: TAttr
+    zarr_format: Literal[2] = 2
     shape: tuple[int, ...]
     chunks: tuple[int, ...]
     dtype: DTypeString
     fill_value: int | float | None = 0
     order: Literal["C", "F"] = "C"
-    filters: list[CodecDict] | None = None
+    filters: Annotated[list[CodecDict] | None, BeforeValidator(nullify_empty_list)] = None
     dimension_separator: Annotated[
         Literal["/", "."], BeforeValidator(parse_dimension_separator)
     ] = "/"
@@ -185,7 +191,7 @@ class ArrayMetadataSpec(NodeSpec):
     @classmethod
     def from_arraylike(
         cls,
-        array: npt.NDArray[Any],
+        array: ArrayLike[TShape] | ArraySpec[TAttr],
         *,
         chunks: Literal["auto"] | tuple[int, ...] = "auto",
         fill_value: Literal["auto"] | float | None = "auto",
@@ -193,6 +199,7 @@ class ArrayMetadataSpec(NodeSpec):
         filters: Literal["auto"] | list[CodecDict] | None = "auto",
         dimension_separator: Literal["auto", "/", "."] = "auto",
         compressor: Literal["auto"] | CodecDict | None = "auto",
+        attributes: Literal["auto"] | TAttr = "auto",
     ) -> Self:
         """
         Create an `ArraySpec` from an array-like object. This is a convenience method for when Zarr array will be modelled from an existing array.
@@ -237,215 +244,42 @@ class ArrayMetadataSpec(NodeSpec):
 
 
         """
-        shape_actual = array.shape
-        dtype_str = stringify_dtype(array.dtype)
-
-        if chunks == "auto":
-            chunks_actual = auto_chunks(array)
+        metadata: ArrayV2Config
+        if isinstance(array, ArraySpec):
+            metadata = array.model_dump()  # type: ignore[assignment]
         else:
-            chunks_actual = chunks
+            metadata = zarrify_array_v2(array)
 
-        if fill_value == "auto":
-            fill_value_actual = auto_fill_value(array)
-        else:
-            fill_value_actual = fill_value
+        if chunks != "auto":
+            metadata["chunks"] = chunks
 
-        if compressor == "auto":
-            compressor_actual = auto_compresser(array)
-        else:
-            compressor_actual = compressor
+        if fill_value != "auto":
+            metadata["fill_value"] = fill_value
 
-        if filters == "auto":
-            filters_actual = auto_filters(array)
-        else:
-            filters_actual = filters
+        if compressor != "auto":
+            metadata["compressor"] = compressor
 
-        if order == "auto":
-            order_actual = auto_order(array)
-        else:
-            order_actual = order
+        if filters != "auto":
+            metadata["filters"] = filters
 
-        if dimension_separator == "auto":
-            dimension_separator_actual = auto_dimension_separator(array)
-        else:
-            dimension_separator_actual = dimension_separator
+        if order != "auto":
+            metadata["order"] = order
 
-        return cls(
-            shape=shape_actual,
-            dtype=dtype_str,
-            chunks=chunks_actual,
-            fill_value=fill_value_actual,
-            order=order_actual,
-            compressor=compressor_actual,
-            filters=filters_actual,
-            dimension_separator=dimension_separator_actual,
-        )
+        if dimension_separator != "auto":
+            metadata["dimension_separator"] = dimension_separator
 
+        if attributes != "auto":
+            metadata["attributes"] = attributes
 
-class ArraySpec(ArrayMetadataSpec, Generic[TAttr_co]):
-    """
-    A model of a Zarr Version 2 Array. The specification for the data structure being modeled by
-    this class can be found in the
-    [Zarr specification](https://zarr.readthedocs.io/en/stable/spec/v2.html#arrays).
+        return cls(**metadata)
 
-    Attributes
-    ----------
-    attributes: TAttr, default = {}
-        User-defined metadata associated with this array. Should be JSON-serializable.
-    shape: tuple[int, ...]
-        The shape of this array.
-    dtype: str
-        The data type of this array.
-    chunks: Tuple[int, ...]
-        The chunk size for this array.
-    order: "C" | "F", default = "C"
-        The memory order of this array. Must be either "C", which designates "C order",
-        AKA lexicographic ordering or "F", which designates "F order", AKA colexicographic ordering.
-        The default is "C".
-    fill_value: FillValue, default = 0
-        The fill value for this array. The default is 0.
-    compressor: CodecDict | None
-        A JSON-serializable representation of a compression codec, or None. The default is None.
-    filters: List[CodecDict] | None, default = None
-        A list of JSON-serializable representations of compression codec, or None.
-        The default is None.
-    dimension_separator: "." | "/", default = "/"
-        The character used for partitioning the different dimensions of a chunk key.
-        Must be either "/" or ".", or absent, in which case it is interpreted as ".".
-        The default is "/".
-    """
-
-    attributes: TAttr_co = cast(TAttr_co, {})
-
-    @classmethod
-    def from_arraylike(
-        cls,
-        array: npt.NDArray[Any],
-        *,
-        chunks: Literal["auto"] | tuple[int, ...] = "auto",
-        attributes: Literal["auto"] | TAttr_co = "auto",
-        fill_value: Literal["auto"] | float | None = "auto",
-        order: Literal["auto", "C", "F"] = "auto",
-        filters: Literal["auto"] | list[CodecDict] | None = "auto",
-        dimension_separator: Literal["auto", "/", "."] = "auto",
-        compressor: Literal["auto"] | CodecDict | None = "auto",
-    ) -> Self:
-        """
-        Create an `ArraySpec` from an array-like object. This is a convenience method for when Zarr array will be modelled from an existing array.
-        This method takes nearly the same arguments as the `ArraySpec` constructor, minus `shape` and `dtype`, which will be inferred from the `array` argument.
-        Additionally, this method accepts the string "auto" as a parameter for all other `ArraySpec` attributes, in which case these attributes will be
-        inferred from the `array` argument, with a fallback value equal to the default `ArraySpec` parameters.
-
-        Parameters
-        ----------
-        array : an array-like object.
-            Must have `shape` and `dtype` attributes.
-            The `shape` and `dtype` of this object will be used to construct an `ArraySpec`.
-        attributes: "auto" | TAttr, default = "auto"
-            User-defined metadata associated with this array. Should be JSON-serializable. The default is "auto", which means that `array.attributes` will be used,
-            with a fallback value of the empty dict `{}`.
-        chunks: "auto" | tuple[int, ...], default = "auto"
-            The chunks for this `ArraySpec`. If `chunks` is "auto" (the default), then this method first checks if `array` has a `chunksize` attribute, using it if present.
-            This supports copying chunk sizes from dask arrays. If `array` does not have `chunksize`, then a routine from `zarr-python` is used to guess the chunk size,
-            given the `shape` and `dtype` of `array`. If `chunks` is not auto, then it should be a tuple of ints.
-        order: "auto" | "C" | "F", default = "auto"
-            The memory order of the `ArraySpec`. One of "auto", "C", or "F". The default is "auto", which means that, if present, `array.order`
-            will be used, falling back to "C" if `array` does not have an `order` attribute.
-        fill_value: "auto" | int | float | None, default = "auto"
-            The fill value for this array. Either "auto" or FillValue. The default is "auto", which means that `array.fill_value` will be used if that attribute exists, with a fallback value of 0.
-        compressor: "auto" | CodecDict | None, default = "auto"
-            The compressor for this `ArraySpec`. One of "auto", a JSON-serializable representation of a compression codec, or `None`. The default is "auto", which means that `array.compressor` attribute will be used, with a fallback value of `None`.
-        filters: "auto" | List[CodecDict] | None, default = "auto"
-            The filters for this `ArraySpec`. One of "auto", a list of JSON-serializable representations of compression codec, or `None`. The default is "auto", which means that the `array.filters` attribute will be
-            used, with a fallback value of `None`.
-        dimension_separator: "auto" | "." | "/", default = "auto"
-            Sets the character used for partitioning the different dimensions of a chunk key.
-            Must be one of "auto", "/" or ".". The default is "auto", which means that `array.dimension_separator` is used, with a fallback value of "/".
-        Returns
-        -------
-        ArraySpec
-            An instance of `ArraySpec` with `shape` and `dtype` attributes derived from `array`.
-
-        Examples
-        --------
-        >>> from pydantic_zarr.v2 import ArraySpec
-        >>> import numpy as np
-        >>> x = ArraySpec.from_array(np.arange(10))
-        >>> x
-        ArraySpec(zarr_format=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)
-
-
-        """
-
-        metadata_model = super().from_arraylike(
-            array=array,
-            chunks=chunks,
-            fill_value=fill_value,
-            order=order,
-            filters=filters,
-            dimension_separator=dimension_separator,
-            compressor=compressor,
-        )
-        if attributes == "auto":
-            attributes_actual = auto_attributes(array)
-        else:
-            attributes_actual = attributes
-        return cls(
-            shape=metadata_model.shape,
-            chunks=metadata_model.chunks,
-            dtype=metadata_model.dtype,
-            fill_value=metadata_model.fill_value,
-            order=metadata_model.order,
-            filters=metadata_model.filters,
-            dimension_separator=metadata_model.dimension_separator,
-            compressor=metadata_model.compressor,
-            attributes=attributes_actual,
-        )
-
-    def from_store(cls, array: zarr.Array) -> Self:
-        """
-        Create an `ArraySpec` from an instance of `zarr.Array`.
-
-        Parameters
-        ----------
-        array : zarr.Array
-
-        Returns
-        -------
-        ArraySpec
-            An instance of `ArraySpec` with properties derived from `array`.
-
-        Examples
-        --------
-        >>> import zarr
-        >>> from pydantic_zarr.v2 import ArraySpec
-        >>> x = zarr.create((10,10))
-        >>> ArraySpec.from_zarr(x)
-        ArraySpec(zarr_version=2, attributes={}, shape=(10, 10), chunks=(10, 10), dtype='<f8', fill_value=0.0, order='C', filters=None, dimension_separator='.', compressor={'id': 'blosc', 'cname': 'lz4', 'clevel': 5, 'shuffle': 1, 'blocksize': 0})
-
-        """
-        return cls(
-            shape=array.shape,
-            chunks=array.chunks,
-            dtype=str(array.dtype),
-            # explicitly cast to numpy type and back to python
-            # so that int 0 isn't serialized as 0.0
-            fill_value=array.dtype.type(array.fill_value).tolist(),
-            order=array.order,
-            filters=array.filters,
-            dimension_separator=array._dimension_separator,
-            compressor=array.compressor,
-            attributes=array.attrs.asdict(),
-        )
-
-    def to_zarr(
+    def persist(
         self,
-        store: BaseStore,
+        store: ZarrV2IO,
         path: str,
         *,
         overwrite: bool = False,
-        **kwargs: object,
-    ) -> zarr.Array:
+    ) -> ArrayV2Proxy[Any]:
         """
         Serialize an `ArraySpec` to a Zarr array at a specific path in a Zarr store. This operation
         will create metadata documents in the store, but will not write any chunks.
@@ -462,49 +296,18 @@ class ArraySpec(ArrayMetadataSpec, Generic[TAttr_co]):
             Additional keyword arguments are passed to `zarr.create`.
         Returns
         -------
-        zarr.Array
-            A Zarr array that is structurally identical to `self`.
+        ArrayProxy
+            A wrapper around a zarr array that is structurally identical to `self`.
         """
-        try:
-            _require_zarr_python()
-        except ImportError as e:
-            raise NotImplementedError("to_zarr requires zarr-python.") from e
-
-        spec_dict = self.model_dump()
-        attrs = spec_dict.pop("attributes")
-        if self.compressor is not None:
-            spec_dict["compressor"] = numcodecs.get_codec(spec_dict["compressor"])
-        if self.filters is not None:
-            spec_dict["filters"] = [numcodecs.get_codec(f) for f in spec_dict["filters"]]
-        if contains_array(store, path):
-            extant_array = zarr.open_array(store, path=path, mode="r")
-
-            if not self.like(extant_array):
-                if not overwrite:
-                    msg = (
-                        f"An array already exists at path {path}. "
-                        "That array is structurally dissimilar to the array you are trying to "
-                        "store. Call to_zarr with overwrite=True to overwrite that array."
-                    )
-                    raise ContainsArrayError(msg)
-            else:
-                if not overwrite:
-                    # extant_array is read-only, so we make a new array handle that
-                    # takes **kwargs
-                    return zarr.open_array(
-                        store=extant_array.store, path=extant_array.path, **kwargs
-                    )
-        result = zarr.create(store=store, path=path, overwrite=overwrite, **spec_dict, **kwargs)
-        result.attrs.put(attrs)
-        return result
+        return store.create_array(**self.model_dump(), path=path, overwrite=overwrite)
 
     def like(
         self,
-        other: ArraySpec | zarr.Array,
+        other: ArrayLike,
         *,
         include: IncEx = None,
         exclude: IncEx = None,
-    ):
+    ) -> bool:
         """
         Compare am `ArraySpec` to another `ArraySpec` or a `zarr.Array`, parameterized over the
         fields to exclude or include in the comparison. Models are first converted to `dict` via the
@@ -548,26 +351,25 @@ class ArraySpec(ArrayMetadataSpec, Generic[TAttr_co]):
         >>> print(x_model.like(y, exclude={'attributes'}))
         True
         """
-
-        other_parsed: ArraySpec
-        if isinstance(other, zarr.Array):
-            other_parsed = ArraySpec.from_store(other)
+        other_parsed: ArraySpec[Any]
+        if not isinstance(other, ArraySpec):
+            other_parsed = ArraySpec.from_arraylike(other)
         else:
             other_parsed = other
 
-        result = model_like(self, other_parsed, include=include, exclude=exclude)
-        return result
+        return model_like(self, other_parsed, include=include, exclude=exclude)
 
 
-class LeafGroupSpec(NodeSpec, Generic[TAttr_co]):
+class LeafGroupSpec(StrictBase, Generic[TAttr]):
     """
     A Zarr group with no members.
     """
 
-    attributes: TAttr_co
+    zarr_format: Literal[2] = 2
+    attributes: TAttr = {}
 
 
-class GroupSpec(NodeSpec, Generic[TAttr_co, TItem_co]):
+class GroupSpec(LeafGroupSpec[TAttr], Generic[TAttr, TItem]):
     """
     A model of a Zarr Version 2 Group with members.
     The specification for the data structure being modeled by this
@@ -576,7 +378,6 @@ class GroupSpec(NodeSpec, Generic[TAttr_co, TItem_co]):
 
     Attributes
     ----------
-
     attributes: TAttr, default = {}
         The user-defined attributes of this group. Should be JSON-serializable.
     members: dict[str, TItem], default = {}
@@ -586,15 +387,27 @@ class GroupSpec(NodeSpec, Generic[TAttr_co, TItem_co]):
         are either `ArraySpec` or `GroupSpec`.
     """
 
-    attributes: TAttr_co = cast(TAttr_co, {})
-    members: Annotated[Mapping[str, TItem_co], AfterValidator(ensure_key_no_path)] = {}
+    members: Annotated[Mapping[str, TItem], AfterValidator(ensure_key_no_path)] = {}
+
+    @classmethod
+    def from_grouplike(cls, group: GroupLike) -> Self:
+        """
+        Create a `GroupSpec` from a group-like object
+        """
+        members: dict[str, ArraySpec[Any] | GroupSpec[Any, Any]] = {}
+        for name, member in group.members(max_depth=None):
+            if hasattr(member, "shape"):
+                members[name] = ArraySpec.from_arraylike(member)  # type: ignore[arg-type]
+            elif hasattr(member, "members"):
+                members[name] = GroupSpec.from_grouplike(member)
+        return cls(attributes=group.attrs, members=members)
 
     def like(
         self,
-        other: GroupSpec | zarr.Group,
+        other: GroupLike | GroupSpec[Any, Any],
         include: IncEx = None,
         exclude: IncEx = None,
-    ):
+    ) -> bool:
         """
         Compare a `GroupSpec` to another `GroupSpec` or a `zarr.Group`, parameterized over the
         fields to exclude or include in the comparison. Models are first converted to dict via the
@@ -642,16 +455,15 @@ class GroupSpec(NodeSpec, Generic[TAttr_co, TItem_co]):
         True
         """
 
-        other_parsed: GroupSpec
-        if isinstance(other, zarr.Group):
-            other_parsed = GroupSpec.from_zarr(other)
-        else:
+        other_parsed: GroupSpec[Any, Any]
+        if isinstance(other, GroupSpec):
             other_parsed = other
+        else:
+            other_parsed = GroupSpec.from_grouplike(other)
 
-        result = model_like(self, other_parsed, include=include, exclude=exclude)
-        return result
+        return model_like(self, other_parsed, include=include, exclude=exclude)
 
-    def to_flat(self, root_path: str = ""):
+    def to_flat(self, root_path: str = "") -> dict[str, GroupSpec[Any, Any] | ArraySpec[Any]]:
         """
         Flatten this `GroupSpec`.
         This method returns a `dict` with string keys and values that are `GroupSpec` or
@@ -688,7 +500,7 @@ class GroupSpec(NodeSpec, Generic[TAttr_co, TItem_co]):
         return to_flat(self, root_path=root_path)
 
     @classmethod
-    def from_flat(cls, data: dict[str, ArraySpec | GroupSpec]):
+    def from_flat(cls, data: dict[str, ArraySpec[Any] | GroupSpec[Any]]) -> Self:
         """
         Create a `GroupSpec` from a flat hierarchy representation. The flattened hierarchy is a
         `dict` with the following constraints: keys must be valid paths; values must
@@ -754,63 +566,6 @@ def from_zarr(element: zarr.Array | zarr.Group, depth: int = -1) -> ArraySpec | 
         return result
 
     result = GroupSpec.from_zarr(element, depth=depth)
-    return result
-
-
-@overload
-def to_zarr(
-    spec: ArraySpec,
-    store: BaseStore,
-    path: str,
-    *,
-    overwrite: bool = False,
-    **kwargs,
-) -> zarr.Array: ...
-
-
-@overload
-def to_zarr(
-    spec: GroupSpec,
-    store: BaseStore,
-    path: str,
-    *,
-    overwrite: bool = False,
-    **kwargs,
-) -> zarr.Group: ...
-
-
-def to_zarr(
-    spec: ArraySpec | GroupSpec,
-    store: BaseStore,
-    path: str,
-    *,
-    overwrite: bool = False,
-    **kwargs,
-) -> zarr.Array | zarr.Group:
-    """
-    Serialize a `GroupSpec` or `ArraySpec` to a Zarr group or array at a specific path in
-    a Zarr store.
-
-    Parameters
-    ----------
-    spec : ArraySpec | GroupSpec
-        The `GroupSpec` or `ArraySpec` that will be serialized to storage.
-    store : zarr.BaseStore
-        The storage backend that will manifest the Zarr group or array modeled by `spec`.
-    path : str
-        The location of the Zarr group or array inside the store.
-    overwrite : bool, default = False
-        Whether to overwrite existing objects in storage to create the Zarr group or array.
-    **kwargs
-        Additional keyword arguments will be
-    Returns
-    -------
-    zarr.Array | zarr.Group
-        A `zarr.Group` or `zarr.Array` that is structurally equivalent to `spec`.
-        This operation will create metadata documents in the store.
-
-    """
-    result = spec.to_zarr(store, path, overwrite=overwrite, **kwargs)
     return result
 
 
@@ -988,74 +743,55 @@ def from_flat_group(data: dict[str, ArraySpec | GroupSpec]) -> GroupSpec:
     return GroupSpec(members={**member_groups, **member_arrays}, attributes=root_node.attributes)
 
 
-def auto_chunks(data: Any) -> tuple[int, ...]:
+def auto_chunks(data: object) -> tuple[int, ...]:
     """
-    Guess chunks from:
-      input with a `chunksize` attribute, or
-      input with a `chunks` attribute, or,
-      input with `shape` and `dtype` attributes
+    Get chunks from the array-like data
     """
-    if hasattr(data, "chunksize"):
-        return data.chunksize
-    if hasattr(data, "chunks"):
-        return data.chunks
-    return guess_chunks(data.shape, np.dtype(data.dtype).itemsize)
+    array_proxy = zarrify_array_v2(data)
+    return array_proxy.chunks()
 
 
 def auto_attributes(data: Any) -> Mapping[str, Any]:
-    """
-    Guess attributes from:
-        input with an `attrs` attribute, or
-        input with an `attributes` attribute,
-        or anything (returning {})
-    """
-    if hasattr(data, "attrs"):
-        return data.attrs
-    if hasattr(data, "attributes"):
-        return data.attributes
-    return {}
+    """ """
+    array_proxy = zarrify_array(data)
+    return array_proxy.attributes()
 
 
 def auto_fill_value(data: Any) -> Any:
     """
     Guess fill value from an input with a `fill_value` attribute, returning 0 otherwise.
     """
-    if hasattr(data, "fill_value"):
-        return data.fill_value
-    return 0
+    array_proxy = zarrify_array(data)
+    return array_proxy.fill_value()
 
 
-def auto_compresser(data: Any) -> Codec | None:
+def auto_compressor(data: Any) -> dict[str, Any] | None:
     """
     Guess compressor from an input with a `compressor` attribute, returning `None` otherwise.
     """
-    if hasattr(data, "compressor"):
-        return data.compressor
-    return None
+    array_proxy = zarrify_array(data)
+    return array_proxy.compressor()
 
 
-def auto_filters(data: Any) -> list[Codec] | None:
+def auto_filters(data: Any) -> list[dict[str, Any]] | None:
     """
     Guess filters from an input with a `filters` attribute, returning `None` otherwise.
     """
-    if hasattr(data, "filters"):
-        return data.filters
-    return None
+    array_proxy = zarrify_array(data)
+    return array_proxy.filters()
 
 
 def auto_order(data: Any) -> Literal["C", "F"]:
     """
     Guess array order from an input with an `order` attribute, returning "C" otherwise.
     """
-    if hasattr(data, "order"):
-        return data.order
-    return "C"
+    array_proxy = zarrify_array(data)
+    return array_proxy.order()
 
 
-def auto_dimension_separator(data: Any) -> Literal["/", "."]:
+def auto_dimension_separator(data: Any) -> DimensionSeparator:
     """
     Guess dimension separator from an input with a `dimension_separator` attribute, returning "/" otherwise.
     """
-    if hasattr(data, "dimension_separator"):
-        return data.dimension_separator
-    return "/"
+    array_proxy = zarrify_array(data)
+    return array_proxy.dimension_separator()

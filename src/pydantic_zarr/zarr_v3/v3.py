@@ -16,8 +16,8 @@ import numpy.typing as npt
 import zarr
 from zarr.storage import BaseStore
 
-from pydantic_zarr.core import StrictBase
-from pydantic_zarr.v2 import DTypeString
+from pydantic_zarr.base import StrictBase
+from pydantic_zarr.zarr_v2.v2 import DTypeString
 
 TAttr = TypeVar("TAttr", bound=dict[str, Any])
 TItem = TypeVar("TItem", bound=Union["GroupSpec", "ArraySpec"])

@@ -4,7 +4,7 @@ import asyncio
 import json
 from collections import defaultdict
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 import tensorstore as ts
@@ -27,27 +27,27 @@ async def read_attrs_v2(store: ts.KvStore) -> dict[str, Any]:
     zattrs_result = await store.read(V2_ATTRS_KEY)
     if zattrs_result.state == "missing":
         return {}
-    return json.loads(zattrs_result.value)
+    return json.loads(zattrs_result.value)  # type: ignore[no-any-return]
 
 
 async def read_group_v2(store: ts.KvStore) -> _v2.Group:
     zgroup_result = await store.read(V2_GROUP_KEY)
     if zgroup_result.state == "missing":
-        raise FileNotFoundError("No .zgroup file found in the store.")
+        raise FileNotFoundError(f"No {V2_GROUP_KEY.decode()} file found in the store.")
     attributes = await read_attrs_v2(store)
-    return _v2.Group(attributes=attributes)
+    return _v2.LeafGroupSpec(attributes=attributes)
 
 
 async def read_array_v2(store: ts.KvStore) -> _v2.ArraySpec:
     zarray_result = await store.read(V2_ARRAY_KEY)
     if zarray_result.state == "missing":
-        raise FileNotFoundError(f"No {V2_ARRAY_KEY} file found in the store.")
+        raise FileNotFoundError(f"No {V2_ARRAY_KEY.decode()} file found in the store.")
     zarray_metadata = json.loads(zarray_result.value)
     attributes = await read_attrs_v2(store)
     return _v2.ArraySpec(**zarray_metadata, attributes=attributes)
 
 
-async def read_node_v2(store: ts.KvStore) -> _v2.ArraySpec | _v2.Group:
+async def read_node_v2(store: ts.KvStore) -> _v2.ArraySpec | _v2.LeafGroupSpec:
     try:
         return await read_array_v2(store)
     except FileNotFoundError as e:
@@ -89,7 +89,7 @@ def get_member_keys(prefixes: Sequence[bytes]) -> tuple[bytes, ...]:
     return member_prefixes
 
 
-async def read_members_v2(store: ts.KvStore) -> dict[bytes, _v2.ArraySpec | _v2.Group]:
+async def read_members_v2(store: ts.KvStore) -> dict[bytes, _v2.ArraySpec | _v2.LeafGroupSpec]:
     """
     Read the members of a group.
     """
@@ -114,18 +114,13 @@ async def read_members_v2(store: ts.KvStore) -> dict[bytes, _v2.ArraySpec | _v2.
     }
 
 
-async def read_group_v3(store: ts.KvStore):
-    result = await store.read("zarr.json")
-    return result
-
-
-async def create_group_v2(model: _v2.Group, *, kvstore: KVStore) -> Any:
+async def create_group_v2(model: _v2.LeafGroupSpec, *, kvstore: KVStore) -> Any:
     futs = []
     zgroup_meta = model.model_dump(exclude={"attributes"}, exclude_none=True)
     attrs_meta = model.attributes
     if len(attrs_meta) > 0:
-        futs.append(kvstore.write(b".zattrs", json.dumps(attrs_meta)))
-    futs.append(kvstore.write(b".zgroup", json.dumps(zgroup_meta)))
+        futs.append(kvstore.write(V2_ATTRS_KEY, json.dumps(attrs_meta)))
+    futs.append(kvstore.write(V2_GROUP_KEY, json.dumps(zgroup_meta)))
     return await asyncio.gather(*futs, return_exceptions=True)
 
 

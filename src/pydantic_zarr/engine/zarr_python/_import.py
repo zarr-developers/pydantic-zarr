@@ -21,3 +21,12 @@ def _require_zarr_python() -> None:
             "re-install this package with `pip install pydantic-zarr[zarr]`, ",
         )
         raise ImportError(msg)
+
+
+ZARR_PYTHON_INSTALLED = False
+
+try:
+    _require_zarr_python()
+    ZARR_PYTHON_INSTALLED = True
+except ImportError:
+    pass
