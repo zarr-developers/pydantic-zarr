@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal
 
 import numpy as np
 import numpy.typing as npt
 import pytest
 from pydantic import ValidationError
+from typing_extensions import TypedDict
 from zarr.errors import ContainsGroupError
 
 from pydantic_zarr.base import ArrayV2Config
@@ -103,7 +104,7 @@ def test_array_spec(
         zarr_format=2,
     )
 
-    spec = ArraySpec.from_arraylike(array)
+    spec = ArraySpec.from_array(array)
 
     observed = ArraySpec(
         **json.loads(store[".zarray"].to_bytes()),
@@ -178,7 +179,7 @@ def test_array_spec_from_array(
     # remove all the keyword arguments that should be defaulted
     kwargs_out = dict(filter(lambda kvp: kvp[1] != "omit", kwargs_out.items()))
 
-    spec = ArraySpec.from_arraylike(array, **kwargs_out)
+    spec = ArraySpec.from_array(array, **kwargs_out)
     # arrayspec should round-trip from_array with no arguments
     assert spec.from_arraylike(spec) == spec
     meta_dict = zarrify_array_v2(array)
@@ -246,7 +247,6 @@ def test_serialize_deserialize_groupspec(
     filters: tuple[str, ...] | None,
 ) -> None:
     import numcodecs
-    import zarr
     from numcodecs.abc import Codec  # noqa: TC002
 
     _filters: list[Codec] | None
@@ -273,7 +273,7 @@ def test_serialize_deserialize_groupspec(
     class ArrayAttrs(TypedDict):
         scale: list[float]
 
-    store = zarr.MemoryStore()
+    store = {}
 
     spec = GroupSpec[RootAttrs, ArraySpec | SubGroup](
         attributes=RootAttrs(foo=10, bar=[0, 1, 2]),
@@ -429,7 +429,7 @@ def test_validation() -> None:
 @pytest.mark.parametrize("dtype", [None, "uint8", "float32"])
 def test_from_array(shape: tuple[int, ...], dtype: str | None) -> None:
     template = np.zeros(shape=shape, dtype=dtype)
-    spec = ArraySpec.from_arraylike(template)
+    spec = ArraySpec.from_array(template)
 
     assert spec.shape == template.shape
     assert np.dtype(spec.dtype) == np.dtype(template.dtype)
@@ -438,7 +438,7 @@ def test_from_array(shape: tuple[int, ...], dtype: str | None) -> None:
 
     chunks = template.ndim * (1,)
     attrs = {"foo": 100}
-    spec2 = ArraySpec.from_arraylike(template, chunks=chunks, attributes=attrs)
+    spec2 = ArraySpec.from_array(template, chunks=chunks, attributes=attrs)
     assert spec2.chunks == chunks
     assert spec2.attributes == attrs
 
@@ -453,17 +453,17 @@ def test_member_name(data: str) -> None:
     ("data", "expected"),
     [
         (
-            ArraySpec.from_arraylike(np.arange(10)),
-            {"": ArraySpec.from_arraylike(np.arange(10))},
+            ArraySpec.from_array(np.arange(10)),
+            {"": ArraySpec.from_array(np.arange(10))},
         ),
         (
             GroupSpec(
                 attributes={"foo": 10},
-                members={"a": ArraySpec.from_arraylike(np.arange(5), attributes={"foo": 100})},
+                members={"a": ArraySpec.from_array(np.arange(5), attributes={"foo": 100})},
             ),
             {
                 "": GroupSpec(attributes={"foo": 10}, members={}),
-                "/a": ArraySpec.from_arraylike(np.arange(5), attributes={"foo": 100}),
+                "/a": ArraySpec.from_array(np.arange(5), attributes={"foo": 100}),
             },
         ),
         (
@@ -472,18 +472,16 @@ def test_member_name(data: str) -> None:
                 members={
                     "a": GroupSpec(
                         attributes={"foo": 10},
-                        members={
-                            "a": ArraySpec.from_arraylike(np.arange(5), attributes={"foo": 100})
-                        },
+                        members={"a": ArraySpec.from_array(np.arange(5), attributes={"foo": 100})},
                     ),
-                    "b": ArraySpec.from_arraylike(np.arange(2), attributes={"foo": 3}),
+                    "b": ArraySpec.from_array(np.arange(2), attributes={"foo": 3}),
                 },
             ),
             {
                 "": GroupSpec(attributes={}, members={}),
                 "/a": GroupSpec(attributes={"foo": 10}, members={}),
-                "/a/a": ArraySpec.from_arraylike(np.arange(5), attributes={"foo": 100}),
-                "/b": ArraySpec.from_arraylike(np.arange(2), attributes={"foo": 3}),
+                "/a/a": ArraySpec.from_array(np.arange(5), attributes={"foo": 100}),
+                "/b": ArraySpec.from_array(np.arange(2), attributes={"foo": 3}),
             },
         ),
     ],
@@ -498,7 +496,7 @@ def test_flatten_unflatten(
 
 # todo: parametrize
 def test_array_like() -> None:
-    a = ArraySpec.from_arraylike(np.arange(10))
+    a = ArraySpec.from_array(np.arange(10))
     assert a.like(a)
 
     b = a.model_copy(update={"dtype": "uint8"})
@@ -517,8 +515,8 @@ def test_group_like() -> None:
     tree = {
         "": GroupSpec(attributes={"path": ""}, members=None),
         "/a": GroupSpec(attributes={"path": "/a"}, members=None),
-        "/b": ArraySpec.from_arraylike(np.arange(10), attributes={"path": "/b"}),
-        "/a/b": ArraySpec.from_arraylike(np.arange(10), attributes={"path": "/a/b"}),
+        "/b": ArraySpec.from_array(np.arange(10), attributes={"path": "/b"}),
+        "/a/b": ArraySpec.from_array(np.arange(10), attributes={"path": "/a/b"}),
     }
     group = GroupSpec.from_flat(tree)
     assert group.like(group)
@@ -534,7 +532,7 @@ def test_from_zarr_depth() -> None:
         "/1": GroupSpec(members=None, attributes={"level": 1, "type": "group"}),
         "/1/2": GroupSpec(members=None, attributes={"level": 2, "type": "group"}),
         "/1/2/1": GroupSpec(members=None, attributes={"level": 3, "type": "group"}),
-        "/1/2/2": ArraySpec.from_arraylike(np.arange(20), attributes={"level": 3, "type": "array"}),
+        "/1/2/2": ArraySpec.from_array(np.arange(20), attributes={"level": 3, "type": "array"}),
     }
     import zarr
 

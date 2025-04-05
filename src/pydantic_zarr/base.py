@@ -10,12 +10,18 @@ from typing import (
     NotRequired,
     Protocol,
     TypeAlias,
-    TypedDict,
     TypeVar,
     runtime_checkable,
 )
 
+if TYPE_CHECKING:
+    import tensorstore
+    import zarr
+
+    ZArrayLike = zarr.Array | tensorstore.TensorStore | "ArrayLike[TShape]"
+
 from pydantic import BaseModel, ConfigDict
+from typing_extensions import TypedDict
 
 
 class StoreSpec(TypedDict):
@@ -32,6 +38,8 @@ if TYPE_CHECKING:
 
 __all__ = [
     "AccessMode",
+    "ArrayV2Config",
+    "ArrayV3Config",
     "IncEx",
     "StrictBase",
     "ensure_key_no_path",
@@ -103,13 +111,6 @@ class GroupLike(Protocol):
     ) -> tuple[tuple[str, ArrayLike[Any] | GroupLike], ...]: ...
 
 
-if TYPE_CHECKING:
-    import tensorstore
-    import zarr
-
-    ZArrayLike = zarr.Array | tensorstore.TensorStore | ArrayLike[TShape]
-
-
 def guess_chunks(shape: tuple[int, ...], item_size: int) -> tuple[int, ...]:
     """
     Calculate suitable automatic chunk sizes for an N-dimensional array.
@@ -170,3 +171,13 @@ class ArrayV3Config(TypedDict):
     codecs: tuple[NamedConfig, ...]
     attributes: Mapping[str, object]
     dimension_names: tuple[str] | None
+
+
+class RegularChunks(TypedDict):
+    read_shape: tuple[int, ...]
+    write_shape: tuple[int, ...] | None
+
+
+class RectilinearChunks(TypedDict):
+    read_shape: tuple[tuple[int, ...], ...]
+    write_shape: tuple[tuple[int, ...], ...] | None

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Protocol
 
 from pydantic_zarr.base import GroupLike
-from pydantic_zarr.zarr_v2.array_proxy import ArrayV2Proxy
+from pydantic_zarr.zarr_v2.v2 import GroupSpec, TAttr, TMember
+from pydantic_zarr.zarr_v3.v3 import ArraySpec
 
 
 class ZarrV2IO(Protocol):
@@ -21,6 +23,12 @@ class ZarrV2IO(Protocol):
         dimension_separator: Any,
         attributes: Any,
         overwrite: bool,
-    ) -> ArrayV2Proxy[Any]: ...
+    ) -> Any: ...
 
-    def create_group(self, *, path: str, attributes: Any, members: Any) -> GroupLike: ...
+    def create_group(
+        self,
+        *,
+        path: str,
+        attributes: Mapping[str, object],
+        members: Mapping[str, ArraySpec[TAttr] | GroupSpec[TAttr, TMember]],
+    ) -> GroupLike: ...

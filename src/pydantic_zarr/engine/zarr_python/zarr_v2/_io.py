@@ -12,7 +12,7 @@ from zarr import create_group
 from zarr.errors import ContainsArrayError, ContainsGroupError
 from zarr.storage._common import StorePath, contains_array, contains_group
 
-from pydantic_zarr.zarr_v2.v2 import ArraySpec, BaseAttr, BaseItem, GroupSpec
+from pydantic_zarr.zarr_v2.v2 import ArraySpec, BaseAttr, BaseMember, GroupSpec, TAttr
 
 if TYPE_CHECKING:
     from zarr.abc.store import Store
@@ -31,7 +31,7 @@ async def create_spec(node: zarr.Group | zarr.Array) -> GroupSpec[Any, Any] | Ar
         raise TypeError(f"node must be a zarr.Array or zarr.Group, got {type(node)}")
 
 
-async def write_spec(
+async def write_node(
     model: GroupSpec[Any, Any],
     store: Store,
     path: str,
@@ -40,7 +40,7 @@ async def write_spec(
     **kwargs: object,
 ) -> zarr.Group | zarr.Array:
     """
-    Serialize a `GroupSpec` to a Zarr group at a specific path in a zarr `Store`.
+    Serialize a `GroupSpec` or `ArraySpec` to a Zarr group at a specific path in a zarr `Store`.
     This operation will create metadata documents in the store.
     Parameters
     ----------
@@ -98,7 +98,7 @@ async def write_spec(
     return result
 
 
-def create_groupspec(group: zarr.Group, *, depth: int = -1) -> GroupSpec[BaseAttr, BaseItem]:
+def create_groupspec(group: zarr.Group, *, depth: int = -1) -> GroupSpec[BaseAttr, BaseMember]:
     """
     Create a GroupSpec from an instance of `zarr.Group`. Subgroups and arrays contained in the
     Zarr group will be converted to instances of `GroupSpec` and `ArraySpec`, respectively,
@@ -123,7 +123,7 @@ def create_groupspec(group: zarr.Group, *, depth: int = -1) -> GroupSpec[BaseAtt
     An instance of GroupSpec that represents the structure of the Zarr hierarchy.
     """
 
-    result: GroupSpec[BaseAttr, BaseItem]
+    result: GroupSpec[BaseAttr, BaseMember]
     attributes = group.attrs.asdict()
     members = {}
     if depth == 0:
@@ -131,14 +131,12 @@ def create_groupspec(group: zarr.Group, *, depth: int = -1) -> GroupSpec[BaseAtt
     for name, item in group.members():
         if isinstance(item, zarr.Array):
             # convert to dict before the final typed GroupSpec construction
-            item_out = create_arrayspec(item).model_dump()
+            item_out = ArraySpec.from_array(item).model_dump()
         elif isinstance(item, zarr.Group):
             # convert to dict before the final typed GroupSpec construction
             item_out = create_groupspec(item).model_dump()
         else:
-            msg = (
-                f"Unparseable object encountered: {type(item)}. Expected zarr.Array or zarr.Group."
-            )
+            msg = f"Unparsable object encountered: {type(item)}. Expected zarr.Array or zarr.Group."
 
             raise TypeError(msg)
         members[name] = item_out
@@ -147,7 +145,7 @@ def create_groupspec(group: zarr.Group, *, depth: int = -1) -> GroupSpec[BaseAtt
     return result
 
 
-async def write_groupspec(
+async def write_group(
     spec: GroupSpec[Any, Any], store: Store, path: str, *, overwrite: bool = False, **kwargs: object
 ) -> zarr.Group:
     """
@@ -201,50 +199,13 @@ async def write_groupspec(
     if spec.members is not None:
         for name, member in spec.members.items():
             subpath = "/".join([path, name])
-            member.to_zarr(store, subpath, overwrite=overwrite, **kwargs)
+            write_node(member, store, subpath, overwrite=overwrite, **kwargs)
 
     return result
 
 
-def create_arrayspec(array: zarr.Array) -> ArraySpec[BaseAttr]:
-    """
-    Create an `ArraySpec` from an instance of `zarr.Array`.
-
-    Parameters
-    ----------
-    array : zarr.Array
-
-    Returns
-    -------
-    ArraySpec
-        An instance of `ArraySpec` with properties derived from `array`.
-
-    Examples
-    --------
-    >>> import zarr
-    >>> from pydantic_zarr.v2 import ArraySpec
-    >>> x = zarr.create((10,10))
-    >>> ArraySpec.from_zarr(x)
-    ArraySpec(zarr_version=2, attributes={}, shape=(10, 10), chunks=(10, 10), dtype='<f8', fill_value=0.0, order='C', filters=None, dimension_separator='.', compressor={'id': 'blosc', 'cname': 'lz4', 'clevel': 5, 'shuffle': 1, 'blocksize': 0})
-
-    """
-    return ArraySpec(
-        shape=array.shape,
-        chunks=array.chunks,
-        dtype=str(array.dtype),
-        # explicitly cast to numpy type and back to python
-        # so that int 0 isn't serialized as 0.0
-        fill_value=array.dtype.type(array.fill_value).tolist(),
-        order=array.order,
-        filters=array.filters,
-        dimension_separator=array._dimension_separator,
-        compressor=array.compressor,
-        attributes=array.attrs.asdict(),
-    )
-
-
-async def write_arrayspec(
-    spec: ArraySpec[Any],
+async def write_array(
+    spec: ArraySpec[TAttr],
     store: Store,
     path: str,
     *,

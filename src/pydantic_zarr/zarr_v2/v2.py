@@ -13,7 +13,6 @@ from typing import (
     Union,
     cast,
     get_args,
-    overload,
     runtime_checkable,
 )
 
@@ -39,9 +38,9 @@ if TYPE_CHECKING:
     from pydantic_zarr.zarr_v2.array_proxy import ArrayV2Proxy
 
 BaseAttr = Mapping[str, object]
-BaseItem = Union["GroupSpec", "ArraySpec"]
+BaseMember = Union["GroupSpec[TAttr, TMember]", "ArraySpec[TAttr]"]
 TAttr = TypeVar("TAttr", bound=BaseAttr)
-TItem = TypeVar("TItem", bound=BaseItem)
+TMember = TypeVar("TMember", bound=BaseMember)
 DimensionSeparator = Literal["/", "."]
 
 
@@ -129,7 +128,7 @@ def nullify_empty_list(value: list[T] | None) -> list[T] | None:
     return value
 
 
-class ArraySpec(StrictBase):
+class ArraySpec(StrictBase, Generic[TAttr]):
     """
     A model of a Zarr Version 2 array metadata document.
     The specification for the data structure being modeled by this class can be found in the
@@ -189,7 +188,7 @@ class ArraySpec(StrictBase):
         return self
 
     @classmethod
-    def from_arraylike(
+    def from_array(
         cls,
         array: ArrayLike[TShape] | ArraySpec[TAttr],
         *,
@@ -353,7 +352,7 @@ class ArraySpec(StrictBase):
         """
         other_parsed: ArraySpec[Any]
         if not isinstance(other, ArraySpec):
-            other_parsed = ArraySpec.from_arraylike(other)
+            other_parsed = ArraySpec.from_array(other)
         else:
             other_parsed = other
 
@@ -369,7 +368,7 @@ class LeafGroupSpec(StrictBase, Generic[TAttr]):
     attributes: TAttr = {}
 
 
-class GroupSpec(LeafGroupSpec[TAttr], Generic[TAttr, TItem]):
+class GroupSpec(LeafGroupSpec[TAttr], Generic[TAttr, TMember]):
     """
     A model of a Zarr Version 2 Group with members.
     The specification for the data structure being modeled by this
@@ -387,7 +386,7 @@ class GroupSpec(LeafGroupSpec[TAttr], Generic[TAttr, TItem]):
         are either `ArraySpec` or `GroupSpec`.
     """
 
-    members: Annotated[Mapping[str, TItem], AfterValidator(ensure_key_no_path)] = {}
+    members: Annotated[Mapping[str, TMember], AfterValidator(ensure_key_no_path)] = {}
 
     @classmethod
     def from_grouplike(cls, group: GroupLike) -> Self:
@@ -397,7 +396,7 @@ class GroupSpec(LeafGroupSpec[TAttr], Generic[TAttr, TItem]):
         members: dict[str, ArraySpec[Any] | GroupSpec[Any, Any]] = {}
         for name, member in group.members(max_depth=None):
             if hasattr(member, "shape"):
-                members[name] = ArraySpec.from_arraylike(member)  # type: ignore[arg-type]
+                members[name] = ArraySpec.from_array(member)  # type: ignore[arg-type]
             elif hasattr(member, "members"):
                 members[name] = GroupSpec.from_grouplike(member)
         return cls(attributes=group.attrs, members=members)
@@ -533,43 +532,9 @@ class GroupSpec(LeafGroupSpec[TAttr], Generic[TAttr, TItem]):
         return cls(**from_flated.model_dump())
 
 
-@overload
-def from_zarr(element: zarr.Group) -> GroupSpec: ...
-
-
-@overload
-def from_zarr(element: zarr.Array) -> ArraySpec: ...
-
-
-def from_zarr(element: zarr.Array | zarr.Group, depth: int = -1) -> ArraySpec | GroupSpec:
-    """
-    Recursively parse a `zarr.Group` or `zarr.Array` into an `ArraySpec` or `GroupSpec`.
-
-    Parameters
-    ----------
-    element : zarr.Array | zarr.Group
-        The `zarr.Array` or `zarr.Group` to model.
-    depth: int, default = -1
-        An integer which may be no lower than -1. If `element` is a `zarr.Group`, the `depth`
-        parameter determines how deeply the hierarchy defined by `element` will be parsed.
-        This argument has no effect if `element` is a `zarr.Array`.
-
-    Returns
-    -------
-    ArraySpec | GroupSpec
-        An instance of `GroupSpec` or `ArraySpec` that models the structure of the input Zarr group
-        or array.
-    """
-
-    if isinstance(element, zarr.Array):
-        result = ArraySpec.from_store(element)
-        return result
-
-    result = GroupSpec.from_zarr(element, depth=depth)
-    return result
-
-
-def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, ArraySpec | GroupSpec]:
+def to_flat(
+    node: ArraySpec[TAttr] | GroupSpec[TAttr, TMember], root_path: str = ""
+) -> dict[str, ArraySpec[TAttr] | GroupSpec[TAttr, TMember]]:
     """
     Flatten a `GroupSpec` or `ArraySpec`.
     Converts a `GroupSpec` or `ArraySpec` and a string, into a `dict` with string keys and
@@ -609,7 +574,7 @@ def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, Array
     {'/g1': GroupSpec(zarr_version=2, attributes={'foo': 'bar'}, members=None), '': GroupSpec(zarr_version=2, attributes={'foo': 'bar'}, members=None)}
     """
     result = {}
-    model_copy: ArraySpec | GroupSpec
+    model_copy: ArraySpec[TAttr] | GroupSpec[TAttr, TMember]
     if isinstance(node, ArraySpec):
         model_copy = node.model_copy(deep=True)
     else:
@@ -741,57 +706,3 @@ def from_flat_group(data: dict[str, ArraySpec | GroupSpec]) -> GroupSpec:
         member_groups[subparent_name] = from_flat_group(submemb)
 
     return GroupSpec(members={**member_groups, **member_arrays}, attributes=root_node.attributes)
-
-
-def auto_chunks(data: object) -> tuple[int, ...]:
-    """
-    Get chunks from the array-like data
-    """
-    array_proxy = zarrify_array_v2(data)
-    return array_proxy.chunks()
-
-
-def auto_attributes(data: Any) -> Mapping[str, Any]:
-    """ """
-    array_proxy = zarrify_array(data)
-    return array_proxy.attributes()
-
-
-def auto_fill_value(data: Any) -> Any:
-    """
-    Guess fill value from an input with a `fill_value` attribute, returning 0 otherwise.
-    """
-    array_proxy = zarrify_array(data)
-    return array_proxy.fill_value()
-
-
-def auto_compressor(data: Any) -> dict[str, Any] | None:
-    """
-    Guess compressor from an input with a `compressor` attribute, returning `None` otherwise.
-    """
-    array_proxy = zarrify_array(data)
-    return array_proxy.compressor()
-
-
-def auto_filters(data: Any) -> list[dict[str, Any]] | None:
-    """
-    Guess filters from an input with a `filters` attribute, returning `None` otherwise.
-    """
-    array_proxy = zarrify_array(data)
-    return array_proxy.filters()
-
-
-def auto_order(data: Any) -> Literal["C", "F"]:
-    """
-    Guess array order from an input with an `order` attribute, returning "C" otherwise.
-    """
-    array_proxy = zarrify_array(data)
-    return array_proxy.order()
-
-
-def auto_dimension_separator(data: Any) -> DimensionSeparator:
-    """
-    Guess dimension separator from an input with a `dimension_separator` attribute, returning "/" otherwise.
-    """
-    array_proxy = zarrify_array(data)
-    return array_proxy.dimension_separator()
