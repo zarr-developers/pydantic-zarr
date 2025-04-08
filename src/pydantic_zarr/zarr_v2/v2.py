@@ -34,8 +34,8 @@ from pydantic_zarr.base import (
 from pydantic_zarr.engine import zarrify_array_v2
 
 if TYPE_CHECKING:
-    from pydantic_zarr.io_proxy import ZarrV2IO
     from pydantic_zarr.zarr_v2.array_proxy import ArrayV2Proxy
+    from pydantic_zarr.zarrio import ZarrV2IO
 
 BaseAttr = Mapping[str, object]
 BaseMember = Union["GroupSpec[TAttr, TMember]", "ArraySpec[TAttr]"]
@@ -128,7 +128,116 @@ def nullify_empty_list(value: list[T] | None) -> list[T] | None:
     return value
 
 
-class ArraySpec(StrictBase, Generic[TAttr]):
+class ArrayMetadataSpec(StrictBase):
+    zarr_format: Literal[2] = 2
+    shape: tuple[int, ...]
+    chunks: tuple[int, ...]
+    dtype: DTypeString
+    fill_value: int | float | None = 0
+    order: Literal["C", "F"] = "C"
+    filters: Annotated[list[CodecDict] | None, BeforeValidator(nullify_empty_list)] = None
+    dimension_separator: Annotated[
+        Literal["/", "."], BeforeValidator(parse_dimension_separator)
+    ] = "/"
+    compressor: CodecDict | None = None
+
+    @model_validator(mode="after")
+    def check_ndim(self) -> Self:
+        """
+        Check that the `shape` and `chunks` and attributes have the same length.
+        """
+        if (lshape := len(self.shape)) != (lchunks := len(self.chunks)):
+            msg = (
+                f"Length of shape must match length of chunks. Got {lshape} elements",
+                f"for shape and {lchunks} elements for chunks.",
+            )
+            raise ValueError(msg)
+        return self
+
+    @classmethod
+    def from_array(
+        cls,
+        array: ArrayLike[TShape] | ArraySpec[TAttr],
+        *,
+        chunks: Literal["auto"] | tuple[int, ...] = "auto",
+        fill_value: Literal["auto"] | float | None = "auto",
+        order: Literal["auto", "C", "F"] = "auto",
+        filters: Literal["auto"] | list[CodecDict] | None = "auto",
+        dimension_separator: Literal["auto", "/", "."] = "auto",
+        compressor: Literal["auto"] | CodecDict | None = "auto",
+        attributes: Literal["auto"] | TAttr = "auto",
+    ) -> Self:
+        """
+        Create an `ArraySpec` from an array-like object. This is a convenience method for when Zarr array will be modelled from an existing array.
+        This method takes nearly the same arguments as the `ArraySpec` constructor, minus `shape` and `dtype`, which will be inferred from the `array` argument.
+        Additionally, this method accepts the string "auto" as a parameter for all other `ArraySpec` attributes, in which case these attributes will be
+        inferred from the `array` argument, with a fallback value equal to the default `ArraySpec` parameters.
+
+        Parameters
+        ----------
+        array : an array-like object.
+            Must have `shape` and `dtype` attributes.
+            The `shape` and `dtype` of this object will be used to construct an `ArraySpec`.
+        chunks: "auto" | tuple[int, ...], default = "auto"
+            The chunks for this `ArraySpec`. If `chunks` is "auto" (the default), then this method first checks if `array` has a `chunksize` attribute, using it if present.
+            This supports copying chunk sizes from dask arrays. If `array` does not have `chunksize`, then a routine from `zarr-python` is used to guess the chunk size,
+            given the `shape` and `dtype` of `array`. If `chunks` is not auto, then it should be a tuple of ints.
+        order: "auto" | "C" | "F", default = "auto"
+            The memory order of the `ArraySpec`. One of "auto", "C", or "F". The default is "auto", which means that, if present, `array.order`
+            will be used, falling back to "C" if `array` does not have an `order` attribute.
+        fill_value: "auto" | int | float | None, default = "auto"
+            The fill value for this array. Either "auto" or FillValue. The default is "auto", which means that `array.fill_value` will be used if that attribute exists, with a fallback value of 0.
+        compressor: "auto" | CodecDict | None, default = "auto"
+            The compressor for this `ArraySpec`. One of "auto", a JSON-serializable representation of a compression codec, or `None`. The default is "auto", which means that `array.compressor` attribute will be used, with a fallback value of `None`.
+        filters: "auto" | List[CodecDict] | None, default = "auto"
+            The filters for this `ArraySpec`. One of "auto", a list of JSON-serializable representations of compression codec, or `None`. The default is "auto", which means that the `array.filters` attribute will be
+            used, with a fallback value of `None`.
+        dimension_separator: "auto" | "." | "/", default = "auto"
+            Sets the character used for partitioning the different dimensions of a chunk key.
+            Must be one of "auto", "/" or ".". The default is "auto", which means that `array.dimension_separator` is used, with a fallback value of "/".
+        Returns
+        -------
+        ArraySpec
+            An instance of `ArraySpec` with `shape` and `dtype` attributes derived from `array`.
+
+        Examples
+        --------
+        >>> from pydantic_zarr.v2 import ArraySpec
+        >>> import numpy as np
+        >>> x = ArrayMetadataSpec.from_array(np.arange(10))
+        >>> x
+        ArraySpec(zarr_format=2, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)
+
+
+        """
+        metadata: ArrayV2Config
+        if isinstance(array, ArraySpec):
+            metadata = array.model_dump()  # type: ignore[assignment]
+        else:
+            metadata = zarrify_array_v2(array)
+
+        if chunks != "auto":
+            metadata["chunks"] = chunks
+
+        if fill_value != "auto":
+            metadata["fill_value"] = fill_value
+
+        if compressor != "auto":
+            metadata["compressor"] = compressor
+
+        if filters != "auto":
+            metadata["filters"] = filters
+
+        if order != "auto":
+            metadata["order"] = order
+
+        if dimension_separator != "auto":
+            metadata["dimension_separator"] = dimension_separator
+
+        return cls(**metadata)
+
+
+class ArraySpec(ArrayMetadataSpec, Generic[TAttr]):
     """
     A model of a Zarr Version 2 array metadata document.
     The specification for the data structure being modeled by this class can be found in the
@@ -161,31 +270,7 @@ class ArraySpec(StrictBase, Generic[TAttr]):
         The default is "/".
     """
 
-    attributes: TAttr
-    zarr_format: Literal[2] = 2
-    shape: tuple[int, ...]
-    chunks: tuple[int, ...]
-    dtype: DTypeString
-    fill_value: int | float | None = 0
-    order: Literal["C", "F"] = "C"
-    filters: Annotated[list[CodecDict] | None, BeforeValidator(nullify_empty_list)] = None
-    dimension_separator: Annotated[
-        Literal["/", "."], BeforeValidator(parse_dimension_separator)
-    ] = "/"
-    compressor: CodecDict | None = None
-
-    @model_validator(mode="after")
-    def check_ndim(self) -> Self:
-        """
-        Check that the `shape` and `chunks` and attributes have the same length.
-        """
-        if (lshape := len(self.shape)) != (lchunks := len(self.chunks)):
-            msg = (
-                f"Length of shape must match length of chunks. Got {lshape} elements",
-                f"for shape and {lchunks} elements for chunks.",
-            )
-            raise ValueError(msg)
-        return self
+    attributes: TAttr = {}
 
     @classmethod
     def from_array(
@@ -298,7 +383,7 @@ class ArraySpec(StrictBase, Generic[TAttr]):
         ArrayProxy
             A wrapper around a zarr array that is structurally identical to `self`.
         """
-        return store.create_array(**self.model_dump(), path=path, overwrite=overwrite)
+        return store.write_array(**self.model_dump(), path=path, overwrite=overwrite)
 
     def like(
         self,

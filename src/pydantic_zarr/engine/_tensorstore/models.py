@@ -4,7 +4,8 @@ from typing import Any, Literal
 
 from pydantic import AnyUrl, BaseModel, Field
 
-from pydantic_zarr.v2 import ArrayMetadataSpec
+from pydantic_zarr.base import ArrayV2Config
+from pydantic_zarr.zarr_v2.v2 import ArrayMetadataSpec
 
 DataType = Literal[
     "bool",
@@ -83,4 +84,4 @@ class ZarrDriver(BaseModel, frozen=True):
     delete_existing: bool = False
     assume_metadata: bool = False
     assume_cached_metadata: bool = False
-    metadata: ArrayMetadataSpec
+    metadata: ArrayV2Config | ArrayMetadataSpec

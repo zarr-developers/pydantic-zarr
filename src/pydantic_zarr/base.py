@@ -142,17 +142,33 @@ def guess_chunks(shape: tuple[int, ...], item_size: int) -> tuple[int, ...]:
     return tuple(chunk_sizes)
 
 
-class ArrayV2Config(TypedDict):
+class CodecConfigV2(TypedDict, total=False):
+    id: str
+
+
+class ArrayMetadataV2Config(TypedDict):
     zarr_format: Literal[2]
     shape: tuple[int, ...]
     dtype: str | tuple[object]
     chunks: tuple[int, ...]
-    fill_value: Any
+    fill_value: object
     order: Literal["C", "F"]
-    compressor: object | None
-    filters: object | None
+    compressor: CodecConfigV2 | None
+    filters: tuple[CodecConfigV2] | None
     dimension_separator: Literal["/", "."]
-    attributes: Mapping[str, object]
+
+
+class ArrayV2Config(ArrayMetadataV2Config):
+    attributes: NotRequired[Mapping[str, object]]
+
+
+class GroupMetadataV2Config(TypedDict):
+    zarr_format: Literal[2]
+
+
+class GroupV2Config(GroupMetadataV2Config):
+    attributes: NotRequired[Mapping[str, object]]
+    members: NotRequired[Mapping[str, ArrayV2Config | GroupV2Config]]
 
 
 class NamedConfig(TypedDict):
@@ -171,6 +187,12 @@ class ArrayV3Config(TypedDict):
     codecs: tuple[NamedConfig, ...]
     attributes: Mapping[str, object]
     dimension_names: tuple[str] | None
+
+
+class GroupV3Config(TypedDict):
+    zarr_format: Literal[3]
+    node_type: Literal["group"]
+    attributes: Mapping[str, object]
 
 
 class RegularChunks(TypedDict):

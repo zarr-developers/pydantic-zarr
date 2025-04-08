@@ -24,7 +24,7 @@ async def create_spec(node: zarr.Group | zarr.Array) -> GroupSpec[Any, Any] | Ar
     """
 
     if isinstance(node, zarr.Array):
-        return create_arrayspec(node)
+        return ArraySpec.from_array(node)
     elif isinstance(node, zarr.Group):
         return create_groupspec(node)
     else:

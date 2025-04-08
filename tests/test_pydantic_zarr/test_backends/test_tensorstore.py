@@ -1,23 +1,27 @@
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
 import tensorstore as ts
 
-import pydantic_zarr.v2 as v2
-from pydantic_zarr.backends._tensorstore.models import FileDriver, KVStore, MemoryDriver
-from pydantic_zarr.backends._tensorstore.v2 import (
+import pydantic_zarr.zarr_v2.v2 as v2
+from pydantic_zarr.engine._tensorstore.models import FileDriver, KVStore, MemoryDriver
+from pydantic_zarr.engine._tensorstore.v2 import (
     SEPARATOR,
     V2_ARRAY_KEY,
     V2_GROUP_KEY,
-    create_array_v2,
-    create_group_v2,
     get_member_keys,
     read_array_v2,
     read_group_v2,
     read_members_v2,
+    write_array_v2,
+    write_group_v2,
 )
+
+if TYPE_CHECKING:
+    from pydantic_zarr.base import GroupV2Config
 
 
 @pytest.fixture
@@ -40,9 +44,8 @@ async def test_read_group_v2(kvstore: KVStore, attrs: dict[str, str] | None) -> 
         attrs_expected = attrs
     else:
         attrs_expected = {}
-    groupspec = await read_group_v2(store)
-    assert groupspec.attributes == attrs_expected
-    assert groupspec.zarr_format == 2
+    group_meta = await read_group_v2(store)
+    assert group_meta == {'zarr_format': 2, 'attributes': attrs_expected}
 
 
 @pytest.mark.parametrize("kvstore", ["memory", "file"], indirect=True)
@@ -59,8 +62,8 @@ async def test_read_array_v2(kvstore: KVStore, attrs: dict[str, str] | None) -> 
         attrs_expected = attrs
     else:
         attrs_expected = {}
-    array_spec = await read_array_v2(store)
-    assert array_spec == v2.ArraySpec(**metadata, attributes=attrs_expected)
+    array_meta = await read_array_v2(store)
+    assert array_meta == metadata | {'attributes' : attrs_expected}
 
 
 @pytest.mark.parametrize("kvstore", ["memory", "file"], indirect=True)
@@ -69,15 +72,17 @@ async def test_read_members_v2(kvstore: KVStore) -> None:
     Test that reading the members of a group works as expected.
     """
     store = await ts.KvStore.open(kvstore.model_dump(exclude_none=True))
-    g_metadata = {"zarr_format": 2}
+    g_metadata: GroupV2Config = {"zarr_format": 2}
     a_metadata = v2.ArrayMetadataSpec(
         shape=(10,), chunks=(2,), dtype=">i2", order="C", zarr_format=2
     ).model_dump(exclude_none=True)
+    a_attrs = {"foo": "bar"}
     _ = store.write(".zgroup", json.dumps(g_metadata)).result()
     _ = store.write("array/.zarray", json.dumps(a_metadata)).result()
-    print(store.path)
+    _ = store.write("array/.zattrs", json.dumps(a_attrs)).result()
+
     result = await read_members_v2(store)
-    assert result == {b"": v2.GroupSpec(**g_metadata), b"array": v2.ArraySpec(**a_metadata)}
+    assert result == {b"": g_metadata, b"array": a_metadata | {'attributes' : a_attrs}}
 
 
 @pytest.mark.parametrize("kvstore", ["memory", "file"], indirect=True)
@@ -88,8 +93,8 @@ async def test_create_array_v2(kvstore: KVStore, dtype: str, shape: tuple[int, .
     Test that creating an array with a given shape and dtype works as expected.
     """
     template = np.zeros(shape, dtype=dtype)
-    model = v2.ArrayMetadataSpec.from_arraylike(template)
-    ts = await create_array_v2(
+    model = v2.ArraySpec.from_array(template)
+    ts = await write_array_v2(
         model, kvstore=kvstore, open=False, create=True, delete_existing=True
     )
     assert ts.shape == shape
@@ -104,9 +109,9 @@ async def test_create_group_v2(kvstore: KVStore, attrs: dict[str, str]) -> None:
     """
     Test that creating a group with attributes works as expected.
     """
-    model = v2.GroupSpec(attributes=attrs)
+    model = v2.LeafGroupSpec(attributes=attrs)
     store = await ts.KvStore.open(kvstore.model_dump(exclude_none=True))
-    _ = await create_group_v2(model, kvstore=store)
+    _ = await write_group_v2(model.model_dump(), kvstore=store)
     assert await read_group_v2(store) == model
 
 
