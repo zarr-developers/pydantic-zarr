@@ -12,7 +12,8 @@ the backend for that doesn't exist.
 ## Defining Zarr v3 hierarchies
 
 ```python
-from pydantic_zarr.v3 import GroupSpec, ArraySpec, NamedConfig
+from pydantic_zarr.v3 import ArraySpec, GroupSpec, NamedConfig
+
 array_attributes = {"baz": [1, 2, 3]}
 group_attributes = {"foo": 42, "bar": False}
 
@@ -21,12 +22,8 @@ array_spec = ArraySpec(
     shape=[1000, 1000],
     dimension_names=["rows", "columns"],
     data_type="uint8",
-    chunk_grid=NamedConfig(
-        name="regular", configuration={"chunk_shape": [1000, 100]}
-    ),
-    chunk_key_encoding=NamedConfig(
-        name="default", configuration={"separator": "/"}
-    ),
+    chunk_grid=NamedConfig(name="regular", configuration={"chunk_shape": [1000, 100]}),
+    chunk_key_encoding=NamedConfig(name="default", configuration={"separator": "/"}),
     codecs=[NamedConfig(name="GZip", configuration={"level": 1})],
     fill_value=0,
 )

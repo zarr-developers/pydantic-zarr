@@ -10,12 +10,15 @@ Static typing and runtime validation for Zarr hierarchies.
 
 ```python
 import zarr
+
 from pydantic_zarr.v2 import GroupSpec
 
 # create a Zarr group
 group = zarr.group(path='foo', zarr_format=2)
 # put an array inside the group
-array = zarr.create(store = group.store, path='foo/bar', shape=10, dtype='uint8', zarr_format=2)
+array = zarr.create(
+    store=group.store, path='foo/bar', shape=10, dtype='uint8', zarr_format=2
+)
 array.attrs.put({'metadata': 'hello'})
 
 # create a pydantic model to model the Zarr group
@@ -34,15 +37,9 @@ print(spec.model_dump())
             'dtype': '|u1',
             'fill_value': 0,
             'order': 'C',
-            'filters': None,
+            'filters': [],
             'dimension_separator': '.',
-            'compressor': {
-                'id': 'blosc',
-                'cname': 'lz4',
-                'clevel': 5,
-                'shuffle': 1,
-                'blocksize': 0,
-            },
+            'compressor': {'id': 'zstd', 'level': 0, 'checksum': False},
         }
     },
 }

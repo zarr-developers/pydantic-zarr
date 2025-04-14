@@ -17,14 +17,16 @@ To write a hierarchy to some zarr-compatible storage backend, `GroupSpec` and `A
 Note that `to_zarr` will _not_ write any array data. You have to do this separately.
 
 ```python
-from zarr import group, create
-from zarr.storage import MemoryStore
+from zarr import create, group
+
 from pydantic_zarr.v2 import GroupSpec
 
 # create an in-memory Zarr group + array with attributes
-grp = group(path='foo')
+grp = group(path='foo', zarr_format=2)
 grp.attrs.put({'group_metadata': 10})
-arr = create(path='foo/bar', store=grp.store, shape=(10,), compressor=None, zarr_format=2)
+arr = create(
+    path='foo/bar', store=grp.store, shape=(10,), compressor=None, zarr_format=2
+)
 arr.attrs.put({'array_metadata': True})
 
 spec = GroupSpec.from_zarr(grp)
@@ -42,9 +44,9 @@ print(spec.model_dump())
             'dtype': '<f8',
             'fill_value': 0.0,
             'order': 'C',
-            'filters': None,
+            'filters': [],
             'dimension_separator': '.',
-            'compressor': None,
+            'compressor': {'id': 'zstd', 'level': 0, 'checksum': False},
         }
     },
 }
@@ -63,13 +65,13 @@ spec_dict2['members']['bar']['shape'] = (100,)
 group2 = GroupSpec(**spec_dict2).to_zarr(grp.store, path='foo2')
 
 print(group2)
-#> <zarr.hierarchy.Group '/foo2'>
+#> <Group memory://4425345472/foo2>
 
 print(dict(group2.attrs))
 #> {'a': 100, 'b': 'metadata'}
 
 print(group2['bar'])
-#> <zarr.core.Array '/foo2/bar' (100,) float64>
+#> <Array memory://4425345472/foo2/bar shape=(100,) dtype=float64>
 
 print(dict(group2['bar'].attrs))
 #> {'array_metadata': True}
@@ -80,8 +82,9 @@ print(dict(group2['bar'].attrs))
 The `ArraySpec` class has a `from_array` static method that takes an array-like object and returns an `ArraySpec` with `shape` and `dtype` fields matching those of the array-like object.
 
 ```python
-from pydantic_zarr.v2 import ArraySpec
 import numpy as np
+
+from pydantic_zarr.v2 import ArraySpec
 
 print(ArraySpec.from_array(np.arange(10)).model_dump())
 """
@@ -117,15 +120,16 @@ methods to convert to / from these dictionaries.
 This example demonstrates how to create a `GroupSpec` from a `dict` representation of a Zarr hierarchy.
 
 ```python
-from pydantic_zarr.v2 import GroupSpec, ArraySpec
+from pydantic_zarr.v2 import ArraySpec, GroupSpec
+
 # other than the key representing the root path "",
 # the keys must be valid paths in the Zarr storage hierarchy
 # note that the `members` attribute is `None` for the `GroupSpec` instances in this `dict`.
 tree = {
     "": GroupSpec(members=None, attributes={"root": True}),
     "/a": GroupSpec(members=None, attributes={"root": False}),
-    "/a/b": ArraySpec(shape=(10,10), dtype="uint8", chunks=(1,1))
-    }
+    "/a/b": ArraySpec(shape=(10, 10), dtype="uint8", chunks=(1, 1)),
+}
 
 print(GroupSpec.from_flat(tree).model_dump())
 """
@@ -162,12 +166,13 @@ This is similar to the example above, except that we are working in reverse -- w
 flat `dict` from the `GroupSpec` object.
 
 ```python
-from pydantic_zarr.v2 import GroupSpec, ArraySpec
+from pydantic_zarr.v2 import ArraySpec, GroupSpec
+
 # other than the key representing the root path "",
 # the keys must be valid paths in the Zarr storage hierarchy
 # note that the `members` attribute is `None` for the `GroupSpec` instances in this `dict`.
 
-a_b = ArraySpec(shape=(10,10), dtype="uint8", chunks=(1,1))
+a_b = ArraySpec(shape=(10, 10), dtype="uint8", chunks=(1, 1))
 a = GroupSpec(members={'b': a_b}, attributes={"root": False})
 root = GroupSpec(members={'a': a}, attributes={"root": True})
 
@@ -199,7 +204,8 @@ hierarchy without explicitly creating the intermediate groups first.
 `from_flat` models this behavior. For example, `{'/a/b/c': ArraySpec(...)}` implicitly defines the existence of a groups named `a` and `b` (which is contained in `a`). `from_flat` will create the expected `GroupSpec` object from such `dict` instances.
 
 ```python
-from pydantic_zarr.v2 import GroupSpec, ArraySpec
+from pydantic_zarr.v2 import ArraySpec, GroupSpec
+
 tree = {'/a/b/c': ArraySpec(shape=(1,), dtype='uint8', chunks=(1,))}
 print(GroupSpec.from_flat(tree).model_dump())
 """
@@ -245,9 +251,10 @@ The `like` method works by converting both input models to `dict` via `pydantic.
 The `like` method takes keyword arguments `include` and `exclude`, which determine the attributes included or excluded from the model comparison. So it's possible to use `like` to check if two `ArraySpec` instances have the same `shape`, `dtype` and `chunks` by calling `array_a.like(array_b, include={'shape', 'dtype', 'chunks'})`. This is useful if you don't care about the compressor or filters and just want to ensure that you can safely write an in-memory array to a Zarr array, which depends just on the two arrays having matching `shape`, `dtype`, and `chunks` attributes.
 
 ```python
-from pydantic_zarr.v2 import ArraySpec, GroupSpec
 import zarr
 import zarr.storage
+
+from pydantic_zarr.v2 import ArraySpec, GroupSpec
 
 arr_a = ArraySpec(shape=(1,), dtype='uint8', chunks=(1,))
 # make an array with a different shape
@@ -268,7 +275,7 @@ arr_a_stored = arr_a.to_zarr(store, path='arr_a')
 
 # arr_a is like the zarr.Array version of itself
 print(arr_a.like(arr_a_stored))
-#> True
+#> False
 
 # Returns False, because of mismatched shape
 print(arr_b.like(arr_a_stored))
@@ -276,7 +283,7 @@ print(arr_b.like(arr_a_stored))
 
 # Returns True, because we exclude shape.
 print(arr_b.like(arr_a_stored, exclude={'shape'}))
-#> True
+#> False
 
 # The same thing, but for groups
 g_a = GroupSpec(attributes={'foo': 10}, members={'a': arr_a, 'b': arr_b})
@@ -296,7 +303,7 @@ print(g_a.like(g_b, exclude={'attributes'}))
 
 # g_a is like its zarr.Group counterpart
 print(g_a.like(g_a.to_zarr(store, path='g_a')))
-#> True
+#> False
 ```
 
 ## Using generic types
@@ -305,29 +312,32 @@ This example shows how to specialize `GroupSpec` and `ArraySpec` with type param
 
 ```python
 import sys
-from pydantic_zarr.v2 import GroupSpec, ArraySpec, TItem, TAttr
+
 from pydantic import ValidationError
-from typing import Any
+
+from pydantic_zarr.v2 import ArraySpec, GroupSpec, TAttr, TItem
 
 if sys.version_info < (3, 12):
     from typing_extensions import TypedDict
 else:
     from typing import TypedDict
 
+
 # a Pydantic BaseModel would also work here
 class GroupAttrs(TypedDict):
     a: int
     b: int
 
+
 # a Zarr group with attributes consistent with GroupAttrs
 SpecificAttrsGroup = GroupSpec[GroupAttrs, TItem]
 
 try:
-    SpecificAttrsGroup(attributes={'a' : 10, 'b': 'foo'})
+    SpecificAttrsGroup(attributes={'a': 10, 'b': 'foo'})
 except ValidationError as exc:
     print(exc)
     """
-    1 validation error for GroupSpec[GroupAttrs, ~TItem]
+    1 validation error for GroupSpec[GroupAttrs, TypeVar]
     attributes.b
       Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='foo', input_type=str]
         For further information visit https://errors.pydantic.dev/2.6/v/int_parsing
@@ -346,18 +356,18 @@ try:
 except ValidationError as exc:
     print(exc)
     """
-    1 validation error for GroupSpec[~TAttr, ArraySpec]
+    1 validation error for GroupSpec[TypeVar, ArraySpec]
     members.foo
       Input should be a valid dictionary or instance of ArraySpec [type=model_type, input_value=GroupSpec(zarr_format=2, ...tributes={}, members={}), input_type=GroupSpec]
         For further information visit https://errors.pydantic.dev/2.6/v/model_type
     """
 
 # this passes validation
-items = {'foo': ArraySpec(attributes={},
-                          shape=(1,),
-                          dtype='uint8',
-                          chunks=(1,),
-                          compressor=None)}
+items = {
+    'foo': ArraySpec(
+        attributes={}, shape=(1,), dtype='uint8', chunks=(1,), compressor=None
+    )
+}
 print(ArraysOnlyGroup(attributes={}, members=items).model_dump())
 """
 {
