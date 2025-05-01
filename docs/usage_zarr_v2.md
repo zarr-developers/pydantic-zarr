@@ -64,14 +64,8 @@ spec_dict2['members']['bar']['shape'] = (100,)
 # serialize the spec to the store
 group2 = GroupSpec(**spec_dict2).to_zarr(grp.store, path='foo2')
 
-print(group2)
-#> <Group memory://4425345472/foo2>
-
 print(dict(group2.attrs))
 #> {'a': 100, 'b': 'metadata'}
-
-print(group2['bar'])
-#> <Array memory://4425345472/foo2/bar shape=(100,) dtype=float64>
 
 print(dict(group2['bar'].attrs))
 #> {'array_metadata': True}
