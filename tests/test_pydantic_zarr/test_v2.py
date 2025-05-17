@@ -53,8 +53,7 @@ ArrayMemoryOrder = Literal["C", "F"]
 DimensionSeparator = Literal[".", "/"]
 
 
-# TODO: also test "F"; see https://github.com/zarr-developers/zarr-python/issues/2950
-@pytest.fixture(params=("C"), ids=["C"])
+@pytest.fixture(params=("C", "F"), ids=["C", "F"])
 def memory_order(request: pytest.FixtureRequest) -> ArrayMemoryOrder:
     """
     Fixture that returns either "C" or "F"
