@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/pydantic-zarr)](https://pypi.python.org/pypi/pydantic-zarr)
 
-[Pydantic](https://docs.pydantic.dev/1.10/) models for [Zarr](https://zarr.readthedocs.io/en/stable/index.html).
+[Pydantic](https://docs.pydantic.dev/latest/) models for [Zarr](https://zarr.readthedocs.io/en/stable/index.html).
 
 ## ⚠️ Disclaimer ⚠️
 This project is under flux -- I want to add [zarr version 3](https://zarr-specs.readthedocs.io/en/latest/v3/core/v3.0.html) support to this project, but the [reference python implementation](https://github.com/zarr-developers/zarr-python) doesn't support version 3 yet. As the ecosystem evolves things will break so be advised!
