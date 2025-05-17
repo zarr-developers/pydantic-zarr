@@ -564,6 +564,13 @@ def test_array_like() -> None:
     assert a.like(c, include={"dtype"})
 
 
+def test_array_like_with_zarr() -> None:
+    arr = ArraySpec(shape=(1,), dtype="uint8", chunks=(1,))
+    store = zarr.storage.MemoryStore()
+    arr_stored = arr.to_zarr(store, path="arr")
+    assert arr.like(arr_stored)
+
+
 # todo: parametrize
 def test_group_like() -> None:
     tree = {
