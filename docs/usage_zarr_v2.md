@@ -32,11 +32,11 @@ spec = GroupSpec.from_zarr(grp)
 print(spec.model_dump())
 """
 {
-    'zarr_version': 2,
+    'zarr_format': 2,
     'attributes': {'group_metadata': 10},
     'members': {
         'bar': {
-            'zarr_version': 2,
+            'zarr_format': 2,
             'attributes': {'array_metadata': True},
             'shape': (10,),
             'chunks': (10,),
@@ -87,7 +87,7 @@ import numpy as np
 print(ArraySpec.from_array(np.arange(10)).model_dump())
 """
 {
-    'zarr_version': 2,
+    'zarr_format': 2,
     'attributes': {},
     'shape': (10,),
     'chunks': (10,),
@@ -130,15 +130,15 @@ tree = {
 print(GroupSpec.from_flat(tree).model_dump())
 """
 {
-    'zarr_version': 2,
+    'zarr_format': 2,
     'attributes': {'root': True},
     'members': {
         'a': {
-            'zarr_version': 2,
+            'zarr_format': 2,
             'attributes': {'root': False},
             'members': {
                 'b': {
-                    'zarr_version': 2,
+                    'zarr_format': 2,
                     'attributes': {},
                     'shape': (10, 10),
                     'chunks': (1, 1),
@@ -174,10 +174,10 @@ root = GroupSpec(members={'a': a}, attributes={"root": True})
 print(root.to_flat())
 """
 {
-    '': GroupSpec(zarr_version=2, attributes={'root': True}, members=None),
-    '/a': GroupSpec(zarr_version=2, attributes={'root': False}, members=None),
+    '': GroupSpec(zarr_format=2, attributes={'root': True}, members=None),
+    '/a': GroupSpec(zarr_format=2, attributes={'root': False}, members=None),
     '/a/b': ArraySpec(
-        zarr_version=2,
+        zarr_format=2,
         attributes={},
         shape=(10, 10),
         chunks=(1, 1),
@@ -203,19 +203,19 @@ tree = {'/a/b/c': ArraySpec(shape=(1,), dtype='uint8', chunks=(1,))}
 print(GroupSpec.from_flat(tree).model_dump())
 """
 {
-    'zarr_version': 2,
+    'zarr_format': 2,
     'attributes': {},
     'members': {
         'a': {
-            'zarr_version': 2,
+            'zarr_format': 2,
             'attributes': {},
             'members': {
                 'b': {
-                    'zarr_version': 2,
+                    'zarr_format': 2,
                     'attributes': {},
                     'members': {
                         'c': {
-                            'zarr_version': 2,
+                            'zarr_format': 2,
                             'attributes': {},
                             'shape': (1,),
                             'chunks': (1,),
@@ -327,12 +327,12 @@ except ValidationError as exc:
     1 validation error for GroupSpec[GroupAttrs, ~TItem]
     attributes.b
       Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='foo', input_type=str]
-        For further information visit https://errors.pydantic.dev/2.6/v/int_parsing
+        For further information visit https://errors.pydantic.dev/2.11/v/int_parsing
     """
 
 # this passes validation
 print(SpecificAttrsGroup(attributes={'a': 100, 'b': 100}))
-#> zarr_version=2 attributes={'a': 100, 'b': 100} members={}
+#> zarr_format=2 attributes={'a': 100, 'b': 100} members={}
 
 # a Zarr group that only contains arrays -- no subgroups!
 # we reuse the TAttr type variable defined in pydantic_zarr.core
@@ -345,8 +345,8 @@ except ValidationError as exc:
     """
     1 validation error for GroupSpec[~TAttr, ArraySpec]
     members.foo
-      Input should be a valid dictionary or instance of ArraySpec [type=model_type, input_value=GroupSpec(zarr_version=2,...tributes={}, members={}), input_type=GroupSpec]
-        For further information visit https://errors.pydantic.dev/2.6/v/model_type
+      Input should be a valid dictionary or instance of ArraySpec [type=model_type, input_value=GroupSpec(zarr_format=2, ...tributes={}, members={}), input_type=GroupSpec]
+        For further information visit https://errors.pydantic.dev/2.11/v/model_type
     """
 
 # this passes validation
@@ -358,11 +358,11 @@ items = {'foo': ArraySpec(attributes={},
 print(ArraysOnlyGroup(attributes={}, members=items).model_dump())
 """
 {
-    'zarr_version': 2,
+    'zarr_format': 2,
     'attributes': {},
     'members': {
         'foo': {
-            'zarr_version': 2,
+            'zarr_format': 2,
             'attributes': {},
             'shape': (1,),
             'chunks': (1,),
