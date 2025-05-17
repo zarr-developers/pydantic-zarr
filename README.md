@@ -31,11 +31,11 @@ spec = GroupSpec.from_zarr(group)
 print(spec.model_dump())
 """
 {
-    'zarr_version': 2,
+    'zarr_format': 2,
     'attributes': {},
     'members': {
         'bar': {
-            'zarr_version': 2,
+            'zarr_format': 2,
             'attributes': {'metadata': 'hello'},
             'shape': (10,),
             'chunks': (10,),

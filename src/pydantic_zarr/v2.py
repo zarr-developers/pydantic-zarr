@@ -117,7 +117,7 @@ class NodeSpec(StrictBase):
         The Zarr version represented by this node. Must be 2.
     """
 
-    zarr_version: Literal[2] = 2
+    zarr_format: Literal[2] = 2
 
 
 class ArraySpec(NodeSpec, Generic[TAttr]):
@@ -232,7 +232,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         >>> import numpy as np
         >>> x = ArraySpec.from_array(np.arange(10))
         >>> x
-        ArraySpec(zarr_version=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)
+        ArraySpec(zarr_format=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)
 
 
         """
@@ -306,7 +306,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         >>> from pydantic_zarr.v2 import ArraySpec
         >>> x = zarr.create((10,10))
         >>> ArraySpec.from_zarr(x)
-        ArraySpec(zarr_version=2, attributes={}, shape=(10, 10), chunks=(10, 10), dtype='<f8', fill_value=0.0, order='C', filters=None, dimension_separator='.', compressor={'id': 'blosc', 'cname': 'lz4', 'clevel': 5, 'shuffle': 1, 'blocksize': 0})
+        ArraySpec(zarr_format=2, attributes={}, shape=(10, 10), chunks=(10, 10), dtype='<f8', fill_value=0.0, order='C', filters=None, dimension_separator='.', compressor={'id': 'blosc', 'cname': 'lz4', 'clevel': 5, 'shuffle': 1, 'blocksize': 0})
 
         """
         return cls(
@@ -350,7 +350,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         zarr.Array
             A Zarr array that is structurally identical to `self`.
         """
-        spec_dict = self.model_dump()
+        spec_dict = self.model_dump(exclude={"zarr_format": True})
         attrs = spec_dict.pop("attributes")
         if self.compressor is not None:
             spec_dict["compressor"] = numcodecs.get_codec(spec_dict["compressor"])
@@ -667,11 +667,11 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         >>> from pydantic_zarr.v2 import to_flat, GroupSpec
         >>> g1 = GroupSpec(members=None, attributes={'foo': 'bar'})
         >>> to_flat(g1)
-        {'': GroupSpec(zarr_version=2, attributes={'foo': 'bar'}, members=None)}
+        {'': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None)}
         >>> to_flat(g1 root_path='baz')
-        {'baz': GroupSpec(zarr_version=2, attributes={'foo': 'bar'}, members=None)}
+        {'baz': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None)}
         >>> to_flat(GroupSpec(members={'g1': g1}, attributes={'foo': 'bar'}))
-        {'/g1': GroupSpec(zarr_version=2, attributes={'foo': 'bar'}, members=None), '': GroupSpec(zarr_version=2, attributes={'foo': 'bar'}, members=None)}
+        {'/g1': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None), '': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None)}
         """
         return to_flat(self, root_path=root_path)
 
@@ -698,12 +698,12 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         >>> import numpy as np
         >>> flat = {'': GroupSpec(attributes={'foo': 10}, members=None)}
         >>> GroupSpec.from_flat(flat)
-        GroupSpec(zarr_version=2, attributes={'foo': 10}, members={})
+        GroupSpec(zarr_format=2, attributes={'foo': 10}, members={})
         >>> flat = {
             '': GroupSpec(attributes={'foo': 10}, members=None),
             '/a': ArraySpec.from_array(np.arange(10))}
         >>> GroupSpec.from_flat(flat)
-        GroupSpec(zarr_version=2, attributes={'foo': 10}, members={'a': ArraySpec(zarr_version=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)})
+        GroupSpec(zarr_format=2, attributes={'foo': 10}, members={'a': ArraySpec(zarr_format=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)})
         """
         from_flated = from_flat_group(data)
         return cls(**from_flated.model_dump())
@@ -833,11 +833,11 @@ def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, Array
     >>> from pydantic_zarr.v2 import flatten, GroupSpec
     >>> g1 = GroupSpec(members=None, attributes={'foo': 'bar'})
     >>> to_flat(g1)
-    {'': GroupSpec(zarr_version=2, attributes={'foo': 'bar'}, members=None)}
+    {'': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None)}
     >>> to_flat(g1 root_path='baz')
-    {'baz': GroupSpec(zarr_version=2, attributes={'foo': 'bar'}, members=None)}
+    {'baz': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None)}
     >>> to_flat(GroupSpec(members={'g1': g1}, attributes={'foo': 'bar'}))
-    {'/g1': GroupSpec(zarr_version=2, attributes={'foo': 'bar'}, members=None), '': GroupSpec(zarr_version=2, attributes={'foo': 'bar'}, members=None)}
+    {'/g1': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None), '': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None)}
     """
     result = {}
     model_copy: ArraySpec | GroupSpec
@@ -878,10 +878,10 @@ def from_flat(data: dict[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
     >>> import numpy as np
     >>> tree = {'': ArraySpec.from_array(np.arange(10))}
     >>> from_flat(tree) # special case of a Zarr array at the root of the hierarchy
-    ArraySpec(zarr_version=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)
+    ArraySpec(zarr_format=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)
     >>> tree = {'/foo': ArraySpec.from_array(np.arange(10))}
     >>> from_flat(tree) # note that an implicit Group is created
-    GroupSpec(zarr_version=2, attributes={}, members={'foo': ArraySpec(zarr_version=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)})
+    GroupSpec(zarr_format=2, attributes={}, members={'foo': ArraySpec(zarr_format=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)})
     """
 
     # minimal check that the keys are valid
@@ -920,7 +920,7 @@ def from_flat_group(data: dict[str, ArraySpec | GroupSpec]) -> GroupSpec:
     >>> import numpy as np
     >>> tree = {'/foo': ArraySpec.from_array(np.arange(10))}
     >>> from_flat_group(tree) # note that an implicit Group is created
-    GroupSpec(zarr_version=2, attributes={}, members={'foo': ArraySpec(zarr_version=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)})
+    GroupSpec(zarr_format=2, attributes={}, members={'foo': ArraySpec(zarr_format=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)})
     """
     root_name = ""
     sep = "/"
