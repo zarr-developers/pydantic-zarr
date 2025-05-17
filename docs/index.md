@@ -37,7 +37,7 @@ print(spec.model_dump())
             'dtype': '|u1',
             'fill_value': 0,
             'order': 'C',
-            'filters': [],
+            'filters': None,
             'dimension_separator': '.',
             'compressor': {'id': 'zstd', 'level': 0, 'checksum': False},
         }

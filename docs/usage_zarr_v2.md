@@ -44,7 +44,7 @@ print(spec.model_dump())
             'dtype': '<f8',
             'fill_value': 0.0,
             'order': 'C',
-            'filters': [],
+            'filters': None,
             'dimension_separator': '.',
             'compressor': None,
         }
@@ -90,7 +90,7 @@ print(ArraySpec.from_array(np.arange(10)).model_dump())
     'dtype': '<i8',
     'fill_value': 0,
     'order': 'C',
-    'filters': [],
+    'filters': None,
     'dimension_separator': '/',
     'compressor': None,
 }
@@ -143,7 +143,7 @@ print(GroupSpec.from_flat(tree).model_dump())
                     'dtype': '|u1',
                     'fill_value': 0,
                     'order': 'C',
-                    'filters': [],
+                    'filters': None,
                     'dimension_separator': '/',
                     'compressor': None,
                 }
@@ -183,7 +183,7 @@ print(root.to_flat())
         dtype='|u1',
         fill_value=0,
         order='C',
-        filters=[],
+        filters=None,
         dimension_separator='/',
         compressor=None,
     ),
@@ -223,7 +223,7 @@ print(GroupSpec.from_flat(tree).model_dump())
                             'dtype': '|u1',
                             'fill_value': 0,
                             'order': 'C',
-                            'filters': [],
+                            'filters': None,
                             'dimension_separator': '/',
                             'compressor': None,
                         }
@@ -376,7 +376,7 @@ print(ArraysOnlyGroup(attributes={}, members=items).model_dump())
             'dtype': '|u1',
             'fill_value': 0,
             'order': 'C',
-            'filters': [],
+            'filters': None,
             'dimension_separator': '/',
             'compressor': None,
         }

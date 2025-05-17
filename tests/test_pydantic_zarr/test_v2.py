@@ -132,7 +132,10 @@ def test_array_spec(
     assert spec.fill_value == array.fill_value
     # this is a sign that nullability is being misused in zarr-python
     # the correct approach would be to use an empty list to express "no filters".
-    assert spec.filters == [f.get_config() for f in array.filters]
+    if len(array.filters):
+        assert spec.filters == [f.get_config() for f in array.filters]
+    else:
+        assert spec.filters is None
 
     if len(array.compressors):
         assert spec.compressor == array.compressors[0].get_config()
@@ -153,10 +156,10 @@ def test_array_spec(
     else:
         assert spec.compressor is None
 
-    if array2.filters is not None:
+    if len(array2.filters):
         assert spec.filters == [f.get_config() for f in array2.filters]
     else:
-        assert spec.filters == array2.filters
+        assert spec.filters is None
 
     assert spec.dimension_separator == array2.metadata.dimension_separator
     assert spec.shape == array2.shape
@@ -293,7 +296,7 @@ def test_array_spec_from_array(
     if filters in auto_options:
         assert spec.filters == auto_filters(array)
     else:
-        assert spec.filters == filters
+        assert spec.filters is None
 
     if dimension_separator in auto_options:
         assert spec.dimension_separator == auto_dimension_separator(array)
