@@ -327,7 +327,7 @@ except ValidationError as exc:
     1 validation error for GroupSpec[GroupAttrs, ~TItem]
     attributes.b
       Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='foo', input_type=str]
-        For further information visit https://errors.pydantic.dev/2.11/v/int_parsing
+        For further information visit https://errors.pydantic.dev/2.6/v/int_parsing
     """
 
 # this passes validation
@@ -346,7 +346,7 @@ except ValidationError as exc:
     1 validation error for GroupSpec[~TAttr, ArraySpec]
     members.foo
       Input should be a valid dictionary or instance of ArraySpec [type=model_type, input_value=GroupSpec(zarr_format=2, ...tributes={}, members={}), input_type=GroupSpec]
-        For further information visit https://errors.pydantic.dev/2.11/v/model_type
+        For further information visit https://errors.pydantic.dev/2.6/v/model_type
     """
 
 # this passes validation
