@@ -134,10 +134,10 @@ def test_array_spec(
     # the correct approach would be to use an empty list to express "no filters".
     assert spec.filters == [f.get_config() for f in array.filters]
 
-    if array.compressors is not None:
+    if len(array.compressors):
         assert spec.compressor == array.compressors[0].get_config()
     else:
-        assert spec.compressor == array.compressors[0]
+        assert spec.compressor is None
 
     assert spec.order == array.order
 
@@ -148,10 +148,10 @@ def test_array_spec(
     assert spec.attributes == array2.attrs
     assert spec.chunks == array2.chunks
 
-    if array2.compressors is not None:
+    if len(array2.compressors):
         assert spec.compressor == array2.compressors[0].get_config()
     else:
-        assert spec.compressor == array2.compressors[0]
+        assert spec.compressor is None
 
     if array2.filters is not None:
         assert spec.filters == [f.get_config() for f in array2.filters]
@@ -584,6 +584,8 @@ def test_array_like_with_zarr() -> None:
     arr = ArraySpec(shape=(1,), dtype="uint8", chunks=(1,))
     store = zarr.storage.MemoryStore()
     arr_stored = arr.to_zarr(store, path="arr")
+    print(arr)
+    print(ArraySpec.from_zarr(arr_stored))
     assert arr.like(arr_stored)
 
 

@@ -46,7 +46,7 @@ print(spec.model_dump())
             'order': 'C',
             'filters': [],
             'dimension_separator': '.',
-            'compressor': {'id': 'zstd', 'level': 0, 'checksum': False},
+            'compressor': None,
         }
     },
 }
@@ -90,7 +90,7 @@ print(ArraySpec.from_array(np.arange(10)).model_dump())
     'dtype': '<i8',
     'fill_value': 0,
     'order': 'C',
-    'filters': None,
+    'filters': [],
     'dimension_separator': '/',
     'compressor': None,
 }
@@ -143,7 +143,7 @@ print(GroupSpec.from_flat(tree).model_dump())
                     'dtype': '|u1',
                     'fill_value': 0,
                     'order': 'C',
-                    'filters': None,
+                    'filters': [],
                     'dimension_separator': '/',
                     'compressor': None,
                 }
@@ -183,7 +183,7 @@ print(root.to_flat())
         dtype='|u1',
         fill_value=0,
         order='C',
-        filters=None,
+        filters=[],
         dimension_separator='/',
         compressor=None,
     ),
@@ -223,7 +223,7 @@ print(GroupSpec.from_flat(tree).model_dump())
                             'dtype': '|u1',
                             'fill_value': 0,
                             'order': 'C',
-                            'filters': None,
+                            'filters': [],
                             'dimension_separator': '/',
                             'compressor': None,
                         }
@@ -269,7 +269,7 @@ arr_a_stored = arr_a.to_zarr(store, path='arr_a')
 
 # arr_a is like the zarr.Array version of itself
 print(arr_a.like(arr_a_stored))
-#> False
+#> True
 
 # Returns False, because of mismatched shape
 print(arr_b.like(arr_a_stored))
@@ -277,7 +277,7 @@ print(arr_b.like(arr_a_stored))
 
 # Returns True, because we exclude shape.
 print(arr_b.like(arr_a_stored, exclude={'shape'}))
-#> False
+#> True
 
 # The same thing, but for groups
 g_a = GroupSpec(attributes={'foo': 10}, members={'a': arr_a, 'b': arr_b})
@@ -297,7 +297,7 @@ print(g_a.like(g_b, exclude={'attributes'}))
 
 # g_a is like its zarr.Group counterpart
 print(g_a.like(g_a.to_zarr(store, path='g_a')))
-#> False
+#> True
 ```
 
 ## Using generic types
@@ -376,7 +376,7 @@ print(ArraysOnlyGroup(attributes={}, members=items).model_dump())
             'dtype': '|u1',
             'fill_value': 0,
             'order': 'C',
-            'filters': None,
+            'filters': [],
             'dimension_separator': '/',
             'compressor': None,
         }
