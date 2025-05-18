@@ -212,7 +212,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         attributes: Literal["auto"] | TAttr = "auto",
         fill_value: Literal["auto"] | float | None = "auto",
         order: Literal["auto", "C", "F"] = "auto",
-        filters: Literal["auto"] | list[CodecDict] = "auto",
+        filters: Literal["auto"] | list[CodecDict] | None = "auto",
         dimension_separator: Literal["auto", "/", "."] = "auto",
         compressor: Literal["auto"] | CodecDict | None = "auto",
     ) -> Self:
