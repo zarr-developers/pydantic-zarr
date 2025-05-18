@@ -24,9 +24,9 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: CPython",
 ]
 dependencies = [
-    "zarr<3",
-    "pydantic>2.0.0"
-    ]
+    "zarr@git+https://github.com/zarr-developers/zarr-python.git@main",
+    "pydantic>2.0.0",
+]
 
 [project.urls]
 Documentation = "https://zarr.dev/pydantic-zarr/"
@@ -51,6 +51,9 @@ docs = [
 [tool.hatch]
 version.source = "vcs"
 build.hooks.vcs.version-file = "src/pydantic_zarr/_version.py"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.envs.test]
 features = ["test"]
@@ -194,7 +197,9 @@ addopts = [
     "--durations=10", "-ra", "--strict-config", "--strict-markers",
 ]
 filterwarnings = [
-    "error"
+    "error",
+    # https://github.com/zarr-developers/zarr-python/issues/2948
+    "ignore:The `order` keyword argument has no effect for Zarr format 3 arrays:RuntimeWarning",
 ]
 
 [tool.repo-review]
