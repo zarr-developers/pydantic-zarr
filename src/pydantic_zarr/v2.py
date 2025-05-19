@@ -26,12 +26,7 @@ from zarr.abc.store import Store
 from zarr.core.sync_group import get_node
 from zarr.errors import ContainsArrayError, ContainsGroupError
 
-from pydantic_zarr.core import (
-    IncEx,
-    StrictBase,
-    ensure_key_no_path,
-    model_like,
-)
+from pydantic_zarr.core import IncEx, StrictBase, ensure_key_no_path, model_like, stringify_dtype
 
 TAttr = TypeVar("TAttr", bound=Mapping[str, Any])
 TItem = TypeVar("TItem", bound=Union["GroupSpec", "ArraySpec"])
@@ -49,23 +44,6 @@ def _contains_group(store: Store, path: str) -> bool:
         return isinstance(get_node(store, path, zarr_format=2), zarr.Group)
     except FileNotFoundError:
         return False
-
-
-def stringify_dtype(value: npt.DTypeLike) -> str:
-    """
-    Convert a `numpy.dtype` object into a `str`.
-
-    Parameters
-    ---------
-    value: `npt.DTypeLike`
-        Some object that can be coerced to a numpy dtype
-
-    Returns
-    -------
-
-    A numpy dtype string representation of `value`.
-    """
-    return np.dtype(value).str
 
 
 DtypeStr = Annotated[str, BeforeValidator(stringify_dtype)]
