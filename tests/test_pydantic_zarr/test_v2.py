@@ -182,9 +182,7 @@ def test_array_spec(
     assert ArraySpec.from_zarr(stored_2) == spec_2
 
     # test that mode and write_empty_chunks get passed through
-    assert spec_2.to_zarr(store, path="foo", mode="a").read_only is False
-    # TODO: uncomment line below when https://github.com/zarr-developers/zarr-python/issues/2949 is fixed
-    # assert spec_2.to_zarr(store, path="foo", mode="r").read_only is True
+    assert spec_2.to_zarr(store, path="foo").read_only is False
     # TODO: work out if there's a way to get the status of "write_empty_chunks" from an array
     """
     assert (

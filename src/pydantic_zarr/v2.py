@@ -385,7 +385,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         if self.filters is not None:
             spec_dict["filters"] = [numcodecs.get_codec(f) for f in spec_dict["filters"]]
         if _contains_array(store, path):
-            extant_array = zarr.open_array(store, path=path, mode="r", zarr_format=2)
+            extant_array = zarr.open_array(store, path=path, zarr_format=2)
 
             if not self.like(extant_array):
                 if not overwrite:
