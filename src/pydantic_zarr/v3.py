@@ -1,22 +1,28 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 from typing import (
+    TYPE_CHECKING,
     Any,
     Generic,
     Literal,
+    Never,
+    Self,
     TypeVar,
     Union,
     cast,
     overload,
 )
 
-import numpy.typing as npt
-import zarr
-from zarr.storage import BaseStore
-
 from pydantic_zarr.core import StrictBase
-from pydantic_zarr.v2 import DtypeStr
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
+    import numpy.typing as npt
+    import zarr
+    from zarr.storage import BaseStore
+
+    from pydantic_zarr.v2 import DtypeStr
 
 TAttr = TypeVar("TAttr", bound=dict[str, Any])
 TItem = TypeVar("TItem", bound=Union["GroupSpec", "ArraySpec"])
@@ -24,15 +30,15 @@ TItem = TypeVar("TItem", bound=Union["GroupSpec", "ArraySpec"])
 NodeType = Literal["group", "array"]
 
 # todo: introduce a type that represents hexadecimal representations of floats
-FillValue = Union[
-    Literal["Infinity", "-Infinity", "NaN"],
-    bool,
-    int,
-    float,
-    str,
-    tuple[float, float],
-    tuple[int, ...],
-]
+FillValue = (
+    Literal["Infinity", "-Infinity", "NaN"]  # noqa: PYI051
+    | bool
+    | int
+    | float
+    | str
+    | tuple[float, float]
+    | tuple[int, ...]
+)
 
 
 class NamedConfig(StrictBase):
@@ -114,7 +120,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     dimension_names: Sequence[str] | None  # todo: validate this against shape
 
     @classmethod
-    def from_array(cls, array: npt.NDArray[Any], **kwargs):
+    def from_array(cls, array: npt.NDArray[Any], **kwargs: Any) -> Self:
         """
         Create an ArraySpec from a numpy array-like object.
 
@@ -145,7 +151,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         )
 
     @classmethod
-    def from_zarr(cls, zarray: zarr.Array):
+    def from_zarr(cls, zarray: zarr.Array) -> Never:
         """
         Create an ArraySpec from a zarr array.
 
@@ -202,7 +208,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
 
     node_type: Literal["group"] = "group"
     attributes: TAttr = cast(TAttr, {})
-    members: dict[str, TItem] = {}
+    members: dict[str, TItem] = {}  # noqa: RUF012
 
     @classmethod
     def from_zarr(cls, group: zarr.Group) -> GroupSpec[TAttr, TItem]:
@@ -224,7 +230,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
 
         raise NotImplementedError
 
-    def to_zarr(self, store: BaseStore, path: str, overwrite: bool = False):
+    def to_zarr(self, store: BaseStore, path: str, overwrite: bool = False) -> Never:
         """
         Serialize a GroupSpec to a zarr group at a specific path in a zarr store.
 
@@ -319,11 +325,11 @@ def to_zarr(
     This operation will create metadata documents in the store.
 
     """
-    if isinstance(spec, ArraySpec) or isinstance(spec, GroupSpec):
+    if isinstance(spec, (ArraySpec, GroupSpec)):
         result = spec.to_zarr(store, path, overwrite=overwrite)
     else:
         msg = ("Invalid argument for spec. Expected an instance of GroupSpec or ",)
         f"ArraySpec, got {type(spec)} instead."
-        raise ValueError(msg)
+        raise TypeError(msg)
 
     return result

@@ -10,23 +10,16 @@ readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"
 license = "MIT"
 keywords = ["zarr", "pydantic"]
-authors = [
-  { name = "Davis Bennett", email = "davis.v.bennett@gmail.com" },
-]
-maintainers = [
-    { name = "David Stansby"}
-    ]
+authors = [{ name = "Davis Bennett", email = "davis.v.bennett@gmail.com" }]
+maintainers = [{ name = "David Stansby" }]
 
 classifiers = [
-  "Programming Language :: Python",
-  "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.12",
-  "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: Implementation :: CPython",
 ]
-dependencies = [
-    "zarr<3",
-    "pydantic>2.0.0"
-    ]
+dependencies = ["zarr<3", "pydantic>2.0.0"]
 
 [project.urls]
 Documentation = "https://zarr.dev/pydantic-zarr/"
@@ -34,19 +27,14 @@ Issues = "https://github.com/zarr-developers/pydantic-zarr/issues"
 Source = "https://github.com/zarr-developers/pydantic-zarr"
 
 [project.optional-dependencies]
-test = [
-    "coverage",
-    "pytest",
-    "pytest-cov",
-    "pytest-examples",
-    ]
+test = ["coverage", "pytest", "pytest-cov", "pytest-examples"]
 
 docs = [
     "mkdocs-material",
     "mkdocstrings[python]",
     "pytest-examples",
-    "pydantic==2.6"
-    ]
+    "pydantic==2.6",
+]
 
 [tool.hatch]
 version.source = "vcs"
@@ -72,10 +60,7 @@ deploy = "mkdocs gh-deploy"
 test = "pytest tests/test_docs"
 
 [tool.hatch.envs.types]
-extra-dependencies = [
-  "mypy>=1.0.0",
-  "pydantic"
-]
+extra-dependencies = ["mypy>=1.0.0", "pydantic"]
 [tool.hatch.envs.types.scripts]
 check = "mypy --install-types --non-interactive {args:src/pydantic_zarr tests}"
 
@@ -83,20 +68,14 @@ check = "mypy --install-types --non-interactive {args:src/pydantic_zarr tests}"
 source_pkgs = ["pydantic_zarr", "tests"]
 branch = true
 parallel = true
-omit = [
-  "src/pydantic_zarr/__about__.py",
-]
+omit = ["src/pydantic_zarr/__about__.py"]
 
 [tool.coverage.paths]
 pydantic_zarr = ["src/pydantic_zarr", "*/pydantic-zarr/src/pydantic_zarr"]
 tests = ["tests", "*/pydantic-zarr/tests"]
 
 [tool.coverage.report]
-exclude_lines = [
-  "no cov",
-  "if __name__ == .__main__.:",
-  "if TYPE_CHECKING:",
-]
+exclude_lines = ["no cov", "if __name__ == .__main__.:", "if TYPE_CHECKING:"]
 
 [tool.ruff]
 line-length = 100
@@ -190,16 +169,12 @@ minversion = "7"
 xfail_strict = true
 testpaths = ["tests"]
 log_cli_level = "INFO"
-addopts = [
-    "--durations=10", "-ra", "--strict-config", "--strict-markers",
-]
-filterwarnings = [
-    "error"
-]
+addopts = ["--durations=10", "-ra", "--strict-config", "--strict-markers"]
+filterwarnings = ["error"]
 
 [tool.repo-review]
 ignore = [
-	"PC111",  # black formatting for docs, not sure if want,
+    "PC111",  # black formatting for docs, not sure if want,
     "PC180",  # markdown formatter, no thanks
     "RTD100", # read the docs, no thanks,
     "RTD101", # read the docs, no thanks

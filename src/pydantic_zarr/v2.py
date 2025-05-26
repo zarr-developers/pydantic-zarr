@@ -166,7 +166,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     compressor: CodecDict | None = None
 
     @model_validator(mode="after")
-    def check_ndim(self):
+    def check_ndim(self) -> Self:
         """
         Check that the `shape` and `chunks` and attributes have the same length.
         """
@@ -330,7 +330,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         path: str,
         *,
         overwrite: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> zarr.Array:
         """
         Serialize an `ArraySpec` to a Zarr array at a specific path in a Zarr store. This operation
@@ -386,7 +386,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         *,
         include: IncEx = None,
         exclude: IncEx = None,
-    ):
+    ) -> bool:
         """
         Compare am `ArraySpec` to another `ArraySpec` or a `zarr.Array`, parameterized over the
         fields to exclude or include in the comparison. Models are first converted to `dict` via the
@@ -437,8 +437,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         else:
             other_parsed = other
 
-        result = model_like(self, other_parsed, include=include, exclude=exclude)
-        return result
+        return model_like(self, other_parsed, include=include, exclude=exclude)
 
 
 class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
@@ -461,7 +460,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
     """
 
     attributes: TAttr = cast(TAttr, {})
-    members: Annotated[dict[str, TItem] | None, AfterValidator(ensure_key_no_path)] = {}
+    members: Annotated[dict[str, TItem] | None, AfterValidator(ensure_key_no_path)] = {}  # noqa: RUF012
 
     @classmethod
     def from_zarr(cls, group: zarr.Group, *, depth: int = -1) -> Self:
@@ -515,13 +514,15 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
                     " or zarr.Group."
                 )
 
-                raise ValueError(msg)
+                raise ValueError(msg)  # noqa: TRY004
             members[name] = item_out
 
         result = cls(attributes=attributes, members=members)
         return result
 
-    def to_zarr(self, store: BaseStore, path: str, *, overwrite: bool = False, **kwargs):
+    def to_zarr(
+        self, store: BaseStore, path: str, *, overwrite: bool = False, **kwargs: Any
+    ) -> zarr.Group:
         """
         Serialize this `GroupSpec` to a Zarr group at a specific path in a `zarr.BaseStore`.
         This operation will create metadata documents in the store.
@@ -584,7 +585,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         other: GroupSpec | zarr.Group,
         include: IncEx = None,
         exclude: IncEx = None,
-    ):
+    ) -> bool:
         """
         Compare a `GroupSpec` to another `GroupSpec` or a `zarr.Group`, parameterized over the
         fields to exclude or include in the comparison. Models are first converted to dict via the
@@ -638,10 +639,9 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         else:
             other_parsed = other
 
-        result = model_like(self, other_parsed, include=include, exclude=exclude)
-        return result
+        return model_like(self, other_parsed, include=include, exclude=exclude)
 
-    def to_flat(self, root_path: str = ""):
+    def to_flat(self, root_path: str = "") -> dict[str, ArraySpec | GroupSpec]:
         """
         Flatten this `GroupSpec`.
         This method returns a `dict` with string keys and values that are `GroupSpec` or
@@ -752,7 +752,7 @@ def to_zarr(
     path: str,
     *,
     overwrite: bool = False,
-    **kwargs,
+    **kwargs: Any,
 ) -> zarr.Array: ...
 
 
@@ -763,7 +763,7 @@ def to_zarr(
     path: str,
     *,
     overwrite: bool = False,
-    **kwargs,
+    **kwargs: Any,
 ) -> zarr.Group: ...
 
 
@@ -773,7 +773,7 @@ def to_zarr(
     path: str,
     *,
     overwrite: bool = False,
-    **kwargs,
+    **kwargs: Any,
 ) -> zarr.Array | zarr.Group:
     """
     Serialize a `GroupSpec` or `ArraySpec` to a Zarr group or array at a specific path in
@@ -799,8 +799,7 @@ def to_zarr(
         This operation will create metadata documents in the store.
 
     """
-    result = spec.to_zarr(store, path, overwrite=overwrite, **kwargs)
-    return result
+    return spec.to_zarr(store, path, overwrite=overwrite, **kwargs)
 
 
 def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, ArraySpec | GroupSpec]:
@@ -850,12 +849,11 @@ def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, Array
         model_copy = node.model_copy(deep=True, update={"members": None})
         if node.members is not None:
             for name, value in node.members.items():
-                result.update(to_flat(value, "/".join([root_path, name])))
+                result.update(to_flat(value, f"{root_path}/{name}"))
 
     result[root_path] = model_copy
     # sort by increasing key length
-    result_sorted_keys = dict(sorted(result.items(), key=lambda v: len(v[0])))
-    return result_sorted_keys
+    return dict(sorted(result.items(), key=lambda v: len(v[0])))
 
 
 def from_flat(data: dict[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
@@ -888,16 +886,13 @@ def from_flat(data: dict[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
     """
 
     # minimal check that the keys are valid
-    invalid_keys = []
-    for key in data:
-        if key.endswith("/"):
-            invalid_keys.append(key)
+    invalid_keys = [key for key in data if key.endswith("/")]
     if len(invalid_keys) > 0:
         msg = f'Invalid keys {invalid_keys} found in data. Keys may not end with the "/"" character'
         raise ValueError(msg)
 
-    if tuple(data.keys()) == ("",) and isinstance(tuple(data.values())[0], ArraySpec):
-        return tuple(data.values())[0]
+    if tuple(data.keys()) == ("",) and isinstance(next(iter(data.values())), ArraySpec):
+        return next(iter(data.values()))
     else:
         return from_flat_group(data)
 
@@ -943,7 +938,7 @@ def from_flat_group(data: dict[str, ArraySpec | GroupSpec]) -> GroupSpec:
         # The root node is a GroupSpec with the key ""
         root_node = data_copy.pop(root_name)
         if isinstance(root_node, ArraySpec):
-            raise ValueError("Got an ArraySpec as the root node. This is invalid.")
+            raise ValueError("Got an ArraySpec as the root node. This is invalid.")  # noqa: TRY004
     except KeyError:
         # If a root node was not found, create a default one
         root_node = GroupSpec(attributes={}, members=None)

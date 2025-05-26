@@ -29,6 +29,7 @@ repos:
         additional_dependencies:
           - pytest
           - pydantic
+          - numpy
   - repo: https://github.com/scientific-python/cookie
     rev: 2025.01.22
     hooks:
