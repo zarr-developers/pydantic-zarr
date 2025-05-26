@@ -712,11 +712,11 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
 
 
 @overload
-def from_zarr(element: zarr.Group) -> GroupSpec: ...
+def from_zarr(element: zarr.Array, depth: int) -> ArraySpec: ...
 
 
 @overload
-def from_zarr(element: zarr.Array) -> ArraySpec: ...
+def from_zarr(element: zarr.Group, depth: int) -> GroupSpec: ...
 
 
 def from_zarr(element: zarr.Array | zarr.Group, depth: int = -1) -> ArraySpec | GroupSpec:

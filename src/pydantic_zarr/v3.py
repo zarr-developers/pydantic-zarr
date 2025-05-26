@@ -16,7 +16,7 @@ from typing import (
 from pydantic_zarr.core import StrictBase
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
 
     import numpy.typing as npt
     import zarr
@@ -43,7 +43,7 @@ FillValue = (
 
 class NamedConfig(StrictBase):
     name: str
-    configuration: Mapping[str, Any] | None
+    configuration: NamedConfig | None
 
 
 class RegularChunkingConfig(StrictBase):
@@ -52,7 +52,7 @@ class RegularChunkingConfig(StrictBase):
 
 class RegularChunking(NamedConfig):
     name: Literal["regular"] = "regular"
-    configuration: RegularChunkingConfig
+    configuration: RegularChunkingConfig  # type: ignore[assignment]
 
 
 class DefaultChunkKeyEncodingConfig(StrictBase):
@@ -61,7 +61,7 @@ class DefaultChunkKeyEncodingConfig(StrictBase):
 
 class DefaultChunkKeyEncoding(NamedConfig):
     name: Literal["default"]
-    configuration: DefaultChunkKeyEncodingConfig | None
+    configuration: DefaultChunkKeyEncodingConfig | None  # type: ignore[assignment]
 
 
 class NodeSpec(StrictBase):
@@ -253,12 +253,14 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         raise NotImplementedError
 
 
+"""
 @overload
 def from_zarr(element: zarr.Array) -> ArraySpec: ...
 
 
 @overload
 def from_zarr(element: zarr.Group) -> GroupSpec: ...
+"""
 
 
 def from_zarr(element: zarr.Array | zarr.Group) -> ArraySpec | GroupSpec:
@@ -328,7 +330,7 @@ def to_zarr(
     if isinstance(spec, (ArraySpec, GroupSpec)):
         result = spec.to_zarr(store, path, overwrite=overwrite)
     else:
-        msg = ("Invalid argument for spec. Expected an instance of GroupSpec or ",)
+        msg = ("Invalid argument for spec. Expected an instance of GroupSpec or ",)  # type: ignore[unreachable]
         f"ArraySpec, got {type(spec)} instead."
         raise TypeError(msg)
 
