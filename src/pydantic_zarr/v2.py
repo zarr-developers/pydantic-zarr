@@ -33,7 +33,7 @@ from pydantic_zarr.core import (
 )
 
 TAttr = TypeVar("TAttr", bound=Mapping[str, Any])
-TItem = TypeVar("TItem", bound=Union["GroupSpec", "ArraySpec"])
+TItem = TypeVar("TItem", bound=Union["GroupSpec", "ArraySpec"])  # type: ignore[type-arg]
 
 
 def stringify_dtype(value: npt.DTypeLike) -> str:
