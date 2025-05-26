@@ -483,7 +483,7 @@ def test_validation() -> None:
 @pytest.mark.parametrize("dtype", [None, "uint8", "float32"])
 def test_from_array(shape: tuple[int, ...], dtype: str | None) -> None:
     template = np.zeros(shape=shape, dtype=dtype)
-    spec = ArraySpec.from_array(template)
+    spec = ArraySpec.from_array(template)  # type: ignore[var-annotated]
 
     assert spec.shape == template.shape
     assert np.dtype(spec.dtype) == np.dtype(template.dtype)
@@ -550,7 +550,7 @@ def test_flatten_unflatten(
 
 # todo: parametrize
 def test_array_like() -> None:
-    a = ArraySpec.from_array(np.arange(10))
+    a = ArraySpec.from_array(np.arange(10))  # type: ignore[var-annotated]
     assert a.like(a)
 
     b = a.model_copy(update={"dtype": "uint8"})
@@ -573,13 +573,13 @@ def test_array_like_with_zarr() -> None:
 
 # todo: parametrize
 def test_group_like() -> None:
-    tree = {
+    tree: dict[str, GroupSpec | ArraySpec] = {
         "": GroupSpec(attributes={"path": ""}, members=None),
         "/a": GroupSpec(attributes={"path": "/a"}, members=None),
         "/b": ArraySpec.from_array(np.arange(10), attributes={"path": "/b"}),
         "/a/b": ArraySpec.from_array(np.arange(10), attributes={"path": "/a/b"}),
     }
-    group = GroupSpec.from_flat(tree)
+    group = GroupSpec.from_flat(tree)  # type: ignore[var-annotated]
     assert group.like(group)
     assert not group.like(group.model_copy(update={"attributes": None}))
     assert group.like(group.model_copy(update={"attributes": None}), exclude={"attributes"})
@@ -588,7 +588,7 @@ def test_group_like() -> None:
 
 # todo: parametrize
 def test_from_zarr_depth() -> None:
-    tree = {
+    tree: dict[str, GroupSpec | ArraySpec] = {
         "": GroupSpec(members=None, attributes={"level": 0, "type": "group"}),
         "/1": GroupSpec(members=None, attributes={"level": 1, "type": "group"}),
         "/1/2": GroupSpec(members=None, attributes={"level": 2, "type": "group"}),
@@ -598,23 +598,23 @@ def test_from_zarr_depth() -> None:
 
     store = zarr.MemoryStore()
     group_out = GroupSpec.from_flat(tree).to_zarr(store, path="test")
-    group_in_0 = GroupSpec.from_zarr(group_out, depth=0)
+    group_in_0 = GroupSpec.from_zarr(group_out, depth=0)  # type: ignore[var-annotated]
     assert group_in_0 == tree[""]
 
-    group_in_1 = GroupSpec.from_zarr(group_out, depth=1)
-    assert group_in_1.attributes == tree[""].attributes
+    group_in_1 = GroupSpec.from_zarr(group_out, depth=1)  # type: ignore[var-annotated]
+    assert group_in_1.attributes == tree[""].attributes  # type: ignore[attr-defined]
     assert group_in_1.members is not None
     assert group_in_1.members["1"] == tree["/1"]
 
-    group_in_2 = GroupSpec.from_zarr(group_out, depth=2)
+    group_in_2 = GroupSpec.from_zarr(group_out, depth=2)  # type: ignore[var-annotated]
     assert group_in_2.members is not None
     assert group_in_2.members["1"].members["2"] == tree["/1/2"]
-    assert group_in_2.attributes == tree[""].attributes
-    assert group_in_2.members["1"].attributes == tree["/1"].attributes
+    assert group_in_2.attributes == tree[""].attributes  # type: ignore[attr-defined]
+    assert group_in_2.members["1"].attributes == tree["/1"].attributes  # type: ignore[attr-defined]
 
-    group_in_3 = GroupSpec.from_zarr(group_out, depth=3)
+    group_in_3 = GroupSpec.from_zarr(group_out, depth=3)  # type: ignore[var-annotated]
     assert group_in_3.members is not None
     assert group_in_3.members["1"].members["2"].members["1"] == tree["/1/2/1"]
-    assert group_in_3.attributes == tree[""].attributes
-    assert group_in_3.members["1"].attributes == tree["/1"].attributes
-    assert group_in_3.members["1"].members["2"].attributes == tree["/1/2"].attributes
+    assert group_in_3.attributes == tree[""].attributes  # type: ignore[attr-defined]
+    assert group_in_3.members["1"].attributes == tree["/1"].attributes  # type: ignore[attr-defined]
+    assert group_in_3.members["1"].members["2"].attributes == tree["/1/2"].attributes  # type: ignore[attr-defined]
