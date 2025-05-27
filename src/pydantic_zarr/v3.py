@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import (
     TYPE_CHECKING,
+    Annotated,
     Any,
     Generic,
     Literal,
@@ -13,16 +14,18 @@ from typing import (
     overload,
 )
 
+from pydantic import BeforeValidator
+
 from pydantic_zarr.core import StrictBase
+from pydantic_zarr.v2 import stringify_dtype
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping
 
     import numpy.typing as npt
     import zarr
     from zarr.storage import BaseStore
 
-    from pydantic_zarr.v2 import DtypeStr
 
 TAttr = TypeVar("TAttr", bound=dict[str, Any])
 TItem = TypeVar("TItem", bound=Union["GroupSpec", "ArraySpec"])
@@ -43,7 +46,7 @@ FillValue = (
 
 class NamedConfig(StrictBase):
     name: str
-    configuration: NamedConfig | None
+    configuration: Mapping[str, Any] | None
 
 
 class RegularChunkingConfig(StrictBase):
@@ -110,14 +113,14 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
     node_type: Literal["array"] = "array"
     attributes: TAttr = cast(TAttr, {})
-    shape: Sequence[int]
-    data_type: DtypeStr
+    shape: tuple[int, ...]
+    data_type: Annotated[str, BeforeValidator(stringify_dtype)]
     chunk_grid: NamedConfig  # todo: validate this against shape
     chunk_key_encoding: NamedConfig  # todo: validate this against shape
     fill_value: FillValue  # todo: validate this against the data type
-    codecs: Sequence[NamedConfig]
-    storage_transformers: Sequence[NamedConfig] | None = None
-    dimension_names: Sequence[str] | None  # todo: validate this against shape
+    codecs: tuple[NamedConfig, ...]
+    storage_transformers: tuple[NamedConfig, ...] | None = None
+    dimension_names: tuple[str, ...] | None  # todo: validate this against shape
 
     @classmethod
     def from_array(cls, array: npt.NDArray[Any], **kwargs: Any) -> Self:
