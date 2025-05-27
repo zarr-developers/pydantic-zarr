@@ -33,7 +33,7 @@ from pydantic_zarr.core import (
 )
 
 TAttr = TypeVar("TAttr", bound=Mapping[str, Any])
-TItem = TypeVar("TItem", bound=Union["GroupSpec", "ArraySpec"])
+TItem = TypeVar("TItem", bound=Union["GroupSpec", "ArraySpec"])  # type: ignore[type-arg]
 
 
 def stringify_dtype(value: npt.DTypeLike) -> str:
@@ -89,7 +89,7 @@ def parse_dimension_separator(data: Any) -> Literal["/", "."]:
 
     Parameters
     ----------
-    data: Any
+    data : Any
         The input data to parse.
 
     Returns
@@ -166,7 +166,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     compressor: CodecDict | None = None
 
     @model_validator(mode="after")
-    def check_ndim(self):
+    def check_ndim(self) -> Self:
         """
         Check that the `shape` and `chunks` and attributes have the same length.
         """
@@ -198,29 +198,30 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
         Parameters
         ----------
-        array : an array-like object.
+        array : an array-like object
             Must have `shape` and `dtype` attributes.
             The `shape` and `dtype` of this object will be used to construct an `ArraySpec`.
-        attributes: "auto" | TAttr, default = "auto"
-            User-defined metadata associated with this array. Should be JSON-serializable. The default is "auto", which means that `array.attributes` will be used,
-            with a fallback value of the empty dict `{}`.
-        chunks: "auto" | tuple[int, ...], default = "auto"
+        chunks : "auto" | tuple[int, ...], default = "auto"
             The chunks for this `ArraySpec`. If `chunks` is "auto" (the default), then this method first checks if `array` has a `chunksize` attribute, using it if present.
             This supports copying chunk sizes from dask arrays. If `array` does not have `chunksize`, then a routine from `zarr-python` is used to guess the chunk size,
             given the `shape` and `dtype` of `array`. If `chunks` is not auto, then it should be a tuple of ints.
-        order: "auto" | "C" | "F", default = "auto"
+        attributes : "auto" | TAttr, default = "auto"
+            User-defined metadata associated with this array. Should be JSON-serializable. The default is "auto", which means that `array.attributes` will be used,
+            with a fallback value of the empty dict `{}`.
+        fill_value : "auto" | int | float | None, default = "auto"
+            The fill value for this array. Either "auto" or FillValue. The default is "auto", which means that `array.fill_value` will be used if that attribute exists, with a fallback value of 0.
+        order : "auto" | "C" | "F", default = "auto"
             The memory order of the `ArraySpec`. One of "auto", "C", or "F". The default is "auto", which means that, if present, `array.order`
             will be used, falling back to "C" if `array` does not have an `order` attribute.
-        fill_value: "auto" | int | float | None, default = "auto"
-            The fill value for this array. Either "auto" or FillValue. The default is "auto", which means that `array.fill_value` will be used if that attribute exists, with a fallback value of 0.
-        compressor: "auto" | CodecDict | None, default = "auto"
-            The compressor for this `ArraySpec`. One of "auto", a JSON-serializable representation of a compression codec, or `None`. The default is "auto", which means that `array.compressor` attribute will be used, with a fallback value of `None`.
-        filters: "auto" | List[CodecDict] | None, default = "auto"
+        filters : "auto" | List[CodecDict] | None, default = "auto"
             The filters for this `ArraySpec`. One of "auto", a list of JSON-serializable representations of compression codec, or `None`. The default is "auto", which means that the `array.filters` attribute will be
             used, with a fallback value of `None`.
-        dimension_separator: "auto" | "." | "/", default = "auto"
+        dimension_separator : "auto" | "." | "/", default = "auto"
             Sets the character used for partitioning the different dimensions of a chunk key.
             Must be one of "auto", "/" or ".". The default is "auto", which means that `array.dimension_separator` is used, with a fallback value of "/".
+        compressor : "auto" | CodecDict | None, default = "auto"
+            The compressor for this `ArraySpec`. One of "auto", a JSON-serializable representation of a compression codec, or `None`. The default is "auto", which means that `array.compressor` attribute will be used, with a fallback value of `None`.
+
         Returns
         -------
         ArraySpec
@@ -329,7 +330,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         path: str,
         *,
         overwrite: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> zarr.Array:
         """
         Serialize an `ArraySpec` to a Zarr array at a specific path in a Zarr store. This operation
@@ -341,10 +342,11 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             The storage backend that will manifest the array.
         path : str
             The location of the array inside the store.
-        overwrite: bool, default = False
+        overwrite : bool, default = False
             Whether to overwrite existing objects in storage to create the Zarr array.
         **kwargs : Any
             Additional keyword arguments are passed to `zarr.create`.
+
         Returns
         -------
         zarr.Array
@@ -384,7 +386,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         *,
         include: IncEx = None,
         exclude: IncEx = None,
-    ):
+    ) -> bool:
         """
         Compare am `ArraySpec` to another `ArraySpec` or a `zarr.Array`, parameterized over the
         fields to exclude or include in the comparison. Models are first converted to `dict` via the
@@ -392,14 +394,14 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
         Parameters
         ----------
-        other: ArraySpec | zarr.Array
+        other : ArraySpec | zarr.Array
             The array (model or actual) to compare with. If other is a `zarr.Array`, it will be
             converted to `ArraySpec` first.
-        include: IncEx, default = None
+        include : IncEx, default = None
             A specification of fields to include in the comparison. The default value is `None`,
             which means that all fields will be included. See the documentation of
             `pydantic.BaseModel.model_dump` for more details.
-        exclude: IncEx, default = None
+        exclude : IncEx, default = None
             A specification of fields to exclude from the comparison. The default value is `None`,
             which means that no fields will be excluded. See the documentation of
             `pydantic.BaseModel.model_dump` for more details.
@@ -435,8 +437,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         else:
             other_parsed = other
 
-        result = model_like(self, other_parsed, include=include, exclude=exclude)
-        return result
+        return model_like(self, other_parsed, include=include, exclude=exclude)
 
 
 class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
@@ -459,7 +460,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
     """
 
     attributes: TAttr = cast(TAttr, {})
-    members: Annotated[dict[str, TItem] | None, AfterValidator(ensure_key_no_path)] = {}
+    members: Annotated[dict[str, TItem] | None, AfterValidator(ensure_key_no_path)] = {}  # noqa: RUF012
 
     @classmethod
     def from_zarr(cls, group: zarr.Group, *, depth: int = -1) -> Self:
@@ -479,7 +480,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         ----------
         group : zarr.Group
             The Zarr group to model.
-        depth: int
+        depth : int
             An integer which may be no lower than -1. Determines how far into the tree to parse.
 
         Returns
@@ -513,13 +514,15 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
                     " or zarr.Group."
                 )
 
-                raise ValueError(msg)
+                raise ValueError(msg)  # noqa: TRY004
             members[name] = item_out
 
         result = cls(attributes=attributes, members=members)
         return result
 
-    def to_zarr(self, store: BaseStore, path: str, *, overwrite: bool = False, **kwargs):
+    def to_zarr(
+        self, store: BaseStore, path: str, *, overwrite: bool = False, **kwargs: Any
+    ) -> zarr.Group:
         """
         Serialize this `GroupSpec` to a Zarr group at a specific path in a `zarr.BaseStore`.
         This operation will create metadata documents in the store.
@@ -582,7 +585,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         other: GroupSpec | zarr.Group,
         include: IncEx = None,
         exclude: IncEx = None,
-    ):
+    ) -> bool:
         """
         Compare a `GroupSpec` to another `GroupSpec` or a `zarr.Group`, parameterized over the
         fields to exclude or include in the comparison. Models are first converted to dict via the
@@ -590,14 +593,14 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
 
         Parameters
         ----------
-        other: GroupSpec | zarr.Group
+        other : GroupSpec | zarr.Group
             The group (model or actual) to compare with. If other is a `zarr.Group`, it will be
             converted to a `GroupSpec`.
-        include: IncEx, default = None
+        include : IncEx, default = None
             A specification of fields to include in the comparison. The default is `None`,
             which means that all fields will be included. See the documentation of
             `pydantic.BaseModel.model_dump` for more details.
-        exclude: IncEx, default = None
+        exclude : IncEx, default = None
             A specification of fields to exclude from the comparison. The default is `None`,
             which means that no fields will be excluded. See the documentation of
             `pydantic.BaseModel.model_dump` for more details.
@@ -636,10 +639,9 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         else:
             other_parsed = other
 
-        result = model_like(self, other_parsed, include=include, exclude=exclude)
-        return result
+        return model_like(self, other_parsed, include=include, exclude=exclude)
 
-    def to_flat(self, root_path: str = ""):
+    def to_flat(self, root_path: str = "") -> dict[str, ArraySpec | GroupSpec]:
         """
         Flatten this `GroupSpec`.
         This method returns a `dict` with string keys and values that are `GroupSpec` or
@@ -652,7 +654,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
 
         Parameters
         ---------
-        root_path: `str`, default = ''.
+        root_path : `str`, default = ''.
             The root path. The keys in `self.members` will be
             made relative to `root_path` when used as keys in the result dictionary.
 
@@ -684,7 +686,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
 
         Parameters
         ----------
-        data: Dict[str, ArraySpec | GroupSpec]
+        data : Dict[str, ArraySpec | GroupSpec]
             A flattened representation of a Zarr hierarchy.
 
         Returns
@@ -710,11 +712,11 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
 
 
 @overload
-def from_zarr(element: zarr.Group) -> GroupSpec: ...
+def from_zarr(element: zarr.Array, depth: int) -> ArraySpec: ...
 
 
 @overload
-def from_zarr(element: zarr.Array) -> ArraySpec: ...
+def from_zarr(element: zarr.Group, depth: int) -> GroupSpec: ...  # type: ignore[overload-cannot-match]
 
 
 def from_zarr(element: zarr.Array | zarr.Group, depth: int = -1) -> ArraySpec | GroupSpec:
@@ -725,7 +727,7 @@ def from_zarr(element: zarr.Array | zarr.Group, depth: int = -1) -> ArraySpec | 
     ----------
     element : zarr.Array | zarr.Group
         The `zarr.Array` or `zarr.Group` to model.
-    depth: int, default = -1
+    depth : int, default = -1
         An integer which may be no lower than -1. If `element` is a `zarr.Group`, the `depth`
         parameter determines how deeply the hierarchy defined by `element` will be parsed.
         This argument has no effect if `element` is a `zarr.Array`.
@@ -750,7 +752,7 @@ def to_zarr(
     path: str,
     *,
     overwrite: bool = False,
-    **kwargs,
+    **kwargs: Any,
 ) -> zarr.Array: ...
 
 
@@ -761,7 +763,7 @@ def to_zarr(
     path: str,
     *,
     overwrite: bool = False,
-    **kwargs,
+    **kwargs: Any,
 ) -> zarr.Group: ...
 
 
@@ -771,7 +773,7 @@ def to_zarr(
     path: str,
     *,
     overwrite: bool = False,
-    **kwargs,
+    **kwargs: Any,
 ) -> zarr.Array | zarr.Group:
     """
     Serialize a `GroupSpec` or `ArraySpec` to a Zarr group or array at a specific path in
@@ -789,6 +791,7 @@ def to_zarr(
         Whether to overwrite existing objects in storage to create the Zarr group or array.
     **kwargs
         Additional keyword arguments will be
+
     Returns
     -------
     zarr.Array | zarr.Group
@@ -796,8 +799,7 @@ def to_zarr(
         This operation will create metadata documents in the store.
 
     """
-    result = spec.to_zarr(store, path, overwrite=overwrite, **kwargs)
-    return result
+    return spec.to_zarr(store, path, overwrite=overwrite, **kwargs)
 
 
 def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, ArraySpec | GroupSpec]:
@@ -847,12 +849,11 @@ def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, Array
         model_copy = node.model_copy(deep=True, update={"members": None})
         if node.members is not None:
             for name, value in node.members.items():
-                result.update(to_flat(value, "/".join([root_path, name])))
+                result.update(to_flat(value, f"{root_path}/{name}"))
 
     result[root_path] = model_copy
     # sort by increasing key length
-    result_sorted_keys = dict(sorted(result.items(), key=lambda v: len(v[0])))
-    return result_sorted_keys
+    return dict(sorted(result.items(), key=lambda v: len(v[0])))
 
 
 def from_flat(data: dict[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
@@ -863,7 +864,7 @@ def from_flat(data: dict[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
     Parameters
     ----------
 
-    data: Dict[str, ArraySpec | GroupSpec]
+    data : Dict[str, ArraySpec | GroupSpec]
         A flat representation of a Zarr hierarchy. This is a `dict` with keys that are strings,
         and values that are either `GroupSpec` or `ArraySpec` instances.
 
@@ -885,16 +886,13 @@ def from_flat(data: dict[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
     """
 
     # minimal check that the keys are valid
-    invalid_keys = []
-    for key in data:
-        if key.endswith("/"):
-            invalid_keys.append(key)
+    invalid_keys = [key for key in data if key.endswith("/")]
     if len(invalid_keys) > 0:
         msg = f'Invalid keys {invalid_keys} found in data. Keys may not end with the "/"" character'
         raise ValueError(msg)
 
-    if tuple(data.keys()) == ("",) and isinstance(tuple(data.values())[0], ArraySpec):
-        return tuple(data.values())[0]
+    if tuple(data.keys()) == ("",) and isinstance(next(iter(data.values())), ArraySpec):
+        return next(iter(data.values()))
     else:
         return from_flat_group(data)
 
@@ -906,7 +904,7 @@ def from_flat_group(data: dict[str, ArraySpec | GroupSpec]) -> GroupSpec:
 
     Parameters
     ----------
-    data: Dict[str, ArraySpec | GroupSpec]
+    data : Dict[str, ArraySpec | GroupSpec]
         A flat representation of a Zarr hierarchy rooted at a Zarr group.
 
     Returns
@@ -940,7 +938,7 @@ def from_flat_group(data: dict[str, ArraySpec | GroupSpec]) -> GroupSpec:
         # The root node is a GroupSpec with the key ""
         root_node = data_copy.pop(root_name)
         if isinstance(root_node, ArraySpec):
-            raise ValueError("Got an ArraySpec as the root node. This is invalid.")
+            raise ValueError("Got an ArraySpec as the root node. This is invalid.")  # noqa: TRY004
     except KeyError:
         # If a root node was not found, create a default one
         root_node = GroupSpec(attributes={}, members=None)

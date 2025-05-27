@@ -25,10 +25,12 @@ repos:
     rev: v1.15.0
     hooks:
       - id: mypy
-        files: src|tests
+        files: src
         additional_dependencies:
           - pytest
           - pydantic
+          - numpy
+          - zarr<3
   - repo: https://github.com/scientific-python/cookie
     rev: 2025.01.22
     hooks:
