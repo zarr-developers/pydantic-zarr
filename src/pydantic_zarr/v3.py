@@ -20,8 +20,6 @@ from pydantic_zarr.core import StrictBase
 from pydantic_zarr.v2 import stringify_dtype
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     import numpy.typing as npt
     import zarr
     from zarr.storage import BaseStore
@@ -46,7 +44,7 @@ FillValue = (
 
 class NamedConfig(StrictBase):
     name: str
-    configuration: Mapping[str, Any] | None
+    configuration: dict[str, Any] | None
 
 
 class RegularChunkingConfig(StrictBase):
