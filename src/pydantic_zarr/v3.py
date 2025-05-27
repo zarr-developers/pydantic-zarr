@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping  # noqa: TC003
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -44,7 +45,7 @@ FillValue = (
 
 class NamedConfig(StrictBase):
     name: str
-    configuration: dict[str, Any] | None
+    configuration: Mapping[str, Any] | None
 
 
 class RegularChunkingConfig(StrictBase):
