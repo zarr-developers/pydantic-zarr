@@ -17,15 +17,15 @@ To write a hierarchy to some zarr-compatible storage backend, `GroupSpec` and `A
 Note that `to_zarr` will _not_ write any array data. You have to do this separately.
 
 ```python
-from zarr import create, group
+from zarr import create_array, create_group
 
 from pydantic_zarr.v2 import GroupSpec
 
 # create an in-memory Zarr group + array with attributes
-grp = group(path='foo', zarr_format=2)
+grp = create_group(store={}, path='foo', zarr_format=2)
 grp.attrs.put({'group_metadata': 10})
-arr = create(
-    path='foo/bar', store=grp.store, shape=(10,), compressor=None, zarr_format=2
+arr = create_array(
+    name='foo/bar', store=grp.store, shape=(10,), dtype="f8", compressors=None, zarr_format=2
 )
 arr.attrs.put({'array_metadata': True})
 
@@ -42,7 +42,7 @@ print(spec.model_dump())
             'shape': (10,),
             'chunks': (10,),
             'dtype': '<f8',
-            'fill_value': 0.0,
+            'fill_value': None,
             'order': 'C',
             'filters': None,
             'dimension_separator': '.',

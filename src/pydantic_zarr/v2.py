@@ -342,7 +342,11 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             dtype=str(array.dtype),
             # explicitly cast to numpy type and back to python
             # so that int 0 isn't serialized as 0.0
-            fill_value=array.dtype.type(array.fill_value).tolist(),
+            fill_value=(
+                array.dtype.type(array.fill_value).tolist()
+                if array.fill_value is not None
+                else array.fill_value
+            ),
             order=array.order,
             filters=array.filters,
             dimension_separator=array.metadata.dimension_separator,
@@ -378,7 +382,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         zarr.Array
             A Zarr array that is structurally identical to `self`.
         """
-        spec_dict = self.model_dump(exclude={"zarr_format": True})
+        spec_dict = self.model_dump()
         attrs = spec_dict.pop("attributes")
         if self.compressor is not None:
             spec_dict["compressor"] = numcodecs.get_codec(spec_dict["compressor"])
@@ -397,7 +401,6 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
                     return zarr.open_array(
                         store=extant_array.store, path=extant_array.path, zarr_format=2, **kwargs
                     )
-        spec_dict["zarr_format"] = spec_dict.pop("zarr_format", 2)
         result = zarr.create(store=store, path=path, overwrite=overwrite, **spec_dict, **kwargs)
         result.attrs.put(attrs)
         return result
@@ -523,8 +526,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         if depth == 0:
             return cls(attributes=attributes, members=None)
         new_depth = max(depth - 1, -1)
-        for name in group:
-            item = group[name]
+        for name, item in group.members():
             if isinstance(item, zarr.Array):
                 # convert to dict before the final typed GroupSpec construction
                 item_out = ArraySpec.from_zarr(item).model_dump()

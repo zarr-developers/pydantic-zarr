@@ -14,10 +14,10 @@ import zarr
 from pydantic_zarr.v2 import GroupSpec
 
 # create a Zarr group
-group = zarr.group(path='foo', zarr_format=2)
+group = zarr.create_group(store={}, path='foo', zarr_format=2)
 # put an array inside the group
-array = zarr.create(
-    store=group.store, path='foo/bar', shape=10, dtype='uint8', zarr_format=2
+array = zarr.create_array(
+    store=group.store, name='foo/bar', shape=10, dtype='uint8', zarr_format=2
 )
 array.attrs.put({'metadata': 'hello'})
 
@@ -35,7 +35,7 @@ print(spec.model_dump())
             'shape': (10,),
             'chunks': (10,),
             'dtype': '|u1',
-            'fill_value': 0,
+            'fill_value': None,
             'order': 'C',
             'filters': None,
             'dimension_separator': '.',
