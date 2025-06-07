@@ -40,6 +40,8 @@ TAttr = TypeVar("TAttr", bound=Mapping[str, Any])
 TItem = TypeVar("TItem", bound=Union["GroupSpec", "ArraySpec"])  # type: ignore[type-arg]
 
 
+# TODO: expose contains_array and contains_group as public functions in zarr-python
+# and replace these custom implementations
 def _contains_array(store: Store, path: str) -> bool:
     try:
         return isinstance(get_node(store, path, zarr_format=2), zarr.Array)
