@@ -27,7 +27,8 @@ Issues = "https://github.com/zarr-developers/pydantic-zarr/issues"
 Source = "https://github.com/zarr-developers/pydantic-zarr"
 
 [project.optional-dependencies]
-test = ["coverage", "pytest", "pytest-cov", "pytest-examples"]
+# pytest pin is due to https://github.com/pytest-dev/pytest-cov/issues/693
+test = ["coverage", "pytest<8.4", "pytest-cov", "pytest-examples"]
 
 docs = [
     "mkdocs-material",
