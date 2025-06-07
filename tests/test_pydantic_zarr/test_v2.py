@@ -181,19 +181,7 @@ def test_array_spec(
     stored_2 = spec_2.to_zarr(store, path="foo", overwrite=True)
     assert ArraySpec.from_zarr(stored_2) == spec_2
 
-    # test that mode and write_empty_chunks get passed through
     assert spec_2.to_zarr(store, path="foo").read_only is False
-    # TODO: work out if there's a way to get the status of "write_empty_chunks" from an array
-    """
-    assert (
-        spec_2.to_zarr(store, path="foo", config={"write_empty_chunks": False})._write_empty_chunks
-        is False
-    )
-    assert (
-        spec_2.to_zarr(store, path="foo", config={"write_empty_chunks": True})._write_empty_chunks
-        is True
-    )
-    """
 
 
 @dataclass
