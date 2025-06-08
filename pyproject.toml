@@ -13,21 +13,22 @@ keywords = ["zarr", "pydantic"]
 authors = [{ name = "Davis Bennett", email = "davis.v.bennett@gmail.com" }]
 maintainers = [{ name = "David Stansby" }]
 
+
 classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: Implementation :: CPython",
 ]
-dependencies = ["zarr<3", "pydantic>2.0.0"]
-
+dependencies = ["zarr>=3", "pydantic>2.0.0"]
 [project.urls]
 Documentation = "https://zarr.dev/pydantic-zarr/"
 Issues = "https://github.com/zarr-developers/pydantic-zarr/issues"
 Source = "https://github.com/zarr-developers/pydantic-zarr"
 
 [project.optional-dependencies]
-test = ["coverage", "pytest", "pytest-cov", "pytest-examples"]
+# pytest pin is due to https://github.com/pytest-dev/pytest-cov/issues/693
+test = ["coverage", "pytest<8.4", "pytest-cov", "pytest-examples"]
 
 docs = [
     "mkdocs-material",
@@ -170,7 +171,11 @@ xfail_strict = true
 testpaths = ["tests"]
 log_cli_level = "INFO"
 addopts = ["--durations=10", "-ra", "--strict-config", "--strict-markers"]
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    # https://github.com/zarr-developers/zarr-python/issues/2948
+    "ignore:The `order` keyword argument has no effect for Zarr format 3 arrays:RuntimeWarning",
+]
 
 [tool.repo-review]
 ignore = [

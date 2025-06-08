@@ -15,6 +15,8 @@ from typing import (
     overload,
 )
 
+import numpy.typing as npt
+import zarr
 from pydantic import BeforeValidator
 
 from pydantic_zarr.core import StrictBase
@@ -23,7 +25,7 @@ from pydantic_zarr.v2 import stringify_dtype
 if TYPE_CHECKING:
     import numpy.typing as npt
     import zarr
-    from zarr.storage import BaseStore
+    from zarr.abc.store import Store
 
 
 TAttr = TypeVar("TAttr", bound=dict[str, Any])
@@ -169,13 +171,13 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         """
         raise NotImplementedError
 
-    def to_zarr(self, store: BaseStore, path: str, overwrite: bool = False) -> zarr.Array:
+    def to_zarr(self, store: Store, path: str, overwrite: bool = False) -> zarr.Array:
         """
         Serialize an ArraySpec to a zarr array at a specific path in a zarr store.
 
         Parameters
         ----------
-        store : instance of zarr.BaseStore
+        store : instance of zarr.abc.store.Store
             The storage backend that will manifest the array.
         path : str
             The location of the array inside the store.
@@ -232,13 +234,13 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
 
         raise NotImplementedError
 
-    def to_zarr(self, store: BaseStore, path: str, overwrite: bool = False) -> Never:
+    def to_zarr(self, store: Store, path: str, overwrite: bool = False) -> Never:
         """
         Serialize a GroupSpec to a zarr group at a specific path in a zarr store.
 
         Parameters
         ----------
-        store : instance of zarr.BaseStore
+        store : instance of zarr.abc.store.Store
             The storage backend that will manifest the group and its contents.
         path : str
             The location of the group inside the store.
@@ -270,7 +272,7 @@ def from_zarr(element: zarr.Array | zarr.Group) -> ArraySpec | GroupSpec:
     Recursively parse a Zarr group or Zarr array into an ArraySpec or GroupSpec.
 
     Parameters
-    ---------
+    ----------
     element : a zarr Array or zarr Group
 
     Returns
@@ -285,7 +287,7 @@ def from_zarr(element: zarr.Array | zarr.Group) -> ArraySpec | GroupSpec:
 @overload
 def to_zarr(
     spec: ArraySpec,
-    store: BaseStore,
+    store: Store,
     path: str,
     overwrite: bool = False,
 ) -> zarr.Array: ...
@@ -294,7 +296,7 @@ def to_zarr(
 @overload
 def to_zarr(
     spec: GroupSpec,
-    store: BaseStore,
+    store: Store,
     path: str,
     overwrite: bool = False,
 ) -> zarr.Group: ...
@@ -302,7 +304,7 @@ def to_zarr(
 
 def to_zarr(
     spec: ArraySpec | GroupSpec,
-    store: BaseStore,
+    store: Store,
     path: str,
     overwrite: bool = False,
 ) -> zarr.Array | zarr.Group:
@@ -314,7 +316,7 @@ def to_zarr(
     ----------
     spec : GroupSpec or ArraySpec
         The GroupSpec or ArraySpec that will be serialized to storage.
-    store : instance of zarr.BaseStore
+    store : instance of zarr.abc.store.Store
         The storage backend that will manifest the group or array.
     path : str
         The location of the group or array inside the store.
