@@ -17,7 +17,7 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 import zarr
-from pydantic import BeforeValidator
+from pydantic import BaseModel, BeforeValidator, Field
 
 from pydantic_zarr.core import StrictBase
 from pydantic_zarr.v2 import stringify_dtype
@@ -47,7 +47,7 @@ FillValue = BoolFillValue | IntFillValue | FloatFillValue | ComplexFillValue | R
 
 class NamedConfig(StrictBase):
     name: str
-    configuration: dict[str, Any] | None
+    configuration: dict[str, Any] | BaseModel | None
 
 
 class RegularChunkingConfig(StrictBase):
@@ -56,7 +56,7 @@ class RegularChunkingConfig(StrictBase):
 
 class RegularChunking(NamedConfig):
     name: Literal["regular"] = "regular"
-    configuration: RegularChunkingConfig  # type: ignore[assignment]
+    configuration: RegularChunkingConfig
 
 
 class DefaultChunkKeyEncodingConfig(StrictBase):
@@ -65,7 +65,7 @@ class DefaultChunkKeyEncodingConfig(StrictBase):
 
 class DefaultChunkKeyEncoding(NamedConfig):
     name: Literal["default"] = "default"
-    configuration: DefaultChunkKeyEncodingConfig | None = DefaultChunkKeyEncodingConfig()
+    configuration: DefaultChunkKeyEncodingConfig = Field(default=DefaultChunkKeyEncodingConfig())
 
 
 class NodeSpec(StrictBase):
@@ -118,7 +118,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     node_type: Literal["array"] = "array"
     attributes: TAttr = cast(TAttr, {})
     shape: tuple[int, ...]
-    data_type: DtypeStr
+    data_type: DtypeStr | NamedConfig
     chunk_grid: NamedConfig  # todo: validate this against shape
     chunk_key_encoding: NamedConfig  # todo: validate this against shape
     fill_value: FillValue  # todo: validate this against the data type
@@ -181,15 +181,17 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         else:
             codecs_actual = codecs
 
+        storage_transformers_actual: Sequence[NamedConfig]
         if storage_transformers == "auto":
             storage_transformers_actual = auto_storage_transformers(array)
         else:
-            storage_transformers_actual = list(storage_transformers)
+            storage_transformers_actual = storage_transformers
 
+        dimension_names_actual: Sequence[str | None]
         if dimension_names == "auto":
             dimension_names_actual = auto_dimension_names(array)
         else:
-            dimension_names_actual = list(dimension_names)
+            dimension_names_actual = dimension_names
 
         return cls(
             shape=array.shape,
@@ -198,9 +200,9 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             attributes=attributes_actual,
             chunk_key_encoding=chunk_key_actual,
             fill_value=fill_value_actual,
-            codecs=codecs_actual,
-            storage_transformers=storage_transformers_actual,
-            dimension_names=dimension_names_actual,
+            codecs=tuple(codecs_actual),
+            storage_transformers=tuple(storage_transformers_actual),
+            dimension_names=tuple(dimension_names_actual),
         )
 
     @classmethod
@@ -428,7 +430,7 @@ def auto_codecs(array: Any) -> Sequence[NamedConfig]:
     return []
 
 
-def auto_storage_transformers(array: Any) -> list:
+def auto_storage_transformers(array: Any) -> list[NamedConfig]:
     if hasattr(array, "storage_transformers"):
         return array.storage_transformers
     return []
