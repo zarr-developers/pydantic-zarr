@@ -7,6 +7,8 @@ from typing import (
     TypeAlias,
 )
 
+import numpy as np
+import numpy.typing as npt
 from pydantic import BaseModel, ConfigDict
 
 IncEx: TypeAlias = set[int] | set[str] | dict[int, Any] | dict[str, Any] | None
@@ -16,6 +18,23 @@ AccessMode: TypeAlias = Literal["w", "w+", "r", "a"]
 
 class StrictBase(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+def stringify_dtype(value: npt.DTypeLike) -> str:
+    """
+    Convert a `numpy.dtype` object into a `str`.
+
+    Parameters
+    ----------
+    value : `npt.DTypeLike`
+        Some object that can be coerced to a numpy dtype
+
+    Returns
+    -------
+
+    A numpy dtype string representation of `value`.
+    """
+    return np.dtype(value).str
 
 
 def ensure_member_name(data: Any) -> str:

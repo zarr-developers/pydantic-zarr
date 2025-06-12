@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Mapping  # noqa: TC003
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -15,14 +14,17 @@ from typing import (
     overload,
 )
 
+import numpy as np
 import numpy.typing as npt
 import zarr
-from pydantic import BeforeValidator
+from pydantic import BaseModel, BeforeValidator, Field
 
 from pydantic_zarr.core import StrictBase
 from pydantic_zarr.v2 import stringify_dtype
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     import numpy.typing as npt
     import zarr
     from zarr.abc.store import Store
@@ -33,21 +35,19 @@ TItem = TypeVar("TItem", bound=Union["GroupSpec", "ArraySpec"])
 
 NodeType = Literal["group", "array"]
 
+BoolFillValue = bool
+IntFillValue = int
 # todo: introduce a type that represents hexadecimal representations of floats
-FillValue = (
-    Literal["Infinity", "-Infinity", "NaN"]  # noqa: PYI051
-    | bool
-    | int
-    | float
-    | str
-    | tuple[float, float]
-    | tuple[int, ...]
-)
+FloatFillValue = Literal["Infinity", "-Infinity", "NaN"] | float
+ComplexFillValue = tuple[FloatFillValue, FloatFillValue]
+RawFillValue = tuple[int, ...]
+
+FillValue = BoolFillValue | IntFillValue | FloatFillValue | ComplexFillValue | RawFillValue
 
 
 class NamedConfig(StrictBase):
     name: str
-    configuration: Mapping[str, Any] | None
+    configuration: dict[str, Any] | BaseModel | None
 
 
 class RegularChunkingConfig(StrictBase):
@@ -56,16 +56,16 @@ class RegularChunkingConfig(StrictBase):
 
 class RegularChunking(NamedConfig):
     name: Literal["regular"] = "regular"
-    configuration: RegularChunkingConfig  # type: ignore[assignment]
+    configuration: RegularChunkingConfig
 
 
 class DefaultChunkKeyEncodingConfig(StrictBase):
-    separator: Literal[".", "/"]
+    separator: Literal[".", "/"] = "/"
 
 
 class DefaultChunkKeyEncoding(NamedConfig):
-    name: Literal["default"]
-    configuration: DefaultChunkKeyEncodingConfig | None  # type: ignore[assignment]
+    name: Literal["default"] = "default"
+    configuration: DefaultChunkKeyEncodingConfig = Field(default=DefaultChunkKeyEncodingConfig())
 
 
 class NodeSpec(StrictBase):
@@ -80,6 +80,9 @@ class NodeSpec(StrictBase):
     """
 
     zarr_format: Literal[3] = 3
+
+
+DtypeStr = Annotated[str, BeforeValidator(stringify_dtype)]
 
 
 class ArraySpec(NodeSpec, Generic[TAttr]):
@@ -115,16 +118,27 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     node_type: Literal["array"] = "array"
     attributes: TAttr = cast(TAttr, {})
     shape: tuple[int, ...]
-    data_type: Annotated[str, BeforeValidator(stringify_dtype)]
+    data_type: DtypeStr | NamedConfig
     chunk_grid: NamedConfig  # todo: validate this against shape
     chunk_key_encoding: NamedConfig  # todo: validate this against shape
     fill_value: FillValue  # todo: validate this against the data type
     codecs: tuple[NamedConfig, ...]
-    storage_transformers: tuple[NamedConfig, ...] | None = None
-    dimension_names: tuple[str, ...] | None  # todo: validate this against shape
+    storage_transformers: tuple[NamedConfig, ...]
+    dimension_names: tuple[str | None, ...]  # todo: validate this against shape
 
     @classmethod
-    def from_array(cls, array: npt.NDArray[Any], **kwargs: Any) -> Self:
+    def from_array(
+        cls,
+        array: npt.NDArray[Any],
+        *,
+        attributes: Literal["auto"] | TAttr = "auto",
+        chunk_grid: Literal["auto"] | NamedConfig = "auto",
+        chunk_key_encoding: Literal["auto"] | NamedConfig = "auto",
+        fill_value: Literal["auto"] | FillValue = "auto",
+        codecs: Literal["auto"] | Sequence[NamedConfig] = "auto",
+        storage_transformers: Literal["auto"] | Sequence[NamedConfig] = "auto",
+        dimension_names: Literal["auto"] | Sequence[str | None] = "auto",
+    ) -> Self:
         """
         Create an ArraySpec from a numpy array-like object.
 
@@ -135,23 +149,60 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             The shape and dtype of this object will be used to construct an ArraySpec.
             If the `chunks` keyword argument is not given, the shape of the array will
             be used for the chunks.
-        **kwargs :
-            keyword arguments to the ArraySpec class constructor.
 
         Returns
         -------
         An instance of ArraySpec with properties derived from the provided array.
 
         """
-        default_chunks = RegularChunking(
-            configuration=RegularChunkingConfig(chunk_shape=list(array.shape))
-        )
+        if attributes == "auto":
+            attributes_actual = cast(TAttr, auto_attributes(array))
+        else:
+            attributes_actual = attributes
+
+        if chunk_grid == "auto":
+            chunk_grid_actual = auto_chunk_grid(array)
+        else:
+            chunk_grid_actual = chunk_grid
+
+        chunk_key_actual: NamedConfig
+        if chunk_key_encoding == "auto":
+            chunk_key_actual = DefaultChunkKeyEncoding()
+        else:
+            chunk_key_actual = chunk_key_encoding
+
+        if fill_value == "auto":
+            fill_value_actual = auto_fill_value(array)
+        else:
+            fill_value_actual = fill_value
+
+        if codecs == "auto":
+            codecs_actual = auto_codecs(array)
+        else:
+            codecs_actual = codecs
+
+        storage_transformers_actual: Sequence[NamedConfig]
+        if storage_transformers == "auto":
+            storage_transformers_actual = auto_storage_transformers(array)
+        else:
+            storage_transformers_actual = storage_transformers
+
+        dimension_names_actual: Sequence[str | None]
+        if dimension_names == "auto":
+            dimension_names_actual = auto_dimension_names(array)
+        else:
+            dimension_names_actual = dimension_names
+
         return cls(
             shape=array.shape,
             data_type=str(array.dtype),
-            chunk_grid=kwargs.pop("chunks", default_chunks),
-            attributes=kwargs.pop("attributes", {}),
-            **kwargs,
+            chunk_grid=chunk_grid_actual,
+            attributes=attributes_actual,
+            chunk_key_encoding=chunk_key_actual,
+            fill_value=fill_value_actual,
+            codecs=tuple(codecs_actual),
+            storage_transformers=tuple(storage_transformers_actual),
+            dimension_names=tuple(dimension_names_actual),
         )
 
     @classmethod
@@ -339,3 +390,53 @@ def to_zarr(
         raise TypeError(msg)
 
     return result
+
+
+def auto_attributes(array: Any) -> dict[str, Any]:
+    if hasattr(array, "attributes"):
+        return array.attributes
+    return {}
+
+
+def auto_chunk_grid(array: Any) -> NamedConfig:
+    if hasattr(array, "chunk_shape"):
+        return array.chunk_shape
+    elif hasattr(array, "shape"):
+        return RegularChunking(configuration=RegularChunkingConfig(chunk_shape=list(array.shape)))
+    raise ValueError("Cannot get chunk grid from object without .shape attribute")
+
+
+def auto_fill_value(array: Any) -> FillValue:
+    if hasattr(array, "fill_value"):
+        return array.fill_value
+    elif hasattr(array, "dtype"):
+        kind = np.dtype(array.dtype).kind
+        if kind == "?":
+            return False
+        elif kind in ["i", "u"]:
+            return 0
+        elif kind in ["f"]:
+            return "NaN"
+        elif kind in ["c"]:
+            return ("NaN", "NaN")
+        else:
+            raise ValueError(f"Cannot determine default fill value for data type {kind}")
+    raise ValueError("Cannot determine default data type for object without shape attribute.")
+
+
+def auto_codecs(array: Any) -> Sequence[NamedConfig]:
+    if hasattr(array, "codecs"):
+        return array.codecs
+    return []
+
+
+def auto_storage_transformers(array: Any) -> list[NamedConfig]:
+    if hasattr(array, "storage_transformers"):
+        return array.storage_transformers
+    return []
+
+
+def auto_dimension_names(array: Any) -> list[str | None]:
+    if hasattr(array, "dimension_names"):
+        return array.dimension_names
+    return [None] * np.asanyarray(array, copy=False).ndim

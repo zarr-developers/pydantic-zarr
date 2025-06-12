@@ -2,12 +2,11 @@
 
 ## Disclaimer
 
-At the moment, [Zarr version 3](https://zarr-specs.readthedocs.io/en/latest/v3/core/v3.0.html) is only *barely* support by this project. That will likely
+At the moment, [Zarr version 3](https://zarr-specs.readthedocs.io/en/latest/v3/core/v3.0.html) is only _barely_ support by this project. That will likely
 change when the Zarr storage backend used here ([`zarr-python`](https://zarr.readthedocs.io/en/stable/))
 fully implements version 3. Until then, the only Zarr v3 stuff you can do with this repo
 is create abstract hierarchies. You cannot use the `to_zarr` or `from_zarr` methods, because
 the backend for that doesn't exist.
-
 
 ## Defining Zarr v3 hierarchies
 
@@ -25,6 +24,7 @@ array_spec = ArraySpec(
     chunk_grid=NamedConfig(name="regular", configuration={"chunk_shape": [1000, 100]}),
     chunk_key_encoding=NamedConfig(name="default", configuration={"separator": "/"}),
     codecs=[NamedConfig(name="GZip", configuration={"level": 1})],
+    storage_transformers=(),
     fill_value=0,
 )
 
@@ -78,7 +78,7 @@ print(spec.model_dump_json(indent=2))
           }
         }
       ],
-      "storage_transformers": null,
+      "storage_transformers": [],
       "dimension_names": [
         "rows",
         "columns"

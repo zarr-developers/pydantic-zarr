@@ -1,4 +1,14 @@
-from pydantic_zarr.v3 import ArraySpec, GroupSpec, NamedConfig
+import numpy as np
+
+from pydantic_zarr.v3 import (
+    ArraySpec,
+    DefaultChunkKeyEncoding,
+    DefaultChunkKeyEncodingConfig,
+    GroupSpec,
+    NamedConfig,
+    RegularChunking,
+    RegularChunkingConfig,
+)
 
 
 def test_serialize_deserialize() -> None:
@@ -15,6 +25,28 @@ def test_serialize_deserialize() -> None:
         chunk_key_encoding=NamedConfig(name="default", configuration={"separator": "/"}),
         codecs=[NamedConfig(name="GZip", configuration={"level": 1})],
         fill_value="NaN",
+        storage_transformers=[],
     )
 
     GroupSpec(attributes=group_attributes, members={"array": array_spec})
+
+
+def test_from_array() -> None:
+    array_spec = ArraySpec.from_array(np.arange(10))
+    assert array_spec == ArraySpec(
+        zarr_format=3,
+        node_type="array",
+        attributes={},
+        shape=(10,),
+        data_type="<i8",
+        chunk_grid=RegularChunking(
+            name="regular", configuration=RegularChunkingConfig(chunk_shape=[10])
+        ),
+        chunk_key_encoding=DefaultChunkKeyEncoding(
+            name="default", configuration=DefaultChunkKeyEncodingConfig(separator="/")
+        ),
+        fill_value=0,
+        codecs=[],
+        storage_transformers=[],
+        dimension_names=[None],
+    )
