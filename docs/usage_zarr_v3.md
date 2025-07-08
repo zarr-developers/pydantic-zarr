@@ -72,7 +72,7 @@ print(spec.model_dump_json(indent=2))
       "fill_value": 0,
       "codecs": [
         {
-          "name": "GZip",
+          "name": "gzip",
           "configuration": {
             "level": 1
           }
