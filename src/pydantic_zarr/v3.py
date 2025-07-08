@@ -124,7 +124,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     fill_value: FillValue  # todo: validate this against the data type
     codecs: tuple[NamedConfig, ...]
     storage_transformers: tuple[NamedConfig, ...]
-    dimension_names: tuple[str | None, ...]  # todo: validate this against shape
+    dimension_names: tuple[str | None, ...] | None  # todo: validate this against shape
 
     @classmethod
     def from_array(
@@ -206,21 +206,46 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         )
 
     @classmethod
-    def from_zarr(cls, zarray: zarr.Array) -> Never:
+    def from_zarr(cls, array: zarr.Array) -> Self:
         """
-        Create an ArraySpec from a zarr array.
+        Create an ArraySpec from a `zarr.Array`.
 
         Parameters
         ----------
-        zarray : zarr array
+        array : zarr.Array
 
         Returns
         -------
         An instance of ArraySpec with properties derived from the provided zarr
         array.
 
+        Examples
+        --------
+        >>> import zarr
+        >>> from pydantic_zarr.v3 import ArraySpec
+        >>> x = zarr.create((10,10))
+        >>> ArraySpec.from_zarr(x)
+        ArraySpec(zarr_format=2, attributes={}, shape=(10, 10), chunks=(10, 10), dtype='<f8', fill_value=0.0, order='C', filters=None, dimension_separator='.', compressor={'id': 'blosc', 'cname': 'lz4', 'clevel': 5, 'shuffle': 1, 'blocksize': 0})
+
         """
-        raise NotImplementedError
+        from zarr.core.metadata import ArrayV3Metadata
+
+        if not isinstance(array.metadata, ArrayV3Metadata):
+            raise ValueError("Only zarr v3 arrays are supported")  # noqa: TRY004
+
+        print(array.compressors)
+
+        return cls(
+            attributes=array.attrs.asdict(),
+            shape=array.shape,
+            data_type=array.dtype.str,
+            chunk_grid=array.metadata.chunk_grid.to_dict(),
+            chunk_key_encoding=array.metadata.chunk_key_encoding.to_dict(),
+            fill_value=array.fill_value,
+            codecs=[c.to_dict() for c in array.compressors],
+            storage_transformers=array.metadata.storage_transformers,
+            dimension_names=array.metadata.dimension_names,
+        )
 
     def to_zarr(self, store: Store, path: str, overwrite: bool = False) -> zarr.Array:
         """

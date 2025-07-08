@@ -1,4 +1,5 @@
 import numpy as np
+import zarr
 
 from pydantic_zarr.v3 import (
     ArraySpec,
@@ -49,4 +50,21 @@ def test_from_array() -> None:
         codecs=[],
         storage_transformers=[],
         dimension_names=[None],
+    )
+
+
+def test_from_zarr() -> None:
+    array_spec = ArraySpec.from_zarr(zarr.ones((1, 2)))
+    assert array_spec == ArraySpec(
+        zarr_format=3,
+        node_type="array",
+        attributes={},
+        shape=(1, 2),
+        data_type="<f8",
+        chunk_grid=NamedConfig(name="regular", configuration={"chunk_shape": (1, 2)}),
+        chunk_key_encoding=NamedConfig(name="default", configuration={"separator": "/"}),
+        fill_value=1.0,
+        codecs=(NamedConfig(name="zstd", configuration={"level": 0, "checksum": False}),),
+        storage_transformers=(),
+        dimension_names=None,
     )
