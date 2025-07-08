@@ -34,7 +34,7 @@ docs = [
     "mkdocs-material",
     "mkdocstrings[python]",
     "pytest-examples",
-    "pydantic==2.6",
+    "pydantic==2.11",
 ]
 
 [tool.hatch]
