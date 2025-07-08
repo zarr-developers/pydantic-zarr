@@ -1,4 +1,4 @@
-name: ci
+name: docs
 on:
   push:
     branches:
@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: 3.11
+          python-version: 3.x
       - run: echo "cache_id=$(date --utc '+%V')" >> $GITHUB_ENV
       - uses: actions/cache@v4
         with:
@@ -21,5 +21,5 @@ jobs:
           restore-keys: |
             mkdocs-material-
       - run: |
-            pip install hatch
-            hatch run docs:deploy --force
+          pip install hatch
+          hatch run docs:deploy --force
