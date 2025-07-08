@@ -9,9 +9,7 @@ from typing import (
     Generic,
     Literal,
     Never,
-    NotRequired,
     Self,
-    TypedDict,
     TypeVar,
     Union,
     cast,
@@ -22,7 +20,6 @@ import numpy as np
 import numpy.typing as npt
 import zarr
 from pydantic import BaseModel, BeforeValidator, Field
-from typing_extensions import ReadOnly
 
 from pydantic_zarr.core import IncEx, StrictBase, tuplify_json
 
@@ -32,6 +29,7 @@ if TYPE_CHECKING:
     import numpy.typing as npt
     import zarr
     from zarr.abc.store import Store
+    from zarr.core.array_spec import ArrayConfigParams
 
 
 TBaseAttr = Mapping[str, object]
@@ -50,11 +48,6 @@ ComplexFillValue = tuple[FloatFillValue, FloatFillValue]
 RawFillValue = tuple[int, ...]
 
 FillValue = BoolFillValue | IntFillValue | FloatFillValue | ComplexFillValue | RawFillValue
-
-
-class ArrayConfig(TypedDict):
-    order: NotRequired[ReadOnly[Literal["C", "F"]]]
-    write_empty_chunks: NotRequired[ReadOnly[bool]]
 
 
 class NamedConfig(StrictBase):
@@ -338,7 +331,12 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         )
 
     def to_zarr(
-        self, store: Store, path: str, *, overwrite: bool = False, config: ArrayConfig | None = None
+        self,
+        store: Store,
+        path: str,
+        *,
+        overwrite: bool = False,
+        config: ArrayConfigParams | None = None,
     ) -> zarr.Array:
         """
         Serialize an ArraySpec to a zarr array at a specific path in a zarr store.
