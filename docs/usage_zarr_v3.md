@@ -2,7 +2,7 @@
 
 ## Disclaimer
 
-At the moment, [Zarr version 3](https://zarr-specs.readthedocs.io/en/latest/v3/core/v3.0.html) is only _barely_ support by this project. That will likely
+At the moment, [Zarr version 3](https://zarr-specs.readthedocs.io/en/latest/v3/core/v3.0.html) is only _barely_ supported by this project. That will likely
 change when the Zarr storage backend used here ([`zarr-python`](https://zarr.readthedocs.io/en/stable/))
 fully implements version 3. Until then, the only Zarr v3 stuff you can do with this repo
 is create abstract hierarchies. You cannot use the `to_zarr` or `from_zarr` methods, because
