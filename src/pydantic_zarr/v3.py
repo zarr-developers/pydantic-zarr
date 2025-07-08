@@ -233,8 +233,6 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         if not isinstance(array.metadata, ArrayV3Metadata):
             raise ValueError("Only zarr v3 arrays are supported")  # noqa: TRY004
 
-        print(array.compressors)
-
         return cls(
             attributes=array.attrs.asdict(),
             shape=array.shape,
