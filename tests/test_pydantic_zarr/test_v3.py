@@ -1,6 +1,8 @@
 import json
+from dataclasses import asdict
 
 import numpy as np
+import pytest
 import zarr
 
 from pydantic_zarr.core import tuplify_json
@@ -56,14 +58,37 @@ def test_from_array() -> None:
     )
 
 
-def test_from_zarr() -> None:
-    store_a = {}
-    arr_a = zarr.create_array(store=store_a, shape=(10,), dtype="uint8")
+def test_arrayspec_from_zarr() -> None:
+    """
+    Test that deserializing an ArraySpec from a zarr python store works as expected.
+    """
+    store = {}
+    arr = zarr.create_array(store=store, shape=(10,), dtype="uint8")
 
-    array_spec = ArraySpec.from_zarr(arr_a)
-    assert array_spec.model_dump() == json.loads(
-        store_a["zarr.json"].to_bytes(), object_hook=tuplify_json
+    arr_spec = ArraySpec.from_zarr(arr)
+    assert arr_spec.model_dump() == json.loads(
+        store["zarr.json"].to_bytes(), object_hook=tuplify_json
     )
-    store_b = {}
-    arr_b = array_spec.to_zarr(store=store_b, path="")
-    assert arr_b._async_array.metadata == arr_a._async_array.metadata
+
+
+@pytest.mark.parametrize("path", ["", "foo"])
+@pytest.mark.parametrize("overwrite", [True, False])
+@pytest.mark.parametrize("config", [{}, {"write_empty_chunks": True, "order": "F"}])
+def test_arrayspec_to_zarr(path: str, overwrite: bool, config: dict[str, object]) -> None:
+    """
+    Test that serializing an ArraySpec to a zarr python store works as expected.
+    """
+    store = {}
+    arr_spec = ArraySpec(
+        shape=(10,),
+        data_type="uint8",
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (10,)}},
+        chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
+        codecs=({"name": "bytes", "configuration": {}},),
+        fill_value=0,
+        dimension_names=("x",),
+    )
+    arr = arr_spec.to_zarr(store=store, path=path, overwrite=overwrite, config=config)
+    assert arr._async_array.metadata == arr._async_array.metadata
+    for key, value in config.items():
+        assert asdict(arr._async_array._config)[key] == value

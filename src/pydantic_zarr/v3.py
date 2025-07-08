@@ -166,8 +166,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     chunk_key_encoding: NamedConfig  # todo: validate this against shape
     fill_value: FillValue  # todo: validate this against the data type
     codecs: tuple[NamedConfig, ...]
-    storage_transformers: tuple[NamedConfig, ...]
-    dimension_names: tuple[str | None, ...] | None  # todo: validate this against shape
+    storage_transformers: tuple[NamedConfig, ...] = ()
+    dimension_names: tuple[str | None, ...] | None = None  # todo: validate this against shape
 
     def model_dump(
         self,
