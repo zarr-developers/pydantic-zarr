@@ -366,11 +366,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         from zarr.storage._common import ensure_no_existing_node, make_store_path
 
         store_path = sync(make_store_path(store, path=path))
-        if overwrite:
-            if store_path.store.supports_deletes:
-                sync(store_path.delete_dir())
-            else:
-                sync(ensure_no_existing_node(store_path, zarr_format=3))
+        if overwrite and store_path.store.supports_deletes:
+            sync(store_path.delete_dir())
         else:
             sync(ensure_no_existing_node(store_path, zarr_format=3))
 
