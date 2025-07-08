@@ -23,7 +23,7 @@ array_spec = ArraySpec(
     data_type="uint8",
     chunk_grid=NamedConfig(name="regular", configuration={"chunk_shape": [1000, 100]}),
     chunk_key_encoding=NamedConfig(name="default", configuration={"separator": "/"}),
-    codecs=[NamedConfig(name="GZip", configuration={"level": 1})],
+    codecs=[NamedConfig(name="gzip", configuration={"level": 1})],
     storage_transformers=(),
     fill_value=0,
 )
@@ -53,7 +53,7 @@ print(spec.model_dump_json(indent=2))
         1000,
         1000
       ],
-      "data_type": "|u1",
+      "data_type": "uint8",
       "chunk_grid": {
         "name": "regular",
         "configuration": {
@@ -72,7 +72,7 @@ print(spec.model_dump_json(indent=2))
       "fill_value": 0,
       "codecs": [
         {
-          "name": "GZip",
+          "name": "gzip",
           "configuration": {
             "level": 1
           }

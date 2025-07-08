@@ -16,6 +16,18 @@ IncEx: TypeAlias = set[int] | set[str] | dict[int, Any] | dict[str, Any] | None
 AccessMode: TypeAlias = Literal["w", "w+", "r", "a"]
 
 
+def tuplify_json(obj: object) -> object:
+    """
+    Recursively converts lists within a Python object to tuples.
+    """
+    if isinstance(obj, list):
+        return tuple(tuplify_json(elem) for elem in obj)
+    elif isinstance(obj, dict):
+        return {k: tuplify_json(v) for k, v in obj.items()}
+    else:
+        return obj
+
+
 class StrictBase(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 

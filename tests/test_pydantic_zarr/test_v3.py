@@ -1,6 +1,11 @@
+import json
+from dataclasses import asdict
+
 import numpy as np
+import pytest
 import zarr
 
+from pydantic_zarr.core import tuplify_json
 from pydantic_zarr.v3 import (
     ArraySpec,
     DefaultChunkKeyEncoding,
@@ -39,7 +44,7 @@ def test_from_array() -> None:
         node_type="array",
         attributes={},
         shape=(10,),
-        data_type="<i8",
+        data_type="int64",
         chunk_grid=RegularChunking(
             name="regular", configuration=RegularChunkingConfig(chunk_shape=[10])
         ),
@@ -53,18 +58,37 @@ def test_from_array() -> None:
     )
 
 
-def test_from_zarr() -> None:
-    array_spec = ArraySpec.from_zarr(zarr.ones((1, 2)))
-    assert array_spec == ArraySpec(
-        zarr_format=3,
-        node_type="array",
-        attributes={},
-        shape=(1, 2),
-        data_type="<f8",
-        chunk_grid=NamedConfig(name="regular", configuration={"chunk_shape": (1, 2)}),
-        chunk_key_encoding=NamedConfig(name="default", configuration={"separator": "/"}),
-        fill_value=1.0,
-        codecs=(NamedConfig(name="zstd", configuration={"level": 0, "checksum": False}),),
-        storage_transformers=(),
-        dimension_names=None,
+def test_arrayspec_from_zarr() -> None:
+    """
+    Test that deserializing an ArraySpec from a zarr python store works as expected.
+    """
+    store = {}
+    arr = zarr.create_array(store=store, shape=(10,), dtype="uint8")
+
+    arr_spec = ArraySpec.from_zarr(arr)
+    assert arr_spec.model_dump() == json.loads(
+        store["zarr.json"].to_bytes(), object_hook=tuplify_json
     )
+
+
+@pytest.mark.parametrize("path", ["", "foo"])
+@pytest.mark.parametrize("overwrite", [True, False])
+@pytest.mark.parametrize("config", [{}, {"write_empty_chunks": True, "order": "F"}])
+def test_arrayspec_to_zarr(path: str, overwrite: bool, config: dict[str, object]) -> None:
+    """
+    Test that serializing an ArraySpec to a zarr python store works as expected.
+    """
+    store = {}
+    arr_spec = ArraySpec(
+        shape=(10,),
+        data_type="uint8",
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (10,)}},
+        chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
+        codecs=({"name": "bytes", "configuration": {}},),
+        fill_value=0,
+        dimension_names=("x",),
+    )
+    arr = arr_spec.to_zarr(store=store, path=path, overwrite=overwrite, config=config)
+    assert arr._async_array.metadata == arr._async_array.metadata
+    for key, value in config.items():
+        assert asdict(arr._async_array._config)[key] == value
