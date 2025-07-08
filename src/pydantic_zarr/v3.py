@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from collections.abc import Callable, Mapping
+from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -7,7 +10,9 @@ from typing import (
     Generic,
     Literal,
     Never,
+    NotRequired,
     Self,
+    TypedDict,
     TypeVar,
     Union,
     cast,
@@ -18,9 +23,9 @@ import numpy as np
 import numpy.typing as npt
 import zarr
 from pydantic import BaseModel, BeforeValidator, Field
+from typing_extensions import ReadOnly
 
-from pydantic_zarr.core import StrictBase
-from pydantic_zarr.v2 import stringify_dtype
+from pydantic_zarr.core import IncEx, StrictBase, tuplify_json
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -30,8 +35,11 @@ if TYPE_CHECKING:
     from zarr.abc.store import Store
 
 
-TAttr = TypeVar("TAttr", bound=dict[str, Any])
-TItem = TypeVar("TItem", bound=Union["GroupSpec", "ArraySpec"])
+TBaseAttr = Mapping[str, object]
+TBaseMember = Union["GroupSpec[TBaseAttr, TBaseMember]", "ArraySpec[TBaseAttr]"]
+
+TAttr = TypeVar("TAttr", bound=TBaseAttr)
+TItem = TypeVar("TItem", bound=TBaseMember)
 
 NodeType = Literal["group", "array"]
 
@@ -45,13 +53,18 @@ RawFillValue = tuple[int, ...]
 FillValue = BoolFillValue | IntFillValue | FloatFillValue | ComplexFillValue | RawFillValue
 
 
+class ArrayConfig(TypedDict):
+    order: NotRequired[ReadOnly[Literal["C", "F"]]]
+    write_empty_chunks: NotRequired[ReadOnly[bool]]
+
+
 class NamedConfig(StrictBase):
     name: str
-    configuration: dict[str, Any] | BaseModel | None
+    configuration: Mapping[str, object] | BaseModel
 
 
 class RegularChunkingConfig(StrictBase):
-    chunk_shape: list[int]
+    chunk_shape: tuple[int, ...]
 
 
 class RegularChunking(NamedConfig):
@@ -82,7 +95,45 @@ class NodeSpec(StrictBase):
     zarr_format: Literal[3] = 3
 
 
-DtypeStr = Annotated[str, BeforeValidator(stringify_dtype)]
+def stringify_dtype_v3(dtype: npt.DTypeLike | Mapping[str, object]) -> Mapping[str, object] | str:
+    """
+    Todo: refactor this when the zarr python dtypes work is released
+    """
+    if isinstance(dtype, str | Mapping):
+        return dtype
+    else:
+        match np.dtype(dtype):
+            case np.dtypes.Int8DType():
+                return "int8"
+            case np.dtypes.Int16DType():
+                return "int16"
+            case np.dtypes.Int32DType():
+                return "int32"
+            case np.dtypes.Int64DType():
+                return "int64"
+            case np.dtypes.UInt8DType():
+                return "uint8"
+            case np.dtypes.UInt16DType():
+                return "uint16"
+            case np.dtypes.UInt32DType():
+                return "uint32"
+            case np.dtypes.UInt64DType():
+                return "uint64"
+            case np.dtypes.Float16DType():
+                return "float16"
+            case np.dtypes.Float32DType():
+                return "float32"
+            case np.dtypes.Float16DType():
+                return "float64"
+            case np.dtypes.Float32DType():
+                return "complex64"
+            case np.dtypes.Complex128DType():
+                return "complex128"
+            case _:
+                raise ValueError(f"Unsupported dtype: {dtype}")
+
+
+DtypeStr = Annotated[str, BeforeValidator(stringify_dtype_v3)]
 
 
 class ArraySpec(NodeSpec, Generic[TAttr]):
@@ -125,6 +176,45 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     codecs: tuple[NamedConfig, ...]
     storage_transformers: tuple[NamedConfig, ...]
     dimension_names: tuple[str | None, ...] | None  # todo: validate this against shape
+
+    def model_dump(
+        self,
+        *,
+        mode: Literal["json", "python"] | str = "python",  # noqa: PYI051
+        include: IncEx | None = None,  # type: ignore[override]
+        exclude: IncEx | None = None,  # type: ignore[override]
+        context: Any | None = None,
+        by_alias: bool | None = None,
+        exclude_unset: bool = False,
+        exclude_defaults: bool = False,
+        exclude_none: bool = False,
+        round_trip: bool = False,
+        warnings: (bool | Literal["none", "warn", "error"]) = True,
+        fallback: Callable[[Any], Any] | None = None,
+        serialize_as_any: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Override this method because the Zarr V3 spec requires that the dimension_names
+        field be omitted from metadata entirely if it's empty.
+        """
+        d = super().model_dump(
+            mode=mode,
+            include=include,
+            exclude=exclude,
+            context=context,
+            by_alias=by_alias,
+            exclude_unset=exclude_unset,
+            exclude_defaults=exclude_defaults,
+            exclude_none=exclude_none,
+            round_trip=round_trip,
+            warnings=warnings,
+            fallback=fallback,
+            serialize_as_any=serialize_as_any,
+        )
+
+        if d["dimension_names"] is None:
+            d.pop("dimension_names")
+        return d
 
     @classmethod
     def from_array(
@@ -229,23 +319,28 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
         """
         from zarr.core.metadata import ArrayV3Metadata
+        from zarr.core.metadata.v3 import V3JsonEncoder
 
         if not isinstance(array.metadata, ArrayV3Metadata):
             raise ValueError("Only zarr v3 arrays are supported")  # noqa: TRY004
-
+        meta_json = json.loads(
+            json.dumps(array.metadata.to_dict(), cls=V3JsonEncoder), object_hook=tuplify_json
+        )
         return cls(
-            attributes=array.attrs.asdict(),
+            attributes=meta_json["attributes"],
             shape=array.shape,
-            data_type=array.dtype.str,
-            chunk_grid=array.metadata.chunk_grid.to_dict(),
-            chunk_key_encoding=array.metadata.chunk_key_encoding.to_dict(),
+            data_type=meta_json["data_type"],
+            chunk_grid=meta_json["chunk_grid"],
+            chunk_key_encoding=meta_json["chunk_key_encoding"],
             fill_value=array.fill_value,
-            codecs=[c.to_dict() for c in array.compressors],
-            storage_transformers=array.metadata.storage_transformers,
-            dimension_names=array.metadata.dimension_names,
+            codecs=meta_json["codecs"],
+            storage_transformers=meta_json["storage_transformers"],
+            dimension_names=meta_json.get("dimension_names", None),
         )
 
-    def to_zarr(self, store: Store, path: str, overwrite: bool = False) -> zarr.Array:
+    def to_zarr(
+        self, store: Store, path: str, *, overwrite: bool = False, config: ArrayConfig | None = None
+    ) -> zarr.Array:
         """
         Serialize an ArraySpec to a zarr array at a specific path in a zarr store.
 
@@ -265,7 +360,25 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         A zarr array that is structurally identical to the ArraySpec.
         This operation will create metadata documents in the store.
         """
-        raise NotImplementedError
+        # This sucks! This should be easier!
+        from zarr.core.array import Array, AsyncArray
+        from zarr.core.metadata.v3 import ArrayV3Metadata
+        from zarr.core.sync import sync
+        from zarr.storage._common import ensure_no_existing_node, make_store_path
+
+        store_path = sync(make_store_path(store, path=path))
+        if overwrite:
+            if store_path.store.supports_deletes:
+                sync(store_path.delete_dir())
+            else:
+                sync(ensure_no_existing_node(store_path, zarr_format=3))
+        else:
+            sync(ensure_no_existing_node(store_path, zarr_format=3))
+
+        meta: ArrayV3Metadata = ArrayV3Metadata.from_dict(self.model_dump())
+        async_array = AsyncArray(metadata=meta, store_path=store_path, config=config)
+        sync(async_array._save_metadata(meta))
+        return Array(_async_array=async_array)
 
 
 class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
@@ -285,8 +398,8 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
     """
 
     node_type: Literal["group"] = "group"
-    attributes: TAttr = cast(TAttr, {})
-    members: dict[str, TItem] = {}  # noqa: RUF012
+    attributes: TAttr = MappingProxyType({})  # type: ignore[assignment]
+    members: Mapping[str, TItem] = MappingProxyType({})
 
     @classmethod
     def from_zarr(cls, group: zarr.Group) -> GroupSpec[TAttr, TItem]:
@@ -341,7 +454,9 @@ def from_zarr(element: zarr.Group) -> GroupSpec: ...
 """
 
 
-def from_zarr(element: zarr.Array | zarr.Group) -> ArraySpec | GroupSpec:
+def from_zarr(
+    element: zarr.Array | zarr.Group,
+) -> ArraySpec[TBaseAttr] | GroupSpec[TBaseAttr, TBaseMember]:
     """
     Recursively parse a Zarr group or Zarr array into an ArraySpec or GroupSpec.
 
@@ -360,7 +475,7 @@ def from_zarr(element: zarr.Array | zarr.Group) -> ArraySpec | GroupSpec:
 
 @overload
 def to_zarr(
-    spec: ArraySpec,
+    spec: ArraySpec[TBaseAttr],
     store: Store,
     path: str,
     overwrite: bool = False,
@@ -369,7 +484,7 @@ def to_zarr(
 
 @overload
 def to_zarr(
-    spec: GroupSpec,
+    spec: GroupSpec[TBaseAttr, TBaseMember],
     store: Store,
     path: str,
     overwrite: bool = False,
@@ -377,7 +492,7 @@ def to_zarr(
 
 
 def to_zarr(
-    spec: ArraySpec | GroupSpec,
+    spec: ArraySpec[TBaseAttr] | GroupSpec[TBaseAttr, TBaseMember],
     store: Store,
     path: str,
     overwrite: bool = False,
@@ -405,14 +520,7 @@ def to_zarr(
     This operation will create metadata documents in the store.
 
     """
-    if isinstance(spec, (ArraySpec, GroupSpec)):
-        result = spec.to_zarr(store, path, overwrite=overwrite)
-    else:
-        msg = ("Invalid argument for spec. Expected an instance of GroupSpec or ",)  # type: ignore[unreachable]
-        f"ArraySpec, got {type(spec)} instead."
-        raise TypeError(msg)
-
-    return result
+    return spec.to_zarr(store, path, overwrite=overwrite)
 
 
 def auto_attributes(array: Any) -> dict[str, Any]:

@@ -1,6 +1,9 @@
+import json
+
 import numpy as np
 import zarr
 
+from pydantic_zarr.core import tuplify_json
 from pydantic_zarr.v3 import (
     ArraySpec,
     DefaultChunkKeyEncoding,
@@ -39,7 +42,7 @@ def test_from_array() -> None:
         node_type="array",
         attributes={},
         shape=(10,),
-        data_type="<i8",
+        data_type="int64",
         chunk_grid=RegularChunking(
             name="regular", configuration=RegularChunkingConfig(chunk_shape=[10])
         ),
@@ -54,17 +57,13 @@ def test_from_array() -> None:
 
 
 def test_from_zarr() -> None:
-    array_spec = ArraySpec.from_zarr(zarr.ones((1, 2)))
-    assert array_spec == ArraySpec(
-        zarr_format=3,
-        node_type="array",
-        attributes={},
-        shape=(1, 2),
-        data_type="<f8",
-        chunk_grid=NamedConfig(name="regular", configuration={"chunk_shape": (1, 2)}),
-        chunk_key_encoding=NamedConfig(name="default", configuration={"separator": "/"}),
-        fill_value=1.0,
-        codecs=(NamedConfig(name="zstd", configuration={"level": 0, "checksum": False}),),
-        storage_transformers=(),
-        dimension_names=None,
+    store_a = {}
+    arr_a = zarr.create_array(store=store_a, shape=(10,), dtype="uint8")
+
+    array_spec = ArraySpec.from_zarr(arr_a)
+    assert array_spec.model_dump() == json.loads(
+        store_a["zarr.json"].to_bytes(), object_hook=tuplify_json
     )
+    store_b = {}
+    arr_b = array_spec.to_zarr(store=store_b, path="")
+    assert arr_b._async_array.metadata == arr_a._async_array.metadata
