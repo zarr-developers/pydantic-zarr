@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
-from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -398,8 +397,8 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
     """
 
     node_type: Literal["group"] = "group"
-    attributes: TAttr = MappingProxyType({})  # type: ignore[assignment]
-    members: Mapping[str, TItem] = MappingProxyType({})
+    attributes: TAttr = cast("TAttr", {})  # type: ignore[assignment]
+    members: Mapping[str, TItem] = cast("Mapping[str, TItem]", {})
 
     @classmethod
     def from_zarr(cls, group: zarr.Group) -> GroupSpec[TAttr, TItem]:
