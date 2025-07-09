@@ -719,7 +719,7 @@ def from_flat(
 
     Examples
     --------
-    >>> from pydantic_zarr.v2 import from_flat, GroupSpec, ArraySpec
+    >>> from pydantic_zarr.v3 import from_flat, GroupSpec, ArraySpec
     >>> import numpy as np
     >>> tree = {'': ArraySpec.from_array(np.arange(10))}
     >>> from_flat(tree) # special case of a Zarr array at the root of the hierarchy
