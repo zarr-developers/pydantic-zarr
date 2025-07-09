@@ -23,33 +23,26 @@ import zarr
 from numcodecs.abc import Codec
 from pydantic import AfterValidator, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
-from zarr.core.sync_group import get_node
 from zarr.errors import ContainsArrayError, ContainsGroupError
 
-from pydantic_zarr.core import IncEx, StrictBase, ensure_key_no_path, model_like, stringify_dtype
+from pydantic_zarr.core import (
+    IncEx,
+    StrictBase,
+    contains_array,
+    contains_group,
+    ensure_key_no_path,
+    model_like,
+    stringify_dtype,
+)
 
 if TYPE_CHECKING:
     from zarr.abc.store import Store
 
-TAttr = TypeVar("TAttr", bound=Mapping[str, Any])
-TItem = TypeVar("TItem", bound=Union["GroupSpec", "ArraySpec"])  # type: ignore[type-arg]
+TBaseAttr = Mapping[str, object]
+TBaseItem = Union["GroupSpec[TBaseAttr, TBaseItem]", "ArraySpec[TBaseAttr]"]
 
-
-# TODO: expose contains_array and contains_group as public functions in zarr-python
-# and replace these custom implementations
-def _contains_array(store: Store, path: str) -> bool:
-    try:
-        return isinstance(get_node(store, path, zarr_format=2), zarr.Array)
-    except FileNotFoundError:
-        return False
-
-
-def _contains_group(store: Store, path: str) -> bool:
-    try:
-        return isinstance(get_node(store, path, zarr_format=2), zarr.Group)
-    except FileNotFoundError:
-        return False
-
+TAttr = TypeVar("TAttr", bound=TBaseAttr)
+TItem = TypeVar("TItem", bound=TBaseItem)
 
 DtypeStr = Annotated[str, BeforeValidator(stringify_dtype)]
 
@@ -368,7 +361,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             spec_dict["compressor"] = numcodecs.get_codec(spec_dict["compressor"])
         if self.filters is not None:
             spec_dict["filters"] = [numcodecs.get_codec(f) for f in spec_dict["filters"]]
-        if _contains_array(store, path):
+        if contains_array(store, path):
             extant_array = zarr.open_array(store, path=path, zarr_format=2)
 
             if not self.like(extant_array):
@@ -460,12 +453,12 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
     members: dict[str, TItem] | None, default = {}
         The members of this group. `members` may be `None`, which models the condition
         where the members are unknown, e.g., because they have not been discovered yet.
-        If `members` is not s`None`, then it must be a dict with string keys and values that
+        If `members` is not `None`, then it must be a `Mapping` with string keys and values that
         are either `ArraySpec` or `GroupSpec`.
     """
 
     attributes: TAttr = cast(TAttr, {})
-    members: Annotated[dict[str, TItem] | None, AfterValidator(ensure_key_no_path)] = {}  # noqa: RUF012
+    members: Annotated[Mapping[str, TItem] | None, AfterValidator(ensure_key_no_path)] = {}
 
     @classmethod
     def from_zarr(cls, group: zarr.Group, *, depth: int = -1) -> Self:
@@ -485,8 +478,9 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         ----------
         group : zarr.Group
             The Zarr group to model.
-        depth : int
+        depth : int, default = -1
             An integer which may be no lower than -1. Determines how far into the tree to parse.
+            The default value of -1 indicates that the entire hierarchy should be parsed.
 
         Returns
         -------
@@ -552,7 +546,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         """
         spec_dict = self.model_dump(exclude={"members": True})
         attrs = spec_dict.pop("attributes")
-        if _contains_group(store, path):
+        if contains_group(store, path):
             extant_group = zarr.group(store, path=path, zarr_format=2)
             if not self.like(extant_group):
                 if not overwrite:
@@ -568,7 +562,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
                     # then just return the extant group
                     return extant_group
 
-        elif _contains_array(store, path) and not overwrite:
+        elif contains_array(store, path) and not overwrite:
             msg = (
                 f"An array already exists at path {path}. "
                 "Call to_zarr with overwrite=True to overwrite the array."
@@ -719,14 +713,16 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
 
 
 @overload
-def from_zarr(element: zarr.Array, depth: int) -> ArraySpec: ...
+def from_zarr(element: zarr.Array, depth: int) -> ArraySpec[TBaseAttr]: ...
 
 
 @overload
-def from_zarr(element: zarr.Group, depth: int) -> GroupSpec: ...  # type: ignore[overload-cannot-match]
+def from_zarr(element: zarr.Group, depth: int) -> GroupSpec[TBaseAttr, TBaseItem]: ...
 
 
-def from_zarr(element: zarr.Array | zarr.Group, depth: int = -1) -> ArraySpec | GroupSpec:
+def from_zarr(
+    element: zarr.Array | zarr.Group, depth: int = -1
+) -> ArraySpec[TBaseAttr] | GroupSpec[TBaseAttr, TBaseItem]:
     """
     Recursively parse a `zarr.Group` or `zarr.Array` into an `ArraySpec` or `GroupSpec`.
 

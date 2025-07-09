@@ -14,6 +14,8 @@ from pydantic_zarr.v3 import (
     NamedConfig,
     RegularChunking,
     RegularChunkingConfig,
+    TBaseAttr,
+    TBaseItem,
 )
 
 
@@ -92,3 +94,43 @@ def test_arrayspec_to_zarr(path: str, overwrite: bool, config: dict[str, object]
     assert arr._async_array.metadata == arr._async_array.metadata
     for key, value in config.items():
         assert asdict(arr._async_array._config)[key] == value
+
+
+def test_x():
+    a = ArraySpec.from_array(np.arange(20), attributes={"level": 3, "type": "array"})
+    assert a.model_dump()["chunk_grid"] == a.chunk_grid
+
+
+def test_from_zarr_depth() -> None:
+    codecs = ({"name": "bytes", "configuration": {}},)
+    tree: dict[str, GroupSpec[TBaseAttr, TBaseItem] | ArraySpec[TBaseAttr]] = {
+        "": GroupSpec(members=None, attributes={"level": 0, "type": "group"}),
+        "/1": GroupSpec(members=None, attributes={"level": 1, "type": "group"}),
+        "/1/2": GroupSpec(members=None, attributes={"level": 2, "type": "group"}),
+        "/1/2/1": GroupSpec(members=None, attributes={"level": 3, "type": "group"}),
+        "/1/2/2": ArraySpec.from_array(
+            np.arange(20), attributes={"level": 3, "type": "array"}, codecs=codecs
+        ),
+    }
+    store = zarr.storage.MemoryStore()
+    group_out = GroupSpec.from_flat(tree).to_zarr(store, path="test")
+    group_in_0 = GroupSpec.from_zarr(group_out, depth=0)  # type: ignore[var-annotated]
+    assert group_in_0 == tree[""]
+
+    group_in_1 = GroupSpec.from_zarr(group_out, depth=1)  # type: ignore[var-annotated]
+    assert group_in_1.attributes == tree[""].attributes  # type: ignore[attr-defined]
+    assert group_in_1.members is not None
+    assert group_in_1.members["1"] == tree["/1"]
+
+    group_in_2 = GroupSpec.from_zarr(group_out, depth=2)  # type: ignore[var-annotated]
+    assert group_in_2.members is not None
+    assert group_in_2.members["1"].members["2"] == tree["/1/2"]
+    assert group_in_2.attributes == tree[""].attributes  # type: ignore[attr-defined]
+    assert group_in_2.members["1"].attributes == tree["/1"].attributes  # type: ignore[attr-defined]
+
+    group_in_3 = GroupSpec.from_zarr(group_out, depth=3)  # type: ignore[var-annotated]
+    assert group_in_3.members is not None
+    assert group_in_3.members["1"].members["2"].members["1"] == tree["/1/2/1"]
+    assert group_in_3.attributes == tree[""].attributes  # type: ignore[attr-defined]
+    assert group_in_3.members["1"].attributes == tree["/1"].attributes  # type: ignore[attr-defined]
+    assert group_in_3.members["1"].members["2"].attributes == tree["/1/2"].attributes  # type: ignore[attr-defined]
