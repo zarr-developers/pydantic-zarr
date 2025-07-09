@@ -561,7 +561,9 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         exclude: IncEx = None,
     ) -> bool:
         """
-        Compare a `GroupSpec` to another `GroupSpec` or a `zarr.Group`, parameterized over the
+        Compare a `GroupSpec` to another `GroupSpec` or a `zarr.Group`.
+        
+        This is parameterized over the
         fields to exclude or include in the comparison. Models are first converted to dict via the
         `model_dump` method of `pydantic.BaseModel`, then compared with the `==` operator.
 
