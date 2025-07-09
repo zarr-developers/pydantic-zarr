@@ -408,7 +408,9 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         cls, data: Mapping[str, ArraySpec[TBaseAttr] | GroupSpec[TBaseAttr, TBaseItem]]
     ) -> Self:
         """
-        Create a `GroupSpec` from a flat hierarchy representation. The flattened hierarchy is a
+        Create a `GroupSpec` from a flat hierarchy representation.
+        
+        The flattened hierarchy is a
         `dict` with the following constraints: keys must be valid paths; values must
         be `ArraySpec` or `GroupSpec` instances.
 
