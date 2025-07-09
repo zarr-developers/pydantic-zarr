@@ -589,7 +589,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         Examples
         --------
         >>> import zarr
-        >>> from pydantic_zarr.v2 import GroupSpec
+        >>> from pydantic_zarr.v3 import GroupSpec
         >>> import numpy as np
         >>> z1 = zarr.group(path='z1')
         >>> z1a = z1.array(name='foo', data=np.arange(10))
