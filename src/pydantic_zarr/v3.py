@@ -760,7 +760,7 @@ def from_flat_group(
 
     Examples
     --------
-    >>> from pydantic_zarr.v2 import from_flat_group, GroupSpec, ArraySpec
+    >>> from pydantic_zarr.v3 import from_flat_group, GroupSpec, ArraySpec
     >>> import numpy as np
     >>> tree = {'/foo': ArraySpec.from_array(np.arange(10))}
     >>> from_flat_group(tree) # note that an implicit Group is created
