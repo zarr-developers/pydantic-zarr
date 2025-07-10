@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import os
 from collections.abc import Mapping
 from typing import (
     TYPE_CHECKING,
@@ -576,7 +575,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         # consider raising an exception if a partial GroupSpec is provided
         if self.members is not None:
             for name, member in self.members.items():
-                subpath = os.path.join(path, name)
+                subpath = f"{path.rstrip('/')}/{name.lstrip('/')}"
                 member.to_zarr(store, subpath, overwrite=overwrite, **kwargs)
 
         return result
