@@ -9,6 +9,7 @@ from typing import (
     Generic,
     Literal,
     Self,
+    TypeAlias,
     TypeVar,
     Union,
     cast,
@@ -39,6 +40,9 @@ if TYPE_CHECKING:
 
 TBaseAttr = Mapping[str, object]
 TBaseItem = Union["GroupSpec[TBaseAttr, TBaseItem]", "ArraySpec[TBaseAttr]"]
+
+AnyArraySpec: TypeAlias = "ArraySpec[TBaseAttr]"
+AnyGroupSpec: TypeAlias = "GroupSpec[TBaseAttr, TBaseItem]"
 
 TAttr = TypeVar("TAttr", bound=TBaseAttr)
 TItem = TypeVar("TItem", bound=TBaseItem)
@@ -641,7 +645,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
-    def to_flat(self, root_path: str = "") -> dict[str, ArraySpec | GroupSpec]:
+    def to_flat(self, root_path: str = "") -> dict[str, AnyArraySpec | AnyGroupSpec]:
         """
         Flatten this `GroupSpec`.
         This method returns a `dict` with string keys and values that are `GroupSpec` or
@@ -678,7 +682,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         return to_flat(self, root_path=root_path)
 
     @classmethod
-    def from_flat(cls, data: dict[str, ArraySpec | GroupSpec]) -> Self:
+    def from_flat(cls, data: dict[str, AnyArraySpec | AnyGroupSpec]) -> Self:
         """
         Create a `GroupSpec` from a flat hierarchy representation. The flattened hierarchy is a
         `dict` with the following constraints: keys must be valid paths; values must
@@ -712,16 +716,14 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
 
 
 @overload
-def from_zarr(element: zarr.Array, depth: int) -> ArraySpec[TBaseAttr]: ...
+def from_zarr(element: zarr.Array, depth: int) -> AnyArraySpec: ...
 
 
 @overload
-def from_zarr(element: zarr.Group, depth: int) -> GroupSpec[TBaseAttr, TBaseItem]: ...
+def from_zarr(element: zarr.Group, depth: int) -> AnyGroupSpec: ...  # type: ignore[overload-cannot-match]
 
 
-def from_zarr(
-    element: zarr.Array | zarr.Group, depth: int = -1
-) -> ArraySpec[TBaseAttr] | GroupSpec[TBaseAttr, TBaseItem]:
+def from_zarr(element: zarr.Array | zarr.Group, depth: int = -1) -> AnyArraySpec | AnyGroupSpec:
     """
     Recursively parse a `zarr.Group` or `zarr.Array` into an `ArraySpec` or `GroupSpec`.
 
@@ -804,9 +806,12 @@ def to_zarr(
     return spec.to_zarr(store, path, overwrite=overwrite, **kwargs)
 
 
-def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, ArraySpec | GroupSpec]:
+def to_flat(
+    node: ArraySpec[Any] | GroupSpec[Any, Any], root_path: str = ""
+) -> dict[str, AnyArraySpec | AnyGroupSpec]:
     """
     Flatten a `GroupSpec` or `ArraySpec`.
+
     Converts a `GroupSpec` or `ArraySpec` and a string, into a `dict` with string keys and
     values that are `GroupSpec` or `ArraySpec`.
 
@@ -844,7 +849,7 @@ def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, Array
     {'/g1': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None), '': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None)}
     """
     result = {}
-    model_copy: ArraySpec | GroupSpec
+    model_copy: AnyArraySpec | AnyGroupSpec
     if isinstance(node, ArraySpec):
         model_copy = node.model_copy(deep=True)
     else:
@@ -899,7 +904,7 @@ def from_flat(data: dict[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
         return from_flat_group(data)
 
 
-def from_flat_group(data: dict[str, ArraySpec | GroupSpec]) -> GroupSpec:
+def from_flat_group(data: dict[str, AnyArraySpec | AnyGroupSpec]) -> AnyGroupSpec:
     """
     Generate a `GroupSpec` from a flat representation of a hierarchy, i.e. a `dict` with
     string keys (paths) and `ArraySpec` / `GroupSpec` values (nodes).
@@ -925,14 +930,14 @@ def from_flat_group(data: dict[str, ArraySpec | GroupSpec]) -> GroupSpec:
     root_name = ""
     sep = "/"
     # arrays that will be members of the returned GroupSpec
-    member_arrays: dict[str, ArraySpec] = {}
+    member_arrays: dict[str, AnyArraySpec] = {}
     # groups, and their members, that will be members of the returned GroupSpec.
     # this dict is populated by recursively applying `from_flat_group` function.
-    member_groups: dict[str, GroupSpec] = {}
+    member_groups: dict[str, AnyGroupSpec] = {}
     # this dict collects the arrayspecs and groupspecs that belong to one of the members of the
     # groupspecs we are constructing. They will later be aggregated in a recursive step that
     # populates member_groups
-    submember_by_parent_name: dict[str, dict[str, ArraySpec | GroupSpec]] = {}
+    submember_by_parent_name: dict[str, dict[str, AnyArraySpec | AnyGroupSpec]] = {}
     # copy the input to ensure that mutations are contained inside this function
     data_copy = data.copy()
     # Get the root node

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import pytest
 from pytest_examples import CodeExample, EvalExample, find_examples
 
