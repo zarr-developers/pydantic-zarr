@@ -715,8 +715,8 @@ def from_zarr(element: zarr.Array | zarr.Group, *, depth: int = -1) -> AnyArrayS
 
 @overload
 def to_zarr(
-    spec: ArraySpec[TBaseAttr],
-    store: Store,
+    spec: AnyArraySpec,
+    store: Store,  # type: ignore[overload-cannot-match]
     path: str,
     overwrite: bool = False,
 ) -> zarr.Array: ...
@@ -724,7 +724,7 @@ def to_zarr(
 
 @overload
 def to_zarr(
-    spec: GroupSpec[TBaseAttr, TBaseItem],
+    spec: AnyGroupSpec,
     store: Store,
     path: str,
     overwrite: bool = False,
