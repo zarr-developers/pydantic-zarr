@@ -297,7 +297,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             codecs_actual = auto_codecs(array)
         else:
             # why is mypy mad about this assignment?
-            codecs_actual = codecs # type: ignore[assignment]
+            codecs_actual = codecs  # type: ignore[assignment]
 
         storage_transformers_actual: Sequence[AnyNamedConfig]
         if storage_transformers == "auto":
@@ -308,7 +308,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         dimension_names_actual: Sequence[str | None]
         if dimension_names == "auto":
             # why is mypy mad about this assignment?
-            dimension_names_actual = auto_dimension_names(array) # type: ignore[assignment]
+            dimension_names_actual = auto_dimension_names(array)  # type: ignore[assignment]
         else:
             dimension_names_actual = dimension_names
 
@@ -682,11 +682,11 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
 
 
 @overload
-def from_zarr(element: zarr.Array, *, depth: int) -> ArraySpec[TBaseAttr]: ...
+def from_zarr(element: zarr.Array, *, depth: int = ...) -> AnyArraySpec: ...
 
 
 @overload
-def from_zarr(element: zarr.Group, *, depth: int) -> GroupSpec[TBaseAttr, TBaseItem]: ...
+def from_zarr(element: zarr.Group, *, depth: int = ...) -> AnyGroupSpec: ...  # type: ignore[overload-cannot-match]
 
 
 def from_zarr(element: zarr.Array | zarr.Group, *, depth: int = -1) -> AnyArraySpec | AnyGroupSpec:
