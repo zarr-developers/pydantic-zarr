@@ -23,6 +23,7 @@ import zarr
 from numcodecs.abc import Codec
 from pydantic import AfterValidator, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
+from zarr.core.metadata import ArrayV2Metadata
 from zarr.core.sync_group import get_node
 from zarr.errors import ContainsArrayError, ContainsGroupError
 
@@ -316,6 +317,10 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         ArraySpec(zarr_format=2, attributes={}, shape=(10, 10), chunks=(10, 10), dtype='<f8', fill_value=0.0, order='C', filters=None, dimension_separator='.', compressor={'id': 'blosc', 'cname': 'lz4', 'clevel': 5, 'shuffle': 1, 'blocksize': 0})
 
         """
+        if not isinstance(array.metadata, ArrayV2Metadata):
+            msg = "Array is not a Zarr format 2 array"
+            raise TypeError(msg)
+
         return cls(
             shape=array.shape,
             chunks=array.chunks,
