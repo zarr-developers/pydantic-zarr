@@ -321,6 +321,15 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             msg = "Array is not a Zarr format 2 array"
             raise TypeError(msg)
 
+        if len(array.compressors):
+            compressor = array.compressors[0]
+            if TYPE_CHECKING:
+                # TODO: overload array.compressors in zarr-python and remove this type check
+                assert isinstance(compressor, Codec)
+            compressor_dict = compressor.get_config()
+        else:
+            compressor_dict = None
+
         return cls(
             shape=array.shape,
             chunks=array.chunks,
@@ -335,7 +344,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             order=array.order,
             filters=array.filters,
             dimension_separator=array.metadata.dimension_separator,
-            compressor=array.compressors[0].get_config() if len(array.compressors) else None,
+            compressor=compressor_dict,
             attributes=array.attrs.asdict(),
         )
 
@@ -519,7 +528,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
                 # convert to dict before the final typed GroupSpec construction
                 item_out = GroupSpec.from_zarr(item, depth=new_depth).model_dump()
             else:
-                msg = (
+                msg = (  # type: ignore[unreachable]
                     f"Unparsable object encountered: {type(item)}. Expected zarr.Array"
                     " or zarr.Group."
                 )
