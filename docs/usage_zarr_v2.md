@@ -306,11 +306,11 @@ This example shows how to specialize `GroupSpec` and `ArraySpec` with type param
 
 ```python
 import sys
-
+from collections.abc import Mapping
 from pydantic import ValidationError
 
-from pydantic_zarr.v2 import ArraySpec, GroupSpec, TAttr, TItem
-
+from pydantic_zarr.v2 import ArraySpec, GroupSpec, TAttr, TItem, TBaseItem
+from typing import Any
 if sys.version_info < (3, 12):
     from typing_extensions import TypedDict
 else:
@@ -324,14 +324,14 @@ class GroupAttrs(TypedDict):
 
 
 # a Zarr group with attributes consistent with GroupAttrs
-SpecificAttrsGroup = GroupSpec[GroupAttrs, TItem]
+SpecificAttrsGroup = GroupSpec[GroupAttrs, Any]
 
 try:
     SpecificAttrsGroup(attributes={'a': 10, 'b': 'foo'})
 except ValidationError as exc:
     print(exc)
     """
-    1 validation error for GroupSpec[GroupAttrs, ~TItem]
+    1 validation error for GroupSpec[GroupAttrs, Any]
     attributes.b
       Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='foo', input_type=str]
         For further information visit https://errors.pydantic.dev/2.11/v/int_parsing
@@ -342,15 +342,15 @@ print(SpecificAttrsGroup(attributes={'a': 100, 'b': 100}))
 #> zarr_format=2 attributes={'a': 100, 'b': 100} members={}
 
 # a Zarr group that only contains arrays -- no subgroups!
-# we reuse the TAttr type variable defined in pydantic_zarr.core
-ArraysOnlyGroup = GroupSpec[TAttr, ArraySpec]
+# The attributes are allowed to be any Mapping[str, object]
+ArraysOnlyGroup = GroupSpec[Mapping[str, object], ArraySpec]
 
 try:
     ArraysOnlyGroup(attributes={}, members={'foo': GroupSpec(attributes={})})
 except ValidationError as exc:
     print(exc)
     """
-    1 validation error for GroupSpec[~TAttr, ArraySpec]
+    1 validation error for GroupSpec[Mapping[str, object], ArraySpec]
     members.foo
       Input should be a valid dictionary or instance of ArraySpec [type=model_type, input_value=GroupSpec(zarr_format=2, ...tributes={}, members={}), input_type=GroupSpec]
         For further information visit https://errors.pydantic.dev/2.11/v/model_type

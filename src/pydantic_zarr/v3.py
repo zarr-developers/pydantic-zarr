@@ -42,8 +42,8 @@ if TYPE_CHECKING:
     from zarr.core.array_spec import ArrayConfigParams
 
 
-TBaseAttr = Mapping[str, object]
-TBaseItem = Union["GroupSpec[TBaseAttr, TBaseItem]", "ArraySpec[TBaseAttr]"]
+TBaseAttr: TypeAlias = Mapping[str, object]
+TBaseItem: TypeAlias = Union["GroupSpec", "ArraySpec"]
 
 # These types are for convenience when dealing with unknown ArraySpecs and GroupSpecs
 # because type variables don't have default values

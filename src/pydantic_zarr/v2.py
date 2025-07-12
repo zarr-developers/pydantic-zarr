@@ -38,8 +38,8 @@ from pydantic_zarr.core import (
 if TYPE_CHECKING:
     from zarr.abc.store import Store
 
-TBaseAttr = Mapping[str, object]
-TBaseItem = Union["GroupSpec[TBaseAttr, TBaseItem]", "ArraySpec[TBaseAttr]"]
+TBaseAttr: TypeAlias = Mapping[str, object]
+TBaseItem: TypeAlias = Union["GroupSpec", "ArraySpec"]
 
 AnyArraySpec: TypeAlias = "ArraySpec[TBaseAttr]"
 AnyGroupSpec: TypeAlias = "GroupSpec[TBaseAttr, TBaseItem]"
