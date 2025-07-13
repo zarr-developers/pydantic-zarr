@@ -23,6 +23,7 @@ import zarr
 from numcodecs.abc import Codec
 from pydantic import AfterValidator, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
+from zarr.core.metadata import ArrayV2Metadata
 from zarr.errors import ContainsArrayError, ContainsGroupError
 
 from pydantic_zarr.core import (
@@ -312,6 +313,19 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         ArraySpec(zarr_format=2, attributes={}, shape=(10, 10), chunks=(10, 10), dtype='<f8', fill_value=0.0, order='C', filters=None, dimension_separator='.', compressor={'id': 'blosc', 'cname': 'lz4', 'clevel': 5, 'shuffle': 1, 'blocksize': 0})
 
         """
+        if not isinstance(array.metadata, ArrayV2Metadata):
+            msg = "Array is not a Zarr format 2 array"
+            raise TypeError(msg)
+
+        if len(array.compressors):
+            compressor = array.compressors[0]
+            if TYPE_CHECKING:
+                # TODO: overload array.compressors in zarr-python and remove this type check
+                assert isinstance(compressor, Codec)
+            compressor_dict = compressor.get_config()
+        else:
+            compressor_dict = None
+
         return cls(
             shape=array.shape,
             chunks=array.chunks,
@@ -326,7 +340,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             order=array.order,
             filters=array.filters,
             dimension_separator=array.metadata.dimension_separator,
-            compressor=array.compressors[0].get_config() if len(array.compressors) else None,
+            compressor=compressor_dict,
             attributes=array.attrs.asdict(),
         )
 
@@ -511,7 +525,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
                 # convert to dict before the final typed GroupSpec construction
                 item_out = GroupSpec.from_zarr(item, depth=new_depth).model_dump()
             else:
-                msg = (
+                msg = (  # type: ignore[unreachable]
                     f"Unparsable object encountered: {type(item)}. Expected zarr.Array"
                     " or zarr.Group."
                 )
