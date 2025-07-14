@@ -392,7 +392,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
     """
 
     node_type: Literal["group"] = "group"
-    attributes: TAttr = cast("TAttr", {})  # type: ignore[assignment]
+    attributes: TAttr = cast("TAttr", {})
     members: Mapping[str, TItem] = cast("Mapping[str, TItem]", {})
 
     @classmethod
