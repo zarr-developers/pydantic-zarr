@@ -76,7 +76,6 @@ class NamedConfig(TypedDict, Generic[TName, TConfig]):
 
     Attributes
     ----------
-
     name: TName
         The name of the metadata object.
     configuration: NotRequired[TConfig]
