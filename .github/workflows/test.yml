@@ -16,13 +16,12 @@ concurrency:
 
 jobs:
   test:
-    name: os=${{ matrix.os }}, py=${{ matrix.python-version }}, zarr-python=${{ matrix.zarr-version }}, deps=${{ matrix.dependency-set }}
+    name: os=${{ matrix.os }}, py=${{ matrix.python-version }}, zarr-python=${{ matrix.zarr-version }}
 
     strategy:
       matrix:
         python-version: ['3.11', '3.12', '3.13']
         zarr-version: ['3.0.10', '3.1.0']
-        dependency-set: ["minimal", "optional"]
         os: ["ubuntu-latest"]
     runs-on: ${{ matrix.os }}
 
