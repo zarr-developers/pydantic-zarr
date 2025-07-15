@@ -557,7 +557,7 @@ def auto_chunk_grid(data: object) -> AnyNamedConfig:
         return {"name": "regular", "configuration": {"chunk_shape": tuple(data.chunk_shape)}}
     elif hasattr(data, "shape"):
         return {"name": "regular", "configuration": {"chunk_shape": tuple(data.shape)}}
-    raise ValueError("Cannot get chunk grid from object without .shape attribute")
+    raise ValueError("Cannot get chunk grid from object without .shape or .chunk_shape attribute")
 
 
 def auto_chunk_key_encoding(data: object) -> AnyNamedConfig:
