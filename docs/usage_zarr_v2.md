@@ -42,7 +42,7 @@ print(spec.model_dump())
             'shape': (10,),
             'chunks': (10,),
             'dtype': '<f8',
-            'fill_value': None,
+            'fill_value': 0.0,
             'order': 'C',
             'filters': None,
             'dimension_separator': '.',
