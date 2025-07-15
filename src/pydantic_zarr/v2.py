@@ -42,8 +42,8 @@ if TYPE_CHECKING:
 TBaseAttr: TypeAlias = Mapping[str, object]
 TBaseItem: TypeAlias = Union["GroupSpec", "ArraySpec"]
 
-AnyArraySpec: TypeAlias = "ArraySpec[TBaseAttr]"
-AnyGroupSpec: TypeAlias = "GroupSpec[TBaseAttr, TBaseItem]"
+AnyArraySpec: TypeAlias = "ArraySpec[Any]"
+AnyGroupSpec: TypeAlias = "GroupSpec[Any, Any]"
 
 TAttr = TypeVar("TAttr", bound=TBaseAttr)
 TItem = TypeVar("TItem", bound=TBaseItem)
@@ -765,7 +765,7 @@ def from_zarr(element: zarr.Array | zarr.Group, depth: int = -1) -> AnyArraySpec
 
 @overload
 def to_zarr(
-    spec: ArraySpec,
+    spec: AnyArraySpec,
     store: Store,
     path: str,
     *,
@@ -776,7 +776,7 @@ def to_zarr(
 
 @overload
 def to_zarr(
-    spec: GroupSpec,
+    spec: AnyGroupSpec,
     store: Store,
     path: str,
     *,
@@ -786,7 +786,7 @@ def to_zarr(
 
 
 def to_zarr(
-    spec: ArraySpec | GroupSpec,
+    spec: AnyArraySpec | AnyGroupSpec,
     store: Store,
     path: str,
     *,
