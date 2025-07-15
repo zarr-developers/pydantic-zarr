@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import (
+    TYPE_CHECKING,
     Any,
     Literal,
     TypeAlias,
@@ -9,7 +10,12 @@ from typing import (
 
 import numpy as np
 import numpy.typing as npt
+import zarr
 from pydantic import BaseModel, ConfigDict
+from zarr.core.sync_group import get_node
+
+if TYPE_CHECKING:
+    from zarr.abc.store import Store
 
 IncEx: TypeAlias = set[int] | set[str] | dict[int, Any] | dict[str, Any] | None
 
@@ -82,3 +88,19 @@ def model_like(a: BaseModel, b: BaseModel, exclude: IncEx = None, include: IncEx
     b_dict = b.model_dump(exclude=exclude, include=include)
 
     return a_dict == b_dict
+
+
+# TODO: expose contains_array and contains_group as public functions in zarr-python
+# and replace these custom implementations
+def contains_array(store: Store, path: str) -> bool:
+    try:
+        return isinstance(get_node(store, path, zarr_format=2), zarr.Array)
+    except FileNotFoundError:
+        return False
+
+
+def contains_group(store: Store, path: str) -> bool:
+    try:
+        return isinstance(get_node(store, path, zarr_format=2), zarr.Group)
+    except FileNotFoundError:
+        return False
