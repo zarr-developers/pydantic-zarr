@@ -163,7 +163,10 @@ namespace_packages = false
 warn_unreachable = true
 plugins = "pydantic.mypy"
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
-strict = false
+strict = true
+# TODO: remove each of these and fix any errors:
+disallow_any_generics = false
+warn_return_any = false
 
 [tool.pytest.ini_options]
 minversion = "7"

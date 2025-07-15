@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from zarr.abc.store import Store
 
 TAttr = TypeVar("TAttr", bound=Mapping[str, Any])
-TItem = TypeVar("TItem", bound=Union["GroupSpec", "ArraySpec"])  # type: ignore[type-arg]
+TItem = TypeVar("TItem", bound=Union["GroupSpec", "ArraySpec"])
 
 
 # TODO: expose contains_array and contains_group as public functions in zarr-python
@@ -737,7 +737,7 @@ def from_zarr(element: zarr.Array, depth: int) -> ArraySpec: ...
 
 
 @overload
-def from_zarr(element: zarr.Group, depth: int) -> GroupSpec: ...  # type: ignore[overload-cannot-match]
+def from_zarr(element: zarr.Group, depth: int) -> GroupSpec: ...
 
 
 def from_zarr(element: zarr.Array | zarr.Group, depth: int = -1) -> ArraySpec | GroupSpec:
