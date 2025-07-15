@@ -46,15 +46,15 @@ def test_from_array() -> None:
         shape=(10,),
         data_type="int64",
         chunk_grid=RegularChunking(
-            name="regular", configuration=RegularChunkingConfig(chunk_shape=[10])
+            name="regular", configuration=RegularChunkingConfig(chunk_shape=(10,))
         ),
         chunk_key_encoding=DefaultChunkKeyEncoding(
             name="default", configuration=DefaultChunkKeyEncodingConfig(separator="/")
         ),
         fill_value=0,
-        codecs=[],
-        storage_transformers=[],
-        dimension_names=[None],
+        codecs=(),
+        storage_transformers=(),
+        dimension_names=None,
     )
 
 
