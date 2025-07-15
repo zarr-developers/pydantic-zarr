@@ -463,12 +463,28 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         >>> import numpy as np
         >>> flat = {'': GroupSpec(attributes={'foo': 10}, members=None)}
         >>> GroupSpec.from_flat(flat)
-        GroupSpec(zarr_format=2, attributes={'foo': 10}, members={})
+        GroupSpec(zarr_format=3, node_type='group', attributes={'foo': 10}, members={})
         >>> flat = {
             '': GroupSpec(attributes={'foo': 10}, members=None),
             '/a': ArraySpec.from_array(np.arange(10))}
         >>> GroupSpec.from_flat(flat)
-        GroupSpec(zarr_format=2, attributes={'foo': 10}, members={'a': ArraySpec(zarr_format=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)})
+        GroupSpec(
+            zarr_format=3,
+            node_type='group',
+            attributes={'foo': 10},
+            members={
+                'a': ArraySpec(
+                        zarr_format=3,
+                        node_type='array',
+                        attributes={},
+                        shape=(10,),
+                        data_type='int64',
+                        chunk_grid={'name': 'regular', 'configuration': {'chunk_shape': (10,)}},
+                        chunk_key_encoding={'name': 'default', 'configuration': {'separator': '/'}},
+                        fill_value=0,
+                        codecs=(),
+                        storage_transformers=(),
+                        dimension_names=None)})
         """
         from_flated = from_flat_group(data)
         return cls(**from_flated.model_dump())
