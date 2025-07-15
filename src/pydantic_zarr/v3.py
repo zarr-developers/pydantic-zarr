@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
+from importlib.metadata import version
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -9,6 +10,7 @@ from typing import (
     Generic,
     Literal,
     Never,
+    NotRequired,
     Self,
     TypeVar,
     Union,
@@ -19,7 +21,9 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 import zarr
-from pydantic import BaseModel, BeforeValidator, Field
+from packaging.version import Version
+from pydantic import BeforeValidator
+from typing_extensions import TypedDict
 
 from pydantic_zarr.core import IncEx, StrictBase, tuplify_json
 
@@ -49,28 +53,48 @@ RawFillValue = tuple[int, ...]
 
 FillValue = BoolFillValue | IntFillValue | FloatFillValue | ComplexFillValue | RawFillValue
 
-
-class NamedConfig(StrictBase):
-    name: str
-    configuration: Mapping[str, object] | BaseModel
+TName = TypeVar("TName", bound=str)
+TConfig = TypeVar("TConfig", bound=Mapping[str, object])
 
 
-class RegularChunkingConfig(StrictBase):
+class NamedConfig(TypedDict, Generic[TName, TConfig]):
+    """
+    A Zarr V3 metadata object.
+
+    This class is parametrized by two type parameters: `TName` and `TConfig`.
+
+    Attributes
+    ----------
+
+    name: TName
+        The name of the metadata object.
+    configuration: NotRequired[TConfig]
+        The configuration of the metadata object.
+    """
+
+    name: TName
+    configuration: NotRequired[TConfig]
+
+
+class AnyNamedConfig(NamedConfig[str, Mapping[str, object]]):
+    """
+    This class models any Zarr metadata object that takes the form of a
+    {"name": ..., "configuration": ...} dict, where the "configuration" key is not required.
+    """
+
+
+class RegularChunkingConfig(TypedDict):
     chunk_shape: tuple[int, ...]
 
 
-class RegularChunking(NamedConfig):
-    name: Literal["regular"] = "regular"
-    configuration: RegularChunkingConfig
+RegularChunking = NamedConfig[Literal["regular"], RegularChunkingConfig]
 
 
-class DefaultChunkKeyEncodingConfig(StrictBase):
-    separator: Literal[".", "/"] = "/"
+class DefaultChunkKeyEncodingConfig(TypedDict):
+    separator: Literal[".", "/"]
 
 
-class DefaultChunkKeyEncoding(NamedConfig):
-    name: Literal["default"] = "default"
-    configuration: DefaultChunkKeyEncodingConfig = Field(default=DefaultChunkKeyEncodingConfig())
+DefaultChunkKeyEncoding = NamedConfig[Literal["default"], DefaultChunkKeyEncodingConfig]
 
 
 class NodeSpec(StrictBase):
@@ -161,12 +185,12 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     node_type: Literal["array"] = "array"
     attributes: TAttr = cast(TAttr, {})
     shape: tuple[int, ...]
-    data_type: DtypeStr | NamedConfig
-    chunk_grid: NamedConfig  # todo: validate this against shape
-    chunk_key_encoding: NamedConfig  # todo: validate this against shape
+    data_type: DtypeStr | AnyNamedConfig
+    chunk_grid: RegularChunking  # todo: validate this against shape
+    chunk_key_encoding: DefaultChunkKeyEncoding  # todo: validate this against shape
     fill_value: FillValue  # todo: validate this against the data type
-    codecs: tuple[NamedConfig, ...]
-    storage_transformers: tuple[NamedConfig, ...] = ()
+    codecs: tuple[AnyNamedConfig, ...]
+    storage_transformers: tuple[AnyNamedConfig, ...] = ()
     dimension_names: tuple[str | None, ...] | None = None  # todo: validate this against shape
 
     def model_dump(
@@ -214,11 +238,11 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         array: npt.NDArray[Any],
         *,
         attributes: Literal["auto"] | TAttr = "auto",
-        chunk_grid: Literal["auto"] | NamedConfig = "auto",
-        chunk_key_encoding: Literal["auto"] | NamedConfig = "auto",
+        chunk_grid: Literal["auto"] | AnyNamedConfig = "auto",
+        chunk_key_encoding: Literal["auto"] | AnyNamedConfig = "auto",
         fill_value: Literal["auto"] | FillValue = "auto",
-        codecs: Literal["auto"] | Sequence[NamedConfig] = "auto",
-        storage_transformers: Literal["auto"] | Sequence[NamedConfig] = "auto",
+        codecs: Literal["auto"] | Sequence[AnyNamedConfig] = "auto",
+        storage_transformers: Literal["auto"] | Sequence[AnyNamedConfig] = "auto",
         dimension_names: Literal["auto"] | Sequence[str | None] = "auto",
     ) -> Self:
         """
@@ -247,9 +271,9 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         else:
             chunk_grid_actual = chunk_grid
 
-        chunk_key_actual: NamedConfig
+        chunk_key_actual: AnyNamedConfig
         if chunk_key_encoding == "auto":
-            chunk_key_actual = DefaultChunkKeyEncoding()
+            chunk_key_actual = {"name": "default", "configuration": {"separator": "/"}}
         else:
             chunk_key_actual = chunk_key_encoding
 
@@ -261,16 +285,17 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         if codecs == "auto":
             codecs_actual = auto_codecs(array)
         else:
+            # why is mypy mad about this assignment?
             codecs_actual = codecs
-
-        storage_transformers_actual: Sequence[NamedConfig]
+        storage_transformers_actual: Sequence[AnyNamedConfig]
         if storage_transformers == "auto":
             storage_transformers_actual = auto_storage_transformers(array)
         else:
             storage_transformers_actual = storage_transformers
 
-        dimension_names_actual: Sequence[str | None]
+        dimension_names_actual: Sequence[str | None] | None
         if dimension_names == "auto":
+            # why is mypy mad about this assignment?
             dimension_names_actual = auto_dimension_names(array)
         else:
             dimension_names_actual = dimension_names
@@ -284,7 +309,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             fill_value=fill_value_actual,
             codecs=tuple(codecs_actual),
             storage_transformers=tuple(storage_transformers_actual),
-            dimension_names=tuple(dimension_names_actual),
+            dimension_names=dimension_names_actual,
         )
 
     @classmethod
@@ -311,13 +336,19 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
         """
         from zarr.core.metadata import ArrayV3Metadata
-        from zarr.core.metadata.v3 import V3JsonEncoder
 
         if not isinstance(array.metadata, ArrayV3Metadata):
             raise ValueError("Only zarr v3 arrays are supported")  # noqa: TRY004
-        meta_json = json.loads(
-            json.dumps(array.metadata.to_dict(), cls=V3JsonEncoder), object_hook=tuplify_json
-        )
+        if Version(version("zarr")) < Version("3.1.0"):
+            # this class was removed from zarr python 3.1.0
+            from zarr.core.metadata.v3 import V3JsonEncoder  # type: ignore[attr-defined]
+
+            meta_json = json.loads(
+                json.dumps(array.metadata.to_dict(), cls=V3JsonEncoder), object_hook=tuplify_json
+            )
+        else:
+            meta_json = array.metadata.to_dict()
+
         return cls(
             attributes=meta_json["attributes"],
             shape=array.shape,
@@ -517,25 +548,31 @@ def to_zarr(
     return spec.to_zarr(store, path, overwrite=overwrite)
 
 
-def auto_attributes(array: Any) -> dict[str, Any]:
-    if hasattr(array, "attributes"):
-        return array.attributes
+def auto_attributes(data: object) -> Mapping[str, object]:
+    if hasattr(data, "attributes") and isinstance(data.attributes, Mapping):
+        return data.attributes
     return {}
 
 
-def auto_chunk_grid(array: Any) -> NamedConfig:
-    if hasattr(array, "chunk_shape"):
-        return array.chunk_shape
-    elif hasattr(array, "shape"):
-        return RegularChunking(configuration=RegularChunkingConfig(chunk_shape=list(array.shape)))
-    raise ValueError("Cannot get chunk grid from object without .shape attribute")
+def auto_chunk_grid(data: object) -> AnyNamedConfig:
+    if hasattr(data, "chunk_shape"):
+        return {"name": "regular", "configuration": {"chunk_shape": tuple(data.chunk_shape)}}
+    elif hasattr(data, "shape"):
+        return {"name": "regular", "configuration": {"chunk_shape": tuple(data.shape)}}
+    raise ValueError("Cannot get chunk grid from object without .shape or .chunk_shape attribute")
 
 
-def auto_fill_value(array: Any) -> FillValue:
-    if hasattr(array, "fill_value"):
-        return array.fill_value
-    elif hasattr(array, "dtype"):
-        kind = np.dtype(array.dtype).kind
+def auto_chunk_key_encoding(data: object) -> AnyNamedConfig:
+    if hasattr(data, "metadata") and hasattr(data.metadata, "chunk_key_encoding"):
+        return data.metadata.to_dict()["chunk_key_encoding"]
+    return {"name": "default", "configuration": {"separator": "/"}}
+
+
+def auto_fill_value(data: object) -> FillValue:
+    if hasattr(data, "fill_value"):
+        return data.fill_value
+    elif hasattr(data, "dtype"):
+        kind = np.dtype(data.dtype).kind
         if kind == "?":
             return False
         elif kind in ["i", "u"]:
@@ -561,7 +598,7 @@ def auto_storage_transformers(array: Any) -> list[NamedConfig]:
     return []
 
 
-def auto_dimension_names(array: Any) -> list[str | None]:
+def auto_dimension_names(array: Any) -> list[str | None] | None:
     if hasattr(array, "dimension_names"):
         return array.dimension_names
-    return [None] * np.asanyarray(array, copy=False).ndim
+    return None
