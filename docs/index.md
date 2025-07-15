@@ -35,7 +35,7 @@ print(spec.model_dump())
             'shape': (10,),
             'chunks': (10,),
             'dtype': '|u1',
-            'fill_value': 0.0,
+            'fill_value': 0,
             'order': 'C',
             'filters': None,
             'dimension_separator': '.',
