@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
+from importlib.metadata import version
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -20,6 +21,7 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 import zarr
+from packaging.version import Version
 from pydantic import AfterValidator, BeforeValidator
 from typing_extensions import TypedDict
 from zarr.errors import ContainsArrayError, ContainsGroupError
@@ -292,22 +294,20 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         else:
             fill_value_actual = fill_value
 
+        codecs_actual: Sequence[AnyNamedConfig]
         if codecs == "auto":
             codecs_actual = auto_codecs(array)
         else:
-            # why is mypy mad about this assignment?
-            codecs_actual = codecs  # type: ignore[assignment]
-
+            codecs_actual = codecs
         storage_transformers_actual: Sequence[AnyNamedConfig]
         if storage_transformers == "auto":
             storage_transformers_actual = auto_storage_transformers(array)
         else:
             storage_transformers_actual = storage_transformers
 
-        dimension_names_actual: Sequence[str | None]
+        dimension_names_actual: Sequence[str | None] | None
         if dimension_names == "auto":
-            # why is mypy mad about this assignment?
-            dimension_names_actual = auto_dimension_names(array)  # type: ignore[assignment]
+            dimension_names_actual = auto_dimension_names(array)
         else:
             dimension_names_actual = dimension_names
 
@@ -350,14 +350,14 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
         if not isinstance(array.metadata, ArrayV3Metadata):
             raise ValueError("Only zarr v3 arrays are supported")  # noqa: TRY004
-        try:
-            # this handles zarr 3.0.0 -- 3.0.9
+        if Version(version("zarr")) < Version("3.1.0"):
+            # this class was removed from zarr python 3.1.0
             from zarr.core.metadata.v3 import V3JsonEncoder  # type: ignore[attr-defined]
 
             meta_json = json.loads(
                 json.dumps(array.metadata.to_dict(), cls=V3JsonEncoder), object_hook=tuplify_json
             )
-        except ImportError:
+        else:
             meta_json = array.metadata.to_dict()
 
         return cls(
@@ -915,7 +915,7 @@ def auto_chunk_grid(data: object) -> AnyNamedConfig:
         return {"name": "regular", "configuration": {"chunk_shape": tuple(data.chunk_shape)}}
     elif hasattr(data, "shape"):
         return {"name": "regular", "configuration": {"chunk_shape": tuple(data.shape)}}
-    raise ValueError("Cannot get chunk grid from object without .shape attribute")
+    raise ValueError("Cannot get chunk grid from object without .shape or .chunk_shape attribute")
 
 
 def auto_chunk_key_encoding(data: object) -> AnyNamedConfig:
