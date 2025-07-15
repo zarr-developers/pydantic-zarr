@@ -24,19 +24,6 @@ jobs:
         zarr-version: ['3.0.10', '3.1.0']
         dependency-set: ["minimal", "optional"]
         os: ["ubuntu-latest"]
-        include:
-          - python-version: '3.11'
-            dependency-set: 'optional'
-            os: 'macos-latest'
-          - python-version: '3.13'
-            dependency-set: 'optional'
-            os: 'macos-latest'
-          - python-version: '3.11'
-            dependency-set: 'optional'
-            os: 'windows-latest'
-          - python-version: '3.13'
-            dependency-set: 'optional'
-            os: 'windows-latest'
     runs-on: ${{ matrix.os }}
 
     steps:
