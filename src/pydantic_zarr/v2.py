@@ -734,7 +734,7 @@ def from_zarr(element: zarr.Array, depth: int) -> AnyArraySpec: ...
 
 
 @overload
-def from_zarr(element: zarr.Group, depth: int) -> AnyGroupSpec: ...  # type: ignore[overload-cannot-match]
+def from_zarr(element: zarr.Group, depth: int) -> AnyGroupSpec: ...
 
 
 def from_zarr(element: zarr.Array | zarr.Group, depth: int = -1) -> AnyArraySpec | AnyGroupSpec:

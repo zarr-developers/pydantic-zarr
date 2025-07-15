@@ -348,13 +348,19 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
         """
         from zarr.core.metadata import ArrayV3Metadata
-        from zarr.core.metadata.v3 import V3JsonEncoder
 
         if not isinstance(array.metadata, ArrayV3Metadata):
             raise ValueError("Only zarr v3 arrays are supported")  # noqa: TRY004
-        meta_json = json.loads(
-            json.dumps(array.metadata.to_dict(), cls=V3JsonEncoder), object_hook=tuplify_json
-        )
+        try:
+            # this handles zarr 3.0.0 -- 3.0.9
+            from zarr.core.metadata.v3 import V3JsonEncoder  # type: ignore[attr-defined]
+
+            meta_json = json.loads(
+                json.dumps(array.metadata.to_dict(), cls=V3JsonEncoder), object_hook=tuplify_json
+            )
+        except ImportError:
+            meta_json = array.metadata.to_dict()
+
         return cls(
             attributes=meta_json["attributes"],
             shape=array.shape,
@@ -429,7 +435,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
     """
 
     node_type: Literal["group"] = "group"
-    attributes: TAttr = cast("TAttr", {})  # type: ignore[assignment]
+    attributes: TAttr = cast("TAttr", {})
     members: Annotated[Mapping[str, TItem] | None, AfterValidator(ensure_key_no_path)] = {}
 
     @classmethod
@@ -686,7 +692,7 @@ def from_zarr(element: zarr.Array, *, depth: int = ...) -> AnyArraySpec: ...
 
 
 @overload
-def from_zarr(element: zarr.Group, *, depth: int = ...) -> AnyGroupSpec: ...  # type: ignore[overload-cannot-match]
+def from_zarr(element: zarr.Group, *, depth: int = ...) -> AnyGroupSpec: ...
 
 
 def from_zarr(element: zarr.Array | zarr.Group, *, depth: int = -1) -> AnyArraySpec | AnyGroupSpec:
@@ -716,7 +722,7 @@ def from_zarr(element: zarr.Array | zarr.Group, *, depth: int = -1) -> AnyArrayS
 @overload
 def to_zarr(
     spec: AnyArraySpec,
-    store: Store,  # type: ignore[overload-cannot-match]
+    store: Store,
     path: str,
     overwrite: bool = False,
 ) -> zarr.Array: ...
