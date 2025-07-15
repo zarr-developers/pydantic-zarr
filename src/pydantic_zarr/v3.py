@@ -338,7 +338,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         if not isinstance(array.metadata, ArrayV3Metadata):
             raise ValueError("Only zarr v3 arrays are supported")  # noqa: TRY004
         try:
-            # this handles zarr 3.0.0 -- 3.0.9
+            # this class was removed from zarr python 3.1.0
             from zarr.core.metadata.v3 import V3JsonEncoder  # type: ignore[attr-defined]
 
             meta_json = json.loads(
