@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
+from importlib.metadata import version
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -20,6 +21,7 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 import zarr
+from packaging.version import Version
 from pydantic import BeforeValidator
 from typing_extensions import TypedDict
 
@@ -337,14 +339,14 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
         if not isinstance(array.metadata, ArrayV3Metadata):
             raise ValueError("Only zarr v3 arrays are supported")  # noqa: TRY004
-        try:
+        if Version(version("zarr")) < Version("3.1.0"):
             # this class was removed from zarr python 3.1.0
-            from zarr.core.metadata.v3 import V3JsonEncoder
+            from zarr.core.metadata.v3 import V3JsonEncoder  # type: ignore[attr-defined]
 
             meta_json = json.loads(
                 json.dumps(array.metadata.to_dict(), cls=V3JsonEncoder), object_hook=tuplify_json
             )
-        except ImportError:
+        else:
             meta_json = array.metadata.to_dict()
 
         return cls(
