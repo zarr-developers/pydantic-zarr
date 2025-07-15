@@ -339,7 +339,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             raise ValueError("Only zarr v3 arrays are supported")  # noqa: TRY004
         try:
             # this class was removed from zarr python 3.1.0
-            from zarr.core.metadata.v3 import V3JsonEncoder  # type: ignore[attr-defined]
+            from zarr.core.metadata.v3 import V3JsonEncoder
 
             meta_json = json.loads(
                 json.dumps(array.metadata.to_dict(), cls=V3JsonEncoder), object_hook=tuplify_json
