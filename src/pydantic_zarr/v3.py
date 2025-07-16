@@ -359,14 +359,13 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             )
         else:
             meta_json = array.metadata.to_dict()
-
         return cls(
             attributes=meta_json["attributes"],
             shape=array.shape,
             data_type=meta_json["data_type"],
             chunk_grid=meta_json["chunk_grid"],
             chunk_key_encoding=meta_json["chunk_key_encoding"],
-            fill_value=array.fill_value,
+            fill_value=meta_json["fill_value"],
             codecs=meta_json["codecs"],
             storage_transformers=meta_json["storage_transformers"],
             dimension_names=meta_json.get("dimension_names", None),
