@@ -24,7 +24,7 @@ import numpy.typing as npt
 import zarr
 from numcodecs.abc import Codec
 from packaging.version import Version
-from pydantic import AfterValidator, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
 from zarr.core.metadata import ArrayV2Metadata
 from zarr.errors import ContainsArrayError, ContainsGroupError
