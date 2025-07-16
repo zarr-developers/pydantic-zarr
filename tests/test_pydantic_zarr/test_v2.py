@@ -130,7 +130,7 @@ def test_array_spec(
 
     assert spec.zarr_format == array.metadata.zarr_format
     assert spec.dtype == array.dtype
-    assert spec.attributes == array.attrs
+    assert spec.attributes == array.attrs.asdict()
     assert spec.chunks == array.chunks
 
     assert spec.dimension_separator == array.metadata.dimension_separator
@@ -642,6 +642,15 @@ def test_arrayspec_from_zarr(data_type: ZDType) -> None:
     arr = zarr.create_array(store=store, shape=(10,), dtype=data_type, zarr_format=2)
 
     arr_spec = ArraySpec.from_zarr(arr)
-    assert arr_spec.model_dump() == json.loads(
+
+    observed = {"attributes": arr.attrs.asdict()} | json.loads(
         store[".zarray"].to_bytes(), object_hook=tuplify_json
     )
+    if observed["filters"] is not None:
+        observed["filters"] = list(observed["filters"])
+    # this covers the case of the structured data type, which would otherwise be deserialized as a
+    # tuple of tuples, but is stored on the arrayspec as a list of tuples.
+    if isinstance(observed["dtype"], tuple):
+        observed["dtype"] = list(observed["dtype"])
+
+    assert arr_spec.model_dump() == observed

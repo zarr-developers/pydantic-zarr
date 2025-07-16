@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -47,7 +47,7 @@ class StrictBase(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
-def stringify_dtype(value: npt.DTypeLike) -> str:
+def stringify_dtype(value: npt.DTypeLike) -> str | list[tuple[Any, ...]]:
     """
     Convert a `numpy.dtype` object into a `str`.
 
@@ -61,6 +61,9 @@ def stringify_dtype(value: npt.DTypeLike) -> str:
 
     A numpy dtype string representation of `value`.
     """
+    # handle structured dtypes, which must be a list of tuples
+    if isinstance(value, Sequence) and not isinstance(value, str):
+        return [tuple(v) for v in value]
     return np.dtype(value).str
 
 

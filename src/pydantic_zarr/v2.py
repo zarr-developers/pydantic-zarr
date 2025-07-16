@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Mapping
+from importlib.metadata import version
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -21,6 +23,7 @@ import numpy as np
 import numpy.typing as npt
 import zarr
 from numcodecs.abc import Codec
+from packaging.version import Version
 from pydantic import AfterValidator, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
 from zarr.core.metadata import ArrayV2Metadata
@@ -49,6 +52,15 @@ TAttr = TypeVar("TAttr", bound=TBaseAttr)
 TItem = TypeVar("TItem", bound=TBaseItem)
 
 DtypeStr = Annotated[str, BeforeValidator(stringify_dtype)]
+
+BoolFillValue = bool
+IntFillValue = int
+# todo: introduce a type that represents hexadecimal representations of floats
+FloatFillValue = Literal["Infinity", "-Infinity", "NaN"] | float
+ComplexFillValue = tuple[FloatFillValue, FloatFillValue]
+RawFillValue = tuple[int, ...]
+
+FillValue = BoolFillValue | IntFillValue | FloatFillValue | ComplexFillValue | RawFillValue | str
 
 
 def dictify_codec(value: dict[str, Any] | Codec) -> dict[str, Any]:
@@ -151,8 +163,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     attributes: TAttr = cast(TAttr, {})
     shape: tuple[int, ...]
     chunks: tuple[int, ...]
-    dtype: DtypeStr
-    fill_value: int | float | None = 0
+    dtype: DtypeStr | list[tuple[Any, ...]]
+    fill_value: FillValue = 0
     order: Literal["C", "F"] = "C"
     filters: list[CodecDict] | None = None
     dimension_separator: Annotated[
@@ -317,30 +329,23 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             msg = "Array is not a Zarr format 2 array"
             raise TypeError(msg)
 
-        if len(array.compressors):
-            compressor = array.compressors[0]
-            if TYPE_CHECKING:
-                # TODO: overload array.compressors in zarr-python and remove this type check
-                assert isinstance(compressor, Codec)
-            compressor_dict = compressor.get_config()
+        if Version(version("zarr")) < Version("3.1.0"):
+            # this class was removed from zarr python 3.1.0
+            from zarr.core.metadata.v3 import V3JsonEncoder  # type: ignore[attr-defined]
+
+            meta_json = json.loads(json.dumps(array.metadata.to_dict(), cls=V3JsonEncoder))
         else:
-            compressor_dict = None
+            meta_json = array.metadata.to_dict()
 
         return cls(
             shape=array.shape,
             chunks=array.chunks,
-            dtype=str(array.dtype),
-            # explicitly cast to numpy type and back to python
-            # so that int 0 isn't serialized as 0.0
-            fill_value=(
-                array.dtype.type(array.fill_value).tolist()
-                if array.fill_value is not None
-                else array.fill_value
-            ),
+            dtype=meta_json["dtype"],
+            fill_value=meta_json["fill_value"],
             order=array.order,
-            filters=array.filters,
+            filters=meta_json["filters"],
             dimension_separator=array.metadata.dimension_separator,
-            compressor=compressor_dict,
+            compressor=meta_json["compressor"],
             attributes=array.attrs.asdict(),
         )
 
