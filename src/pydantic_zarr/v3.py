@@ -355,11 +355,11 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             # this class was removed from zarr python 3.1.0
             from zarr.core.metadata.v3 import V3JsonEncoder  # type: ignore[attr-defined]
 
-            meta_json = tuplify_json(  # type: ignore[assignment]
+            meta_json = tuplify_json(
                 json.loads(json.dumps(array.metadata.to_dict(), cls=V3JsonEncoder))
             )
         else:
-            meta_json = tuplify_json(array.metadata.to_dict())  # type: ignore[assignment]
+            meta_json = tuplify_json(array.metadata.to_dict())
         return cls(
             attributes=meta_json["attributes"],
             shape=array.shape,
