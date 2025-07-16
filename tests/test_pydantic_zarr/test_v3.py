@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
 import zarr
+
+from .conftest import DTYPE_EXAMPLES
+
+if TYPE_CHECKING:
+    from zarr.dtype import ZDType
 
 from pydantic_zarr.core import tuplify_json
 from pydantic_zarr.v3 import (
@@ -62,12 +68,14 @@ def test_from_array() -> None:
     )
 
 
-def test_arrayspec_from_zarr() -> None:
+@pytest.mark.filterwarnings("ignore::zarr.core.dtype.common.UnstableSpecificationWarning")
+@pytest.mark.parametrize("data_type", DTYPE_EXAMPLES, ids=str)
+def test_arrayspec_from_zarr(data_type: ZDType) -> None:
     """
     Test that deserializing an ArraySpec from a zarr python store works as expected.
     """
     store = {}
-    arr = zarr.create_array(store=store, shape=(10,), dtype="uint8")
+    arr = zarr.create_array(store=store, shape=(10,), dtype=data_type)
 
     arr_spec = ArraySpec.from_zarr(arr)
     assert arr_spec.model_dump() == json.loads(
