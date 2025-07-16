@@ -69,6 +69,7 @@ def test_from_array() -> None:
 
 
 @pytest.mark.filterwarnings("ignore::zarr.core.dtype.common.UnstableSpecificationWarning")
+@pytest.mark.filterwarnings("ignore:The codec:UserWarning")
 @pytest.mark.parametrize("data_type", DTYPE_EXAMPLES, ids=str)
 def test_arrayspec_from_zarr(data_type: ZDType) -> None:
     """
