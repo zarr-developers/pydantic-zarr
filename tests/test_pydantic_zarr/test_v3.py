@@ -76,7 +76,7 @@ def test_arrayspec_from_zarr(data_type: ZDType) -> None:
     Test that deserializing an ArraySpec from a zarr python store works as expected.
     """
     store = {}
-    arr = zarr.create_array(store=store, shape=(10,), dtype=data_type)
+    arr = zarr.create_array(store=store, shape=(10,), dtype=data_type, zarr_format=3)
 
     arr_spec = ArraySpec.from_zarr(arr)
     assert arr_spec.model_dump() == json.loads(

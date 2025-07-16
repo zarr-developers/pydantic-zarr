@@ -64,7 +64,7 @@ FloatFillValue = Literal["Infinity", "-Infinity", "NaN"] | float
 ComplexFillValue = tuple[FloatFillValue, FloatFillValue]
 RawFillValue = tuple[int, ...]
 
-FillValue = BoolFillValue | IntFillValue | FloatFillValue | ComplexFillValue | RawFillValue
+FillValue = BoolFillValue | IntFillValue | FloatFillValue | ComplexFillValue | RawFillValue | str
 
 TName = TypeVar("TName", bound=str)
 TConfig = TypeVar("TConfig", bound=Mapping[str, object])
@@ -346,6 +346,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         ArraySpec(zarr_format=2, attributes={}, shape=(10, 10), chunks=(10, 10), dtype='<f8', fill_value=0.0, order='C', filters=None, dimension_separator='.', compressor={'id': 'blosc', 'cname': 'lz4', 'clevel': 5, 'shuffle': 1, 'blocksize': 0})
 
         """
+        meta_json: Mapping[str, object]
         from zarr.core.metadata import ArrayV3Metadata
 
         if not isinstance(array.metadata, ArrayV3Metadata):
@@ -354,11 +355,11 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             # this class was removed from zarr python 3.1.0
             from zarr.core.metadata.v3 import V3JsonEncoder  # type: ignore[attr-defined]
 
-            meta_json = json.loads(
-                json.dumps(array.metadata.to_dict(), cls=V3JsonEncoder), object_hook=tuplify_json
+            meta_json = tuplify_json(  # type: ignore[assignment]
+                json.loads(json.dumps(array.metadata.to_dict(), cls=V3JsonEncoder))
             )
         else:
-            meta_json = array.metadata.to_dict()
+            meta_json = tuplify_json(array.metadata.to_dict())  # type: ignore[assignment]
         return cls(
             attributes=meta_json["attributes"],
             shape=array.shape,
