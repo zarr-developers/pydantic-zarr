@@ -4,6 +4,7 @@ Testts for pydantic_zarr.v2.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -12,8 +13,14 @@ import zarr.storage
 from pydantic import ValidationError
 from zarr.errors import ContainsArrayError, ContainsGroupError
 
+from pydantic_zarr.core import tuplify_json
+
+from .conftest import DTYPE_EXAMPLES
+
 if TYPE_CHECKING:
     from typing import Literal
+
+    from zarr.dtype import ZDType
 
 import sys
 from dataclasses import dataclass
@@ -622,3 +629,19 @@ def test_from_zarr_depth() -> None:
     assert group_in_3.attributes == tree[""].attributes  # type: ignore[attr-defined]
     assert group_in_3.members["1"].attributes == tree["/1"].attributes  # type: ignore[attr-defined]
     assert group_in_3.members["1"].members["2"].attributes == tree["/1/2"].attributes  # type: ignore[attr-defined]
+
+
+@pytest.mark.filterwarnings("ignore::zarr.core.dtype.common.UnstableSpecificationWarning")
+@pytest.mark.filterwarnings("ignore:The codec:UserWarning")
+@pytest.mark.parametrize("data_type", DTYPE_EXAMPLES, ids=str)
+def test_arrayspec_from_zarr(data_type: ZDType) -> None:
+    """
+    Test that deserializing an ArraySpec from a zarr python store works as expected.
+    """
+    store = {}
+    arr = zarr.create_array(store=store, shape=(10,), dtype=data_type, zarr_format=2)
+
+    arr_spec = ArraySpec.from_zarr(arr)
+    assert arr_spec.model_dump() == json.loads(
+        store[".zarray"].to_bytes(), object_hook=tuplify_json
+    )

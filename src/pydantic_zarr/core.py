@@ -6,6 +6,7 @@ from typing import (
     Any,
     Literal,
     TypeAlias,
+    overload,
 )
 
 import numpy as np
@@ -20,6 +21,14 @@ if TYPE_CHECKING:
 IncEx: TypeAlias = set[int] | set[str] | dict[int, Any] | dict[str, Any] | None
 
 AccessMode: TypeAlias = Literal["w", "w+", "r", "a"]
+
+
+@overload
+def tuplify_json(obj: Mapping) -> Mapping: ...
+
+
+@overload
+def tuplify_json(obj: list) -> tuple: ...
 
 
 def tuplify_json(obj: object) -> object:
