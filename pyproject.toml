@@ -183,6 +183,8 @@ filterwarnings = [
     "error",
     # https://github.com/zarr-developers/zarr-python/issues/2948
     "ignore:The `order` keyword argument has no effect for Zarr format 3 arrays:RuntimeWarning",
+    "ignore:The data type:FutureWarning",
+    "ignore:The codec:UserWarning"
 ]
 
 [tool.repo-review]
