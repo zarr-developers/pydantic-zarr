@@ -15,12 +15,10 @@ from zarr.errors import ContainsArrayError, ContainsGroupError
 
 from pydantic_zarr.core import tuplify_json
 
-from .conftest import DTYPE_EXAMPLES
+from .conftest import DTYPE_EXAMPLES_V2, ZARR_PYTHON_VERSION
 
 if TYPE_CHECKING:
     from typing import Literal
-
-    from zarr.dtype import ZDType
 
 import sys
 from dataclasses import dataclass
@@ -34,6 +32,7 @@ import numpy as np
 import numpy.typing as npt
 import zarr
 from numcodecs import GZip
+from packaging.version import Version
 
 from pydantic_zarr.v2 import (
     ArraySpec,
@@ -631,14 +630,14 @@ def test_from_zarr_depth() -> None:
     assert group_in_3.members["1"].members["2"].attributes == tree["/1/2"].attributes  # type: ignore[attr-defined]
 
 
-@pytest.mark.filterwarnings("ignore::zarr.core.dtype.common.UnstableSpecificationWarning")
-@pytest.mark.filterwarnings("ignore:The codec:UserWarning")
-@pytest.mark.parametrize("data_type", DTYPE_EXAMPLES, ids=str)
-def test_arrayspec_from_zarr(data_type: ZDType) -> None:
+@pytest.mark.parametrize("data_type", DTYPE_EXAMPLES_V2, ids=str)
+def test_arrayspec_from_zarr(data_type: str | list[Any]) -> None:
     """
     Test that deserializing an ArraySpec from a zarr python store works as expected.
     """
     store = {}
+    if ZARR_PYTHON_VERSION >= Version("3.1.0") and data_type == "|O":
+        pytest.skip(reason="Data type inference with an object dtype will fail in zarr<3.1.0")
     arr = zarr.create_array(store=store, shape=(10,), dtype=data_type, zarr_format=2)
 
     arr_spec = ArraySpec.from_zarr(arr)
