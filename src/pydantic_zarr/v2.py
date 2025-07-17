@@ -60,7 +60,9 @@ FloatFillValue = Literal["Infinity", "-Infinity", "NaN"] | float
 ComplexFillValue = tuple[FloatFillValue, FloatFillValue]
 RawFillValue = tuple[int, ...]
 
-FillValue = BoolFillValue | IntFillValue | FloatFillValue | ComplexFillValue | RawFillValue | str
+FillValue = (
+    BoolFillValue | IntFillValue | FloatFillValue | ComplexFillValue | RawFillValue | str | None
+)
 
 
 def dictify_codec(value: dict[str, Any] | Codec) -> dict[str, Any]:
@@ -331,9 +333,14 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
         if Version(version("zarr")) < Version("3.1.0"):
             # this class was removed from zarr python 3.1.0
-            from zarr.core.metadata.v3 import V3JsonEncoder  # type: ignore[attr-defined]
+            from zarr.core.buffer import default_buffer_prototype
 
-            meta_json = json.loads(json.dumps(array.metadata.to_dict(), cls=V3JsonEncoder))
+            # yes this is in fact terrible
+            meta_json = json.loads(
+                array.metadata.to_buffer_dict(prototype=default_buffer_prototype())[
+                    ".zarray"
+                ].to_bytes(),
+            )
         else:
             meta_json = array.metadata.to_dict()
 
