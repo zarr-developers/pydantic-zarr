@@ -637,7 +637,7 @@ def test_arrayspec_from_zarr(data_type: str | list[Any]) -> None:
     """
     store = {}
     if ZARR_PYTHON_VERSION >= Version("3.1.0") and data_type == "|O":
-        pytest.skip(reason="Data type inference with an object dtype will fail in zarr<3.1.0")
+        pytest.skip(reason="Data type inference with an object dtype will fail in zarr>=3.1.0")
     arr = zarr.create_array(store=store, shape=(10,), dtype=data_type, zarr_format=2)
 
     arr_spec = ArraySpec.from_zarr(arr)
