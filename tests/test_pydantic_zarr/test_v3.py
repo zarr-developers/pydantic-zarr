@@ -20,6 +20,8 @@ from pydantic_zarr.v3 import (
     RegularChunkingConfig,
 )
 
+from .conftest import DTYPE_EXAMPLES_V3
+
 
 def test_serialize_deserialize() -> None:
     array_attributes = {"foo": 42, "bar": "apples", "baz": [1, 2, 3, 4]}
@@ -62,12 +64,18 @@ def test_from_array() -> None:
     )
 
 
-def test_arrayspec_from_zarr() -> None:
+@pytest.mark.filterwarnings("ignore:The dtype:UserWarning")
+@pytest.mark.parametrize("data_type", DTYPE_EXAMPLES_V3, ids=str)
+def test_arrayspec_from_zarr(data_type: object) -> None:
     """
     Test that deserializing an ArraySpec from a zarr python store works as expected.
     """
     store = {}
-    arr = zarr.create_array(store=store, shape=(10,), dtype="uint8")
+    if data_type == "variable_length_bytes":
+        pytest.skip(
+            reason="Bug in zarr python: see https://github.com/zarr-developers/zarr-python/issues/3263"
+        )
+    arr = zarr.create_array(store=store, shape=(10,), dtype=data_type, zarr_format=3)
 
     arr_spec = ArraySpec.from_zarr(arr)
     assert arr_spec.model_dump() == json.loads(

@@ -39,7 +39,7 @@ print(spec.model_dump())
             'order': 'C',
             'filters': None,
             'dimension_separator': '.',
-            'compressor': {'id': 'zstd', 'level': 0, 'checksum': False},
+            'compressor': {'id': 'zstd', 'level': 0},
         }
     },
 }
