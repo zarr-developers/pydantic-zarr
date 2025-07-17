@@ -22,7 +22,7 @@ import numpy as np
 import numpy.typing as npt
 import zarr
 from packaging.version import Version
-from pydantic import AfterValidator, BeforeValidator
+from pydantic import AfterValidator, BaseModel, BeforeValidator
 from typing_extensions import TypedDict
 from zarr.errors import ContainsArrayError, ContainsGroupError
 
@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from zarr.core.array_spec import ArrayConfigParams
 
 
-TBaseAttr: TypeAlias = Mapping[str, object]
+TBaseAttr: TypeAlias = Mapping[str, object] | BaseModel
 TBaseItem: TypeAlias = Union["GroupSpec", "ArraySpec"]
 
 # These types are for convenience when dealing with unknown ArraySpecs and GroupSpecs
