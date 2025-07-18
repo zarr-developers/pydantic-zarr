@@ -21,7 +21,7 @@ import numpy as np
 import numpy.typing as npt
 import zarr
 from numcodecs.abc import Codec
-from pydantic import AfterValidator, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
 from zarr.core.metadata import ArrayV2Metadata
 from zarr.errors import ContainsArrayError, ContainsGroupError
@@ -39,7 +39,7 @@ from pydantic_zarr.core import (
 if TYPE_CHECKING:
     from zarr.abc.store import Store
 
-TBaseAttr: TypeAlias = Mapping[str, object]
+TBaseAttr: TypeAlias = Mapping[str, object] | BaseModel
 TBaseItem: TypeAlias = Union["GroupSpec", "ArraySpec"]
 
 AnyArraySpec: TypeAlias = "ArraySpec[Any]"
@@ -240,6 +240,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
 
         """
+        attributes_actual: BaseModel | Mapping[str, object]
         shape_actual = array.shape
         dtype_actual = array.dtype
 
