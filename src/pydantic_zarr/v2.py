@@ -198,7 +198,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     @classmethod
     def from_array(
         cls,
-        array: npt.NDArray[Any],
+        array: npt.NDArray[Any] | zarr.Array,
         chunks: Literal["auto"] | tuple[int, ...] = "auto",
         attributes: Literal["auto"] | TAttr = "auto",
         fill_value: Literal["auto"] | float | None = "auto",
