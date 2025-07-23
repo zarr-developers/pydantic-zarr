@@ -47,24 +47,38 @@ class StrictBase(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
-def stringify_dtype(value: npt.DTypeLike) -> str | list[tuple[Any, ...]]:
+def parse_dtype_v2(value: npt.DTypeLike) -> str | list[tuple[Any, ...]]:
     """
-    Convert a `numpy.dtype` object into a `str`.
+    Convert the input to a NumPy dtype and either return the ``str`` attribute of that
+    object or, if the dtype is a structured dtype, return the fields of that dtype as a list
+    of tuples.
 
     Parameters
     ----------
-    value : `npt.DTypeLike`
-        Some object that can be coerced to a numpy dtype
+    value : npt.DTypeLike
+        A value that can be converted to a NumPy dtype.
 
     Returns
     -------
 
-    A numpy dtype string representation of `value`.
+    A Zarr V2-compatible encoding of the dtype.
+
+    References
+    ----------
+    See the [Zarr V2 specification](https://zarr-specs.readthedocs.io/en/latest/v2/v2.0.html#data-type-encoding)
+    for more details on this encoding of data types.
     """
-    # handle structured dtypes, which must be a list of tuples
+    # Assume that a non-string sequence represents a the Zarr V2 JSON form of a structured dtype.
     if isinstance(value, Sequence) and not isinstance(value, str):
         return [tuple(v) for v in value]
-    return np.dtype(value).str
+    else:
+        np_dtype = np.dtype(value)
+        if np_dtype.fields is not None:
+            # This is a structured dtype, which must be converted to a list of tuples. Note that
+            # this function recurses, because a structured dtype is parametrized by other dtypes.
+            return [(k, parse_dtype_v2(v[0])) for k, v in np_dtype.fields.items()]
+        else:
+            return np_dtype.str
 
 
 def ensure_member_name(data: Any) -> str:

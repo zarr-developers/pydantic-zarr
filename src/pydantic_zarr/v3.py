@@ -123,7 +123,7 @@ class NodeSpec(StrictBase):
     zarr_format: Literal[3] = 3
 
 
-def stringify_dtype_v3(dtype: npt.DTypeLike | Mapping[str, object]) -> Mapping[str, object] | str:
+def parse_dtype_v3(dtype: npt.DTypeLike | Mapping[str, object]) -> Mapping[str, object] | str:
     """
     Todo: refactor this when the zarr python dtypes work is released
     """
@@ -161,7 +161,7 @@ def stringify_dtype_v3(dtype: npt.DTypeLike | Mapping[str, object]) -> Mapping[s
                 raise ValueError(f"Unsupported dtype: {dtype}")
 
 
-DtypeStr = Annotated[str, BeforeValidator(stringify_dtype_v3)]
+DtypeStr = Annotated[str, BeforeValidator(parse_dtype_v3)]
 
 
 class ArraySpec(NodeSpec, Generic[TAttr]):

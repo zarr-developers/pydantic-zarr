@@ -36,7 +36,7 @@ from pydantic_zarr.core import (
     contains_group,
     ensure_key_no_path,
     model_like,
-    stringify_dtype,
+    parse_dtype_v2,
 )
 
 if TYPE_CHECKING:
@@ -51,7 +51,7 @@ AnyGroupSpec: TypeAlias = "GroupSpec[Any, Any]"
 TAttr = TypeVar("TAttr", bound=TBaseAttr)
 TItem = TypeVar("TItem", bound=TBaseItem)
 
-DtypeStr = Annotated[str, BeforeValidator(stringify_dtype)]
+DtypeStr = Annotated[str, BeforeValidator(parse_dtype_v2)]
 
 BoolFillValue = bool
 IntFillValue = int
@@ -295,7 +295,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
         return cls(
             shape=shape_actual,
-            dtype=stringify_dtype(dtype_actual),
+            dtype=parse_dtype_v2(dtype_actual),
             chunks=chunks_actual,
             attributes=attributes_actual,
             fill_value=fill_value_actual,
