@@ -13,7 +13,6 @@ from typing import (
     Self,
     TypeAlias,
     TypeVar,
-    Union,
     cast,
     overload,
 )
@@ -45,12 +44,13 @@ if TYPE_CHECKING:
 
 
 TBaseAttr: TypeAlias = Mapping[str, object] | BaseModel
-TBaseItem: TypeAlias = Union["GroupSpec", "ArraySpec"]
+TBaseItem: TypeAlias = "GroupSpec[Any, Any] | ArraySpec[Any]"
 
 # These types are for convenience when dealing with unknown ArraySpecs and GroupSpecs
 # because type variables don't have default values
-AnyArraySpec: TypeAlias = "ArraySpec[TBaseAttr]"
-AnyGroupSpec: TypeAlias = "GroupSpec[TBaseAttr, TBaseItem]"
+AnyArraySpec: TypeAlias = "ArraySpec[Any]"
+AnyGroupSpec: TypeAlias = "GroupSpec[Any, Any]"
+AnyNodeSpec: TypeAlias = "AnyArraySpec | AnyGroupSpec"
 
 TAttr = TypeVar("TAttr", bound=TBaseAttr)
 TItem = TypeVar("TItem", bound=TBaseItem)
@@ -438,7 +438,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
     members: Annotated[Mapping[str, TItem] | None, AfterValidator(ensure_key_no_path)] = {}
 
     @classmethod
-    def from_flat(cls, data: Mapping[str, AnyArraySpec | AnyGroupSpec]) -> Self:
+    def from_flat(cls, data: Mapping[str, AnyNodeSpec]) -> Self:
         """
         Create a `GroupSpec` from a flat hierarchy representation.
 
@@ -490,7 +490,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         from_flated = from_flat_group(data)
         return cls(**from_flated.model_dump())
 
-    def to_flat(self, root_path: str = "") -> dict[str, AnyArraySpec | AnyGroupSpec]:
+    def to_flat(self, root_path: str = "") -> dict[str, AnyNodeSpec]:
         """
         Flatten this `GroupSpec`.
         This method returns a `dict` with string keys and values that are `GroupSpec` or
@@ -527,7 +527,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         return to_flat(self, root_path=root_path)
 
     @classmethod
-    def from_zarr(cls, group: zarr.Group, *, depth: int = -1) -> GroupSpec[TAttr, TItem]:
+    def from_zarr(cls, group: zarr.Group, *, depth: int = -1) -> AnyGroupSpec:
         """
         Create a GroupSpec from a zarr group. Subgroups and arrays contained in the zarr
         group will be converted to instances of GroupSpec and ArraySpec, respectively,
@@ -712,7 +712,7 @@ def from_zarr(element: zarr.Array, *, depth: int = ...) -> AnyArraySpec: ...
 def from_zarr(element: zarr.Group, *, depth: int = ...) -> AnyGroupSpec: ...
 
 
-def from_zarr(element: zarr.Array | zarr.Group, *, depth: int = -1) -> AnyArraySpec | AnyGroupSpec:
+def from_zarr(element: zarr.Array | zarr.Group, *, depth: int = -1) -> AnyNodeSpec:
     """
     Recursively parse a Zarr group or Zarr array into an ArraySpec or GroupSpec.
 
@@ -755,7 +755,7 @@ def to_zarr(
 
 
 def to_zarr(
-    spec: AnyArraySpec | AnyGroupSpec,
+    spec: AnyNodeSpec,
     store: Store,
     path: str,
     overwrite: bool = False,
@@ -787,7 +787,7 @@ def to_zarr(
 
 
 def from_flat(
-    data: Mapping[str, AnyArraySpec | AnyGroupSpec],
+    data: Mapping[str, AnyNodeSpec],
 ) -> AnyArraySpec | AnyGroupSpec:
     """
     Wraps `from_flat_group`, handling the special case where a Zarr array is defined at the root of
@@ -830,7 +830,7 @@ def from_flat(
 
 
 def from_flat_group(
-    data: Mapping[str, AnyArraySpec | AnyGroupSpec],
+    data: Mapping[str, AnyNodeSpec],
 ) -> AnyGroupSpec:
     """
     Generate a `GroupSpec` from a flat representation of a hierarchy, i.e. a `dict` with
@@ -962,7 +962,7 @@ def auto_dimension_names(data: object) -> tuple[str | None, ...] | None:
     return None
 
 
-def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, ArraySpec | GroupSpec]:
+def to_flat(node: AnyNodeSpec, root_path: str = "") -> dict[str, AnyNodeSpec]:
     """
     Flatten a `GroupSpec` or `ArraySpec`.
     Converts a `GroupSpec` or `ArraySpec` and a string, into a `dict` with string keys and
@@ -1002,7 +1002,7 @@ def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, Array
     {'/g1': GroupSpec(zarr_format=3, attributes={'foo': 'bar'}, members=None), '': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None)}
     """
     result = {}
-    model_copy: AnyArraySpec | AnyGroupSpec
+    model_copy: AnyNodeSpec
     if isinstance(node, ArraySpec):
         model_copy = node.model_copy(deep=True)
     else:
