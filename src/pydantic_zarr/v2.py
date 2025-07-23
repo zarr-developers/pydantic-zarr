@@ -52,7 +52,7 @@ TItem = TypeVar("TItem", bound=TBaseItem)
 DtypeStr = Annotated[str, BeforeValidator(stringify_dtype)]
 
 DimensionSeparator = Literal[".", "/"]
-Order = Literal["C", "F"]
+MemoryOrder = Literal["C", "F"]
 
 
 def dictify_codec(value: dict[str, Any] | Codec) -> dict[str, Any]:
@@ -157,7 +157,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     chunks: tuple[int, ...]
     dtype: DtypeStr
     fill_value: int | float | None = 0
-    order: Order = "C"
+    order: MemoryOrder = "C"
     filters: list[CodecDict] | None = None
     dimension_separator: Annotated[
         DimensionSeparator, BeforeValidator(parse_dimension_separator)
@@ -192,7 +192,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         chunks: Literal["auto"] | tuple[int, ...] = "auto",
         attributes: Literal["auto"] | TAttr = "auto",
         fill_value: Literal["auto"] | float | None = "auto",
-        order: Literal["auto"] | Order = "auto",
+        order: Literal["auto"] | MemoryOrder = "auto",
         filters: Literal["auto"] | list[CodecDict] | None = "auto",
         dimension_separator: Literal["auto"] | DimensionSeparator = "auto",
         compressor: Literal["auto"] | CodecDict | None = "auto",
@@ -1053,15 +1053,15 @@ def auto_filters(data: Any) -> list[Codec] | None:
     return None
 
 
-def auto_order(data: Any) -> Order:
+def auto_order(data: Any) -> MemoryOrder:
     """
     Guess array order from an input with an `order` attribute, returning "C" otherwise.
     """
     if hasattr(data, "order"):
-        if data.order in get_args(Order):
-            return cast("Order", data.order)
+        if data.order in get_args(MemoryOrder):
+            return cast("MemoryOrder", data.order)
         else:
-            raise ValueError(f"Order attribute not in {get_args(Order)}")
+            raise ValueError(f"Order attribute not in {get_args(MemoryOrder)}")
     return "C"
 
 
