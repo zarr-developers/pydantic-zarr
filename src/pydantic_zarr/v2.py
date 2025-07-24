@@ -340,7 +340,6 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             # this class was removed from zarr python 3.1.0
             from zarr.core.buffer import default_buffer_prototype
 
-            # yes this is in fact terrible
             meta_json = json.loads(
                 array.metadata.to_buffer_dict(prototype=default_buffer_prototype())[
                     ".zarray"
