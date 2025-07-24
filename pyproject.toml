@@ -35,7 +35,7 @@ docs = [
     "mkdocstrings[python]",
     "pytest-examples",
     "pydantic==2.11",
-    "zarr>=3.1.0"
+    "zarr>=3.1.0",
 ]
 
 [tool.hatch]
@@ -167,7 +167,6 @@ plugins = "pydantic.mypy"
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
 strict = true
 # TODO: remove each of these and fix any errors:
-disallow_any_generics = false
 warn_return_any = false
 
 [tool.pytest.ini_options]

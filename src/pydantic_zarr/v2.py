@@ -11,7 +11,6 @@ from typing import (
     Self,
     TypeAlias,
     TypeVar,
-    Union,
     cast,
     get_args,
     overload,
@@ -40,14 +39,17 @@ from pydantic_zarr.core import (
 if TYPE_CHECKING:
     from zarr.abc.store import Store
 
-TBaseAttr: TypeAlias = Mapping[str, object] | BaseModel
-TBaseItem: TypeAlias = Union["GroupSpec", "ArraySpec"]
+TBaseAttr: TypeAlias = "Mapping[str, Any] | BaseModel"
+TBaseItem: TypeAlias = "GroupSpec[Any, Any] | ArraySpec[Any]"
 
+# These types are for convenience when dealing with unknown ArraySpecs and GroupSpecs
+# because type variables don't have default values
 AnyArraySpec: TypeAlias = "ArraySpec[Any]"
 AnyGroupSpec: TypeAlias = "GroupSpec[Any, Any]"
+AnyNodeSpec: TypeAlias = "AnyArraySpec | AnyGroupSpec"
 
-TAttr = TypeVar("TAttr", bound=TBaseAttr)
-TItem = TypeVar("TItem", bound=TBaseItem)
+TAttr = TypeVar("TAttr", bound="TBaseAttr")
+TItem = TypeVar("TItem", bound="TBaseItem")
 
 DtypeStr = Annotated[str, BeforeValidator(stringify_dtype)]
 
@@ -402,7 +404,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
     def like(
         self,
-        other: ArraySpec | zarr.Array,
+        other: AnyArraySpec | zarr.Array,
         *,
         include: IncEx = None,
         exclude: IncEx = None,
@@ -451,7 +453,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         True
         """
 
-        other_parsed: ArraySpec
+        other_parsed: AnyArraySpec
         if isinstance(other, zarr.Array):
             other_parsed = ArraySpec.from_zarr(other)
         else:
@@ -605,7 +607,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
 
     def like(
         self,
-        other: GroupSpec | zarr.Group,
+        other: AnyGroupSpec | zarr.Group,
         include: IncEx = None,
         exclude: IncEx = None,
     ) -> bool:
@@ -656,7 +658,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         True
         """
 
-        other_parsed: GroupSpec
+        other_parsed: AnyGroupSpec
         if isinstance(other, zarr.Group):
             other_parsed = GroupSpec.from_zarr(other)
         else:
@@ -664,7 +666,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
-    def to_flat(self, root_path: str = "") -> dict[str, AnyArraySpec | AnyGroupSpec]:
+    def to_flat(self, root_path: str = "") -> dict[str, AnyNodeSpec]:
         """
         Flatten this `GroupSpec`.
         This method returns a `dict` with string keys and values that are `GroupSpec` or
@@ -882,7 +884,7 @@ def to_flat(
     return dict(sorted(result.items(), key=lambda v: len(v[0])))
 
 
-def from_flat(data: dict[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
+def from_flat(data: dict[str, AnyNodeSpec]) -> AnyNodeSpec:
     """
     Wraps `from_flat_group`, handling the special case where a Zarr array is defined at the root of
     a hierarchy and thus is not contained by a Zarr group.
