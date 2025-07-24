@@ -29,9 +29,8 @@ from zarr.errors import ContainsArrayError, ContainsGroupError
 from pydantic_zarr.core import (
     IncEx,
     StrictBase,
-    contains_array,
-    contains_group,
     ensure_key_no_path,
+    maybe_node,
     model_like,
     tuplify_json,
 )
@@ -393,23 +392,31 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             Whether to overwrite an existing array or group at the path. If overwrite is
             False and an array or group already exists at the path, an exception will be
             raised. Defaults to False.
+        config : ArrayConfigParams | None, default = None
+            An instance of `ArrayConfigParams` that defines the runtime configuration for the array.
 
         Returns
         -------
         A zarr array that is structurally identical to the ArraySpec.
         This operation will create metadata documents in the store.
         """
-        # This sucks! This should be easier!
         from zarr.core.array import Array, AsyncArray
         from zarr.core.metadata.v3 import ArrayV3Metadata
         from zarr.core.sync import sync
-        from zarr.storage._common import ensure_no_existing_node, make_store_path
+        from zarr.storage._common import make_store_path
 
         store_path = sync(make_store_path(store, path=path))
-        if overwrite and store_path.store.supports_deletes:
-            sync(store_path.delete_dir())
-        else:
-            sync(ensure_no_existing_node(store_path, zarr_format=3))
+        extant_node = maybe_node(store, path, zarr_format=3)
+        if isinstance(extant_node, zarr.Array):
+            if not self.like(extant_node) and not overwrite:
+                raise ContainsArrayError(store, path)
+            else:
+                # If there's an existing array that is identical to the model, and overwrite is False,
+                # we can just return that existing array.
+                if not overwrite:
+                    return extant_node
+        if isinstance(extant_node, zarr.Group) and not overwrite:
+            raise ContainsGroupError(store, path)
 
         meta: ArrayV3Metadata = ArrayV3Metadata.from_dict(self.model_dump())
         async_array = AsyncArray(metadata=meta, store_path=store_path, config=config)
@@ -664,28 +671,35 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
 
         spec_dict = self.model_dump(exclude={"members": True})
         attrs = spec_dict.pop("attributes")
-        if contains_group(store, path):
-            extant_group = zarr.group(store, path=path, zarr_format=3)
-            if not self.like(extant_group):
+        extant_node = maybe_node(store, path, zarr_format=3)
+        if isinstance(extant_node, zarr.Group):
+            if not self.like(extant_node):
                 if not overwrite:
+                    """
                     msg = (
                         f"A group already exists at path {path}. "
                         "That group is structurally dissimilar to the group you are trying to store. "
                         "Call `to_zarr` with `overwrite=True` to overwrite that group."
                     )
-                    raise ContainsGroupError(msg)
+                    """
+                    # TODO: use the above message when we fix the ContainsGroupError in zarr python
+                    # To accept a proper message
+                    raise ContainsGroupError(store, path)
             else:
                 if not overwrite:
                     # if the extant group is structurally identical to self, and overwrite is false,
                     # then just return the extant group
-                    return extant_group
+                    return extant_node
 
-        elif contains_array(store, path) and not overwrite:
+        elif isinstance(extant_node, zarr.Array) and not overwrite:
+            """
             msg = (
                 f"An array already exists at path {path}. "
                 "Call to_zarr with overwrite=True to overwrite the array."
             )
-            raise ContainsArrayError(msg)
+            """
+            # TODO: use the above message when we fix the ContainsArrayError in zarr python
+            raise ContainsArrayError(store, path)
         else:
             zarr.create_group(store=store, overwrite=overwrite, path=path, zarr_format=3)
 

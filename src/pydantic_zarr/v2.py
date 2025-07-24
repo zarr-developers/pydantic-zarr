@@ -19,7 +19,6 @@ from typing import (
     overload,
 )
 
-import numcodecs
 import numpy as np
 import numpy.typing as npt
 import zarr
@@ -33,15 +32,15 @@ from zarr.errors import ContainsArrayError, ContainsGroupError
 from pydantic_zarr.core import (
     IncEx,
     StrictBase,
-    contains_array,
-    contains_group,
     ensure_key_no_path,
+    maybe_node,
     model_like,
     parse_dtype_v2,
 )
 
 if TYPE_CHECKING:
     from zarr.abc.store import Store
+    from zarr.core.array_spec import ArrayConfigParams
 
 TBaseAttr: TypeAlias = Mapping[str, object] | BaseModel
 TBaseItem: TypeAlias = Union["GroupSpec", "ArraySpec"]
@@ -354,7 +353,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         path: str,
         *,
         overwrite: bool = False,
-        **kwargs: Any,
+        config: ArrayConfigParams | None = None,
     ) -> zarr.Array:
         """
         Serialize an `ArraySpec` to a Zarr array at a specific path in a Zarr store. This operation
@@ -368,61 +367,37 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             The location of the array inside the store.
         overwrite : bool, default = False
             Whether to overwrite existing objects in storage to create the Zarr array.
-        **kwargs : Any
-            Additional keyword arguments are passed to `zarr.create_array` when creating a new array,
-            or `zarr.open_array` when opening an existing array.
+        config : ArrayConfigParams | None, default = None
+            An instance of `ArrayConfigParams` that defines the runtime configuration for the array.
 
         Returns
         -------
         zarr.Array
             A Zarr array that is structurally identical to `self`.
         """
-        spec_dict = self.model_dump()
-        chunk_key_encoding = {
-            "name": "v2",
-            "configuration": {"separator": spec_dict.pop("dimension_separator")},
-        }
-        compressor: dict[str, object] | None
-        filters: tuple[dict[str, object], ...] | None
-        if self.compressor is not None:
-            compressor = numcodecs.get_codec(spec_dict["compressor"])
-        else:
-            compressor = self.compressor
-        if self.filters is not None:
-            filters = tuple(numcodecs.get_codec(f) for f in spec_dict["filters"])
-        else:
-            filters = self.filters
+        from zarr.core.array import Array, AsyncArray
+        from zarr.core.metadata.v2 import ArrayV2Metadata
+        from zarr.core.sync import sync
+        from zarr.storage._common import make_store_path
 
-        if contains_array(store, path):
-            extant_array = zarr.open_array(store, path=path, zarr_format=2)
+        store_path = sync(make_store_path(store, path=path))
 
-            if not self.like(extant_array):
-                if not overwrite:
-                    raise ContainsArrayError(store, path)
+        extant_node = maybe_node(store, path, zarr_format=2)
+        if isinstance(extant_node, zarr.Array):
+            if not self.like(extant_node) and not overwrite:
+                raise ContainsArrayError(store, path)
             else:
+                # If there's an existing array that is identical to the model, and overwrite is False,
+                # we can just return that existing array.
                 if not overwrite:
-                    # extant_array is read-only, so we make a new array handle that
-                    # takes **kwargs
-                    return zarr.open_array(
-                        store=extant_array.store, path=extant_array.path, zarr_format=2, **kwargs
-                    )
-        result = zarr.create_array(
-            store=store,
-            name=path,
-            shape=self.shape,
-            chunks=self.chunks,
-            dtype=self.dtype,
-            fill_value=self.fill_value,
-            compressors=compressor,
-            filters=filters,
-            order=self.order,
-            chunk_key_encoding=chunk_key_encoding,  # type: ignore[arg-type]
-            overwrite=overwrite,
-            zarr_format=2,
-            attributes=self.attributes,  # type: ignore[arg-type]
-            **kwargs,
-        )
-        return result  # noqa: RET504
+                    return extant_node
+        if isinstance(extant_node, zarr.Group) and not overwrite:
+            raise ContainsGroupError(store, path)
+
+        meta: ArrayV2Metadata = ArrayV2Metadata.from_dict(self.model_dump())
+        async_array = AsyncArray(metadata=meta, store_path=store_path, config=config)
+        sync(async_array._save_metadata(meta))
+        return Array(_async_array=async_array)
 
     def like(
         self,
@@ -592,28 +567,34 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         """
         spec_dict = self.model_dump(exclude={"members": True})
         attrs = spec_dict.pop("attributes")
-        if contains_group(store, path):
-            extant_group = zarr.group(store, path=path, zarr_format=2)
-            if not self.like(extant_group):
+        extant_node = maybe_node(store, path, zarr_format=2)
+        if isinstance(extant_node, zarr.Group):
+            if not self.like(extant_node):
                 if not overwrite:
+                    """
                     msg = (
                         f"A group already exists at path {path}. "
                         "That group is structurally dissimilar to the group you are trying to store."
                         "Call to_zarr with overwrite=True to overwrite that group."
                     )
-                    raise ContainsGroupError(msg)
+                    """
+                    # Zarr's contains group error uses questionable design and doesn't take a message
+                    raise ContainsGroupError(store, path)
             else:
                 if not overwrite:
                     # if the extant group is structurally identical to self, and overwrite is false,
                     # then just return the extant group
-                    return extant_group
+                    return extant_node
 
-        elif contains_array(store, path) and not overwrite:
+        elif isinstance(extant_node, zarr.Array) and not overwrite:
+            """
             msg = (
                 f"An array already exists at path {path}. "
                 "Call to_zarr with overwrite=True to overwrite the array."
             )
-            raise ContainsArrayError(msg)
+            """
+            # Zarr's contains array error uses questionable design and doesn't take a message
+            raise ContainsArrayError(store, path)
         else:
             zarr.create_group(store=store, overwrite=overwrite, path=path, zarr_format=2)
 
