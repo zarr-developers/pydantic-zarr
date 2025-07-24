@@ -369,7 +369,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         overwrite : bool, default = False
             Whether to overwrite existing objects in storage to create the Zarr array.
         **kwargs : Any
-            Additional keyword arguments are passed to `zarr.create`.
+            Additional keyword arguments are passed to `zarr.create_array` when creating a new array,
+            or `zarr.open_array` when opening an existing array.
 
         Returns
         -------
@@ -377,11 +378,21 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             A Zarr array that is structurally identical to `self`.
         """
         spec_dict = self.model_dump()
-        attrs = spec_dict.pop("attributes")
+        chunk_key_encoding = {
+            "name": "v2",
+            "configuration": {"separator": spec_dict.pop("dimension_separator")},
+        }
+        compressor: dict[str, object] | None
+        filters: tuple[dict[str, object], ...] | None
         if self.compressor is not None:
-            spec_dict["compressor"] = numcodecs.get_codec(spec_dict["compressor"])
+            compressor = numcodecs.get_codec(spec_dict["compressor"])
+        else:
+            compressor = self.compressor
         if self.filters is not None:
-            spec_dict["filters"] = [numcodecs.get_codec(f) for f in spec_dict["filters"]]
+            filters = tuple(numcodecs.get_codec(f) for f in spec_dict["filters"])
+        else:
+            filters = self.filters
+
         if contains_array(store, path):
             extant_array = zarr.open_array(store, path=path, zarr_format=2)
 
@@ -395,9 +406,23 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
                     return zarr.open_array(
                         store=extant_array.store, path=extant_array.path, zarr_format=2, **kwargs
                     )
-        result = zarr.create(store=store, path=path, overwrite=overwrite, **spec_dict, **kwargs)
-        result.attrs.put(attrs)
-        return result
+        result = zarr.create_array(
+            store=store,
+            name=path,
+            shape=self.shape,
+            chunks=self.chunks,
+            dtype=self.dtype,
+            fill_value=self.fill_value,
+            compressors=compressor,
+            filters=filters,
+            order=self.order,
+            chunk_key_encoding=chunk_key_encoding,  # type: ignore[arg-type]
+            overwrite=overwrite,
+            zarr_format=2,
+            attributes=self.attributes,  # type: ignore[arg-type]
+            **kwargs,
+        )
+        return result  # noqa: RET504
 
     def like(
         self,
