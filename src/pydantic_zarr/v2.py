@@ -15,6 +15,7 @@ from typing import (
     TypeVar,
     Union,
     cast,
+    get_args,
     overload,
 )
 
@@ -64,6 +65,9 @@ FillValue = (
     BoolFillValue | IntFillValue | FloatFillValue | ComplexFillValue | RawFillValue | str | None
 )
 
+DimensionSeparator = Literal[".", "/"]
+MemoryOrder = Literal["C", "F"]
+
 
 def dictify_codec(value: dict[str, Any] | Codec) -> dict[str, Any]:
     """
@@ -89,7 +93,7 @@ def dictify_codec(value: dict[str, Any] | Codec) -> dict[str, Any]:
     return value
 
 
-def parse_dimension_separator(data: Any) -> Literal["/", "."]:
+def parse_dimension_separator(data: Any) -> DimensionSeparator:
     """
     Parse the dimension_separator metadata as per the Zarr version 2 specification.
     If the input is `None`, this returns ".".
@@ -107,8 +111,8 @@ def parse_dimension_separator(data: Any) -> Literal["/", "."]:
     """
     if data is None:
         return "."
-    if data in ("/", "."):
-        return data
+    if data in get_args(DimensionSeparator):
+        return cast("DimensionSeparator", data)
     raise ValueError(f'Invalid data, expected one of ("/", ".", None), got {data}')
 
 
@@ -167,10 +171,10 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     chunks: tuple[int, ...]
     dtype: DtypeStr | list[tuple[Any, ...]]
     fill_value: FillValue = 0
-    order: Literal["C", "F"] = "C"
+    order: MemoryOrder = "C"
     filters: list[CodecDict] | None = None
     dimension_separator: Annotated[
-        Literal["/", "."], BeforeValidator(parse_dimension_separator)
+        DimensionSeparator, BeforeValidator(parse_dimension_separator)
     ] = "/"
     compressor: CodecDict | None = None
 
@@ -202,9 +206,9 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         chunks: Literal["auto"] | tuple[int, ...] = "auto",
         attributes: Literal["auto"] | TAttr = "auto",
         fill_value: Literal["auto"] | float | None = "auto",
-        order: Literal["auto", "C", "F"] = "auto",
+        order: Literal["auto"] | MemoryOrder = "auto",
         filters: Literal["auto"] | list[CodecDict] | None = "auto",
-        dimension_separator: Literal["auto", "/", "."] = "auto",
+        dimension_separator: Literal["auto"] | DimensionSeparator = "auto",
         compressor: Literal["auto"] | CodecDict | None = "auto",
     ) -> Self:
         """
@@ -1061,21 +1065,27 @@ def auto_filters(data: Any) -> list[Codec] | None:
     return None
 
 
-def auto_order(data: Any) -> Literal["C", "F"]:
+def auto_order(data: Any) -> MemoryOrder:
     """
     Guess array order from an input with an `order` attribute, returning "C" otherwise.
     """
     if hasattr(data, "order"):
-        return data.order
+        if data.order in get_args(MemoryOrder):
+            return cast("MemoryOrder", data.order)
+        else:
+            raise ValueError(f"Order attribute not in {get_args(MemoryOrder)}")
     return "C"
 
 
-def auto_dimension_separator(data: Any) -> Literal["/", "."]:
+def auto_dimension_separator(data: Any) -> DimensionSeparator:
     """
     Guess dimension separator from an input with a `dimension_separator` attribute, returning "/" otherwise.
     """
     if hasattr(data, "dimension_separator"):
-        return data.dimension_separator
+        if data.dimension_separator in get_args(DimensionSeparator):
+            return cast("DimensionSeparator", data.dimension_separator)
+        else:
+            raise ValueError(f"Dimension separator attribute not in {get_args(DimensionSeparator)}")
     return "/"
 
 
