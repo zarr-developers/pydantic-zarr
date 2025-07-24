@@ -339,25 +339,14 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         if Version(version("zarr")) < Version("3.1.0"):
             from zarr.core.buffer import default_buffer_prototype
 
-            meta_json = json.loads(
-                array.metadata.to_buffer_dict(prototype=default_buffer_prototype())[
-                    ".zarray"
-                ].to_bytes(),
-            )
+            stored_meta = array.metadata.to_buffer_dict(prototype=default_buffer_prototype())
+            meta_json = json.loads(stored_meta[".zarray"].to_bytes()) | {
+                "attributes": array.attrs.asdict()
+            }
         else:
             meta_json = array.metadata.to_dict()
 
-        return cls(
-            shape=array.shape,
-            chunks=array.chunks,
-            dtype=meta_json["dtype"],
-            fill_value=meta_json["fill_value"],
-            order=array.order,
-            filters=meta_json["filters"],
-            dimension_separator=array.metadata.dimension_separator,
-            compressor=meta_json["compressor"],
-            attributes=array.attrs.asdict(),
-        )
+        return cls.model_validate(meta_json)
 
     def to_zarr(
         self,
