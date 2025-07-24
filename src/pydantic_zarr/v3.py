@@ -416,6 +416,65 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         sync(async_array._save_metadata(meta))
         return Array(_async_array=async_array)
 
+    def like(
+        self,
+        other: ArraySpec | zarr.Array,
+        *,
+        include: IncEx = None,
+        exclude: IncEx = None,
+    ) -> bool:
+        """
+        Compare am `ArraySpec` to another `ArraySpec` or a `zarr.Array`, parameterized over the
+        fields to exclude or include in the comparison. Models are first converted to `dict` via the
+        `model_dump` method of `pydantic.BaseModel`, then compared with the `==` operator.
+
+        Parameters
+        ----------
+        other : ArraySpec | zarr.Array
+            The array (model or actual) to compare with. If other is a `zarr.Array`, it will be
+            converted to `ArraySpec` first.
+        include : IncEx, default = None
+            A specification of fields to include in the comparison. The default value is `None`,
+            which means that all fields will be included. See the documentation of
+            `pydantic.BaseModel.model_dump` for more details.
+        exclude : IncEx, default = None
+            A specification of fields to exclude from the comparison. The default value is `None`,
+            which means that no fields will be excluded. See the documentation of
+            `pydantic.BaseModel.model_dump` for more details.
+
+        Returns
+        -------
+        bool
+            `True` if the two models have identical fields, `False` otherwise, given
+            the set of fields specified by the `include` and `exclude` keyword arguments.
+
+        Examples
+        --------
+        >>> import zarr
+        >>> from pydantic_zarr.v3 import ArraySpec
+        >>> x = zarr.create((10,10), zarr_format=3)
+        >>> x.attrs.put({'foo': 10})
+        >>> x_model = ArraySpec.from_zarr(x)
+        >>> print(x_model.like(x_model)) # it is like itself.
+        True
+        >>> print(x_model.like(x))
+        True
+        >>> y = zarr.create((10,10))
+        >>> y.attrs.put({'foo': 11}) # x and y are the same, other than their attrs
+        >>> print(x_model.like(y))
+        False
+        >>> print(x_model.like(y, exclude={'attributes'}))
+        True
+        """
+
+        other_parsed: ArraySpec
+        if isinstance(other, zarr.Array):
+            other_parsed = ArraySpec.from_zarr(other)
+        else:
+            other_parsed = other
+
+        return model_like(self, other_parsed, include=include, exclude=exclude)
+
 
 class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
     """
