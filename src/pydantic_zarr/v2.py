@@ -337,7 +337,6 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             raise TypeError(msg)
 
         if Version(version("zarr")) < Version("3.1.0"):
-            # this class was removed from zarr python 3.1.0
             from zarr.core.buffer import default_buffer_prototype
 
             meta_json = json.loads(
