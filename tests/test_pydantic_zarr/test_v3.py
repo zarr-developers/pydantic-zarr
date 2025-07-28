@@ -67,8 +67,8 @@ def test_from_array() -> None:
 @pytest.mark.filterwarnings("ignore:The dtype:UserWarning")
 @pytest.mark.filterwarnings("ignore:The data type:FutureWarning")
 @pytest.mark.filterwarnings("ignore:The codec:UserWarning")
-@pytest.mark.parametrize("data_type", DTYPE_EXAMPLES_V3, ids=str)
-def test_arrayspec_from_zarr(data_type: object) -> None:
+@pytest.mark.parametrize(("data_type", "fill_value"), DTYPE_EXAMPLES_V3, ids=str)
+def test_arrayspec_from_zarr(data_type: object, fill_value: object) -> None:
     """
     Test that deserializing an ArraySpec from a zarr python store works as expected.
     """
@@ -77,6 +77,7 @@ def test_arrayspec_from_zarr(data_type: object) -> None:
         pytest.skip(
             reason="Bug in zarr python: see https://github.com/zarr-developers/zarr-python/issues/3263"
         )
+
     arr = zarr.create_array(store=store, shape=(10,), dtype=data_type, zarr_format=3)
 
     arr_spec = ArraySpec.from_zarr(arr)
@@ -87,19 +88,33 @@ def test_arrayspec_from_zarr(data_type: object) -> None:
 
 @pytest.mark.parametrize("path", ["", "foo"])
 @pytest.mark.parametrize("overwrite", [True, False])
+@pytest.mark.parametrize(("data_type", "fill_value"), DTYPE_EXAMPLES_V3, ids=str)
 @pytest.mark.parametrize("config", [{}, {"write_empty_chunks": True, "order": "F"}])
-def test_arrayspec_to_zarr(path: str, overwrite: bool, config: dict[str, object]) -> None:
+@pytest.mark.filterwarnings("ignore:The codec `vlen-utf8`:UserWarning")
+@pytest.mark.filterwarnings("ignore:The codec `vlen-bytes`:UserWarning")
+@pytest.mark.filterwarnings("ignore:The data type :FutureWarning")
+def test_arrayspec_to_zarr(
+    path: str, overwrite: bool, config: dict[str, object], data_type: object, fill_value: object
+) -> None:
     """
     Test that serializing an ArraySpec to a zarr python store works as expected.
     """
+    codecs = ({"name": "bytes", "configuration": {}},)
+    if data_type == "variable_length_bytes":
+        codecs = ({"name": "vlen-bytes"},)
+
+    elif data_type in ("str", "string"):
+        codecs = ({"name": "vlen-utf8"},)
+
     store = {}
+
     arr_spec = ArraySpec(
         shape=(10,),
-        data_type="uint8",
+        data_type=data_type,
         chunk_grid={"name": "regular", "configuration": {"chunk_shape": (10,)}},
         chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
-        codecs=({"name": "bytes", "configuration": {}},),
-        fill_value=0,
+        codecs=codecs,
+        fill_value=fill_value,
         dimension_names=("x",),
     )
     arr = arr_spec.to_zarr(store=store, path=path, overwrite=overwrite, config=config)
