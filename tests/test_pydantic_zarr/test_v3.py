@@ -20,7 +20,7 @@ from pydantic_zarr.v3 import (
     RegularChunkingConfig,
 )
 
-from .conftest import DTYPE_EXAMPLES_V3
+from .conftest import DTYPE_EXAMPLES_V3, DTypeExample
 
 
 def test_serialize_deserialize() -> None:
@@ -67,12 +67,15 @@ def test_from_array() -> None:
 @pytest.mark.filterwarnings("ignore:The dtype:UserWarning")
 @pytest.mark.filterwarnings("ignore:The data type:FutureWarning")
 @pytest.mark.filterwarnings("ignore:The codec:UserWarning")
-@pytest.mark.parametrize(("data_type", "fill_value"), DTYPE_EXAMPLES_V3, ids=str)
-def test_arrayspec_from_zarr(data_type: object, fill_value: object) -> None:
+@pytest.mark.parametrize("dtype_example", DTYPE_EXAMPLES_V3, ids=str)
+def test_arrayspec_from_zarr(dtype_example: DTypeExample) -> None:
     """
     Test that deserializing an ArraySpec from a zarr python store works as expected.
     """
     store = {}
+
+    data_type = dtype_example.name
+
     if data_type == "variable_length_bytes":
         pytest.skip(
             reason="Bug in zarr python: see https://github.com/zarr-developers/zarr-python/issues/3263"
@@ -88,17 +91,20 @@ def test_arrayspec_from_zarr(data_type: object, fill_value: object) -> None:
 
 @pytest.mark.parametrize("path", ["", "foo"])
 @pytest.mark.parametrize("overwrite", [True, False])
-@pytest.mark.parametrize(("data_type", "fill_value"), DTYPE_EXAMPLES_V3, ids=str)
+@pytest.mark.parametrize("dtype_example", DTYPE_EXAMPLES_V3, ids=str)
 @pytest.mark.parametrize("config", [{}, {"write_empty_chunks": True, "order": "F"}])
 @pytest.mark.filterwarnings("ignore:The codec `vlen-utf8`:UserWarning")
 @pytest.mark.filterwarnings("ignore:The codec `vlen-bytes`:UserWarning")
 @pytest.mark.filterwarnings("ignore:The data type :FutureWarning")
 def test_arrayspec_to_zarr(
-    path: str, overwrite: bool, config: dict[str, object], data_type: object, fill_value: object
+    path: str, overwrite: bool, config: dict[str, object], dtype_example: DTypeExample
 ) -> None:
     """
     Test that serializing an ArraySpec to a zarr python store works as expected.
     """
+    data_type = dtype_example.name
+    fill_value = dtype_example.fill_value
+
     codecs = ({"name": "bytes", "configuration": {}},)
     if data_type == "variable_length_bytes":
         codecs = ({"name": "vlen-bytes"},)

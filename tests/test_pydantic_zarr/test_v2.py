@@ -15,7 +15,7 @@ from zarr.errors import ContainsArrayError, ContainsGroupError
 
 from pydantic_zarr.core import tuplify_json
 
-from .conftest import DTYPE_EXAMPLES_V2, ZARR_PYTHON_VERSION
+from .conftest import DTYPE_EXAMPLES_V2, ZARR_PYTHON_VERSION, DTypeExample
 
 if TYPE_CHECKING:
     from typing import Literal
@@ -630,12 +630,13 @@ def test_from_zarr_depth() -> None:
     assert group_in_3.members["1"].members["2"].attributes == tree["/1/2"].attributes  # type: ignore[attr-defined]
 
 
-@pytest.mark.parametrize("data_type", DTYPE_EXAMPLES_V2, ids=str)
-def test_arrayspec_from_zarr(data_type: str | list[Any]) -> None:
+@pytest.mark.parametrize(("dtype_example"), DTYPE_EXAMPLES_V2, ids=str)
+def test_arrayspec_from_zarr(dtype_example: DTypeExample) -> None:
     """
     Test that deserializing an ArraySpec from a zarr python store works as expected.
     """
     store = {}
+    data_type = dtype_example.name
     if ZARR_PYTHON_VERSION >= Version("3.1.0") and data_type == "|O":
         pytest.skip(reason="Data type inference with an object dtype will fail in zarr>=3.1.0")
     arr = zarr.create_array(store=store, shape=(10,), dtype=data_type, zarr_format=2)
