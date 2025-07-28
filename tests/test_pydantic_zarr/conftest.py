@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from importlib.metadata import version
 from typing import Any
 
@@ -75,4 +76,7 @@ else:
         else:
             DTYPE_EXAMPLES += (dtype_cls(),)
     DTYPE_EXAMPLES_V2 = [d.to_json(zarr_format=2)["name"] for d in DTYPE_EXAMPLES]
-    DTYPE_EXAMPLES_V3 = [d.to_json(zarr_format=3) for d in DTYPE_EXAMPLES]
+    # Suppress the userwarning emitted when creating off-spec dtypes
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        DTYPE_EXAMPLES_V3 = [d.to_json(zarr_format=3) for d in DTYPE_EXAMPLES]

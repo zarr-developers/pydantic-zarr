@@ -65,6 +65,8 @@ def test_from_array() -> None:
 
 
 @pytest.mark.filterwarnings("ignore:The dtype:UserWarning")
+@pytest.mark.filterwarnings("ignore:The data type:FutureWarning")
+@pytest.mark.filterwarnings("ignore:The codec:UserWarning")
 @pytest.mark.parametrize("data_type", DTYPE_EXAMPLES_V3, ids=str)
 def test_arrayspec_from_zarr(data_type: object) -> None:
     """
