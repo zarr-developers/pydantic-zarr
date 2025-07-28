@@ -127,6 +127,7 @@ def maybe_node(
     Return the array or group found at the store / path, if an array or group exists there.
     Otherwise return None.
     """
+    # convert the storelike store argument to a Zarr store
     spath = sync(make_store_path(store, path=path))
     try:
         return get_node(spath.store, spath.path, zarr_format=zarr_format)
