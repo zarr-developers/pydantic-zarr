@@ -51,6 +51,7 @@ dependencies = [
 [tool.hatch.envs.test.scripts]
 test = "pytest tests/test_pydantic_zarr/"
 test-cov = "pytest --cov-config=pyproject.toml --cov=pkg --cov-report html --cov=src tests/test_pydantic_zarr"
+list-env = "pip list"
 
 [[tool.hatch.envs.test.matrix]]
 python = ["3.11", "3.12", "3.13"]
