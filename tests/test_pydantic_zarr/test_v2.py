@@ -4,6 +4,7 @@ Testts for pydantic_zarr.v2.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -11,6 +12,10 @@ import zarr
 import zarr.storage
 from pydantic import ValidationError
 from zarr.errors import ContainsArrayError, ContainsGroupError
+
+from pydantic_zarr.core import tuplify_json
+
+from .conftest import DTYPE_EXAMPLES_V2, ZARR_PYTHON_VERSION, DTypeExample
 
 if TYPE_CHECKING:
     from typing import Literal
@@ -27,6 +32,7 @@ import numpy as np
 import numpy.typing as npt
 import zarr
 from numcodecs import GZip
+from packaging.version import Version
 
 from pydantic_zarr.v2 import (
     ArraySpec,
@@ -123,7 +129,7 @@ def test_array_spec(
 
     assert spec.zarr_format == array.metadata.zarr_format
     assert spec.dtype == array.dtype
-    assert spec.attributes == array.attrs
+    assert spec.attributes == array.attrs.asdict()
     assert spec.chunks == array.chunks
 
     assert spec.dimension_separator == array.metadata.dimension_separator
@@ -622,3 +628,29 @@ def test_from_zarr_depth() -> None:
     assert group_in_3.attributes == tree[""].attributes  # type: ignore[attr-defined]
     assert group_in_3.members["1"].attributes == tree["/1"].attributes  # type: ignore[attr-defined]
     assert group_in_3.members["1"].members["2"].attributes == tree["/1/2"].attributes  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(("dtype_example"), DTYPE_EXAMPLES_V2, ids=str)
+def test_arrayspec_from_zarr(dtype_example: DTypeExample) -> None:
+    """
+    Test that deserializing an ArraySpec from a zarr python store works as expected.
+    """
+    store = {}
+    data_type = dtype_example.name
+    if ZARR_PYTHON_VERSION >= Version("3.1.0") and data_type == "|O":
+        pytest.skip(reason="Data type inference with an object dtype will fail in zarr>=3.1.0")
+    arr = zarr.create_array(store=store, shape=(10,), dtype=data_type, zarr_format=2)
+
+    arr_spec = ArraySpec.from_zarr(arr)
+
+    observed = {"attributes": arr.attrs.asdict()} | json.loads(
+        store[".zarray"].to_bytes(), object_hook=tuplify_json
+    )
+    if observed["filters"] is not None:
+        observed["filters"] = list(observed["filters"])
+    # this covers the case of the structured data type, which would otherwise be deserialized as a
+    # tuple of tuples, but is stored on the arrayspec as a list of tuples.
+    if isinstance(observed["dtype"], tuple):
+        observed["dtype"] = list(observed["dtype"])
+
+    assert arr_spec.model_dump() == observed

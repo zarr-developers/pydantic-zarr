@@ -1,25 +1,36 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import (
     TYPE_CHECKING,
     Any,
     Literal,
     TypeAlias,
+    overload,
 )
 
 import numpy as np
 import numpy.typing as npt
-import zarr
 from pydantic import BaseModel, ConfigDict
+from zarr.core.sync import sync
 from zarr.core.sync_group import get_node
+from zarr.storage._common import make_store_path
 
 if TYPE_CHECKING:
-    from zarr.abc.store import Store
+    import zarr
+    from zarr.storage._common import StoreLike
 
 IncEx: TypeAlias = set[int] | set[str] | dict[int, Any] | dict[str, Any] | None
 
 AccessMode: TypeAlias = Literal["w", "w+", "r", "a"]
+
+
+@overload
+def tuplify_json(obj: Mapping) -> Mapping: ...
+
+
+@overload
+def tuplify_json(obj: list) -> tuple: ...
 
 
 def tuplify_json(obj: object) -> object:
@@ -38,21 +49,38 @@ class StrictBase(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
-def stringify_dtype(value: npt.DTypeLike) -> str:
+def parse_dtype_v2(value: npt.DTypeLike) -> str | list[tuple[Any, ...]]:
     """
-    Convert a `numpy.dtype` object into a `str`.
+    Convert the input to a NumPy dtype and either return the ``str`` attribute of that
+    object or, if the dtype is a structured dtype, return the fields of that dtype as a list
+    of tuples.
 
     Parameters
     ----------
-    value : `npt.DTypeLike`
-        Some object that can be coerced to a numpy dtype
+    value : npt.DTypeLike
+        A value that can be converted to a NumPy dtype.
 
     Returns
     -------
 
-    A numpy dtype string representation of `value`.
+    A Zarr V2-compatible encoding of the dtype.
+
+    References
+    ----------
+    See the [Zarr V2 specification](https://zarr-specs.readthedocs.io/en/latest/v2/v2.0.html#data-type-encoding)
+    for more details on this encoding of data types.
     """
-    return np.dtype(value).str
+    # Assume that a non-string sequence represents a the Zarr V2 JSON form of a structured dtype.
+    if isinstance(value, Sequence) and not isinstance(value, str):
+        return [tuple(v) for v in value]
+    else:
+        np_dtype = np.dtype(value)
+        if np_dtype.fields is not None:
+            # This is a structured dtype, which must be converted to a list of tuples. Note that
+            # this function recurses, because a structured dtype is parametrized by other dtypes.
+            return [(k, parse_dtype_v2(v[0])) for k, v in np_dtype.fields.items()]
+        else:
+            return np_dtype.str
 
 
 def ensure_member_name(data: Any) -> str:
@@ -92,15 +120,16 @@ def model_like(a: BaseModel, b: BaseModel, exclude: IncEx = None, include: IncEx
 
 # TODO: expose contains_array and contains_group as public functions in zarr-python
 # and replace these custom implementations
-def contains_array(store: Store, path: str) -> bool:
+def maybe_node(
+    store: StoreLike, path: str, *, zarr_format: Literal[2, 3]
+) -> zarr.Array | zarr.Group | None:
+    """
+    Return the array or group found at the store / path, if an array or group exists there.
+    Otherwise return None.
+    """
+    # convert the storelike store argument to a Zarr store
+    spath = sync(make_store_path(store, path=path))
     try:
-        return isinstance(get_node(store, path, zarr_format=2), zarr.Array)
+        return get_node(spath.store, spath.path, zarr_format=zarr_format)
     except FileNotFoundError:
-        return False
-
-
-def contains_group(store: Store, path: str) -> bool:
-    try:
-        return isinstance(get_node(store, path, zarr_format=2), zarr.Group)
-    except FileNotFoundError:
-        return False
+        return None

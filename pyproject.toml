@@ -44,14 +44,18 @@ build.hooks.vcs.version-file = "src/pydantic_zarr/_version.py"
 
 [tool.hatch.envs.test]
 features = ["test"]
+dependencies = [
+    "zarr~={matrix:zarr}",
+]
 
 [tool.hatch.envs.test.scripts]
 test = "pytest tests/test_pydantic_zarr/"
 test-cov = "pytest --cov-config=pyproject.toml --cov=pkg --cov-report html --cov=src tests/test_pydantic_zarr"
+list-env = "pip list"
 
 [[tool.hatch.envs.test.matrix]]
 python = ["3.11", "3.12", "3.13"]
-zarr_python = ["3.0.10", "3.1.0"]
+zarr = ["3.0.10", "3.1.0"]
 
 [tool.hatch.envs.docs]
 features = ['docs']

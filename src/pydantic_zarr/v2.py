@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Mapping
+from importlib.metadata import version
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -17,28 +19,31 @@ from typing import (
     overload,
 )
 
-import numcodecs
 import numpy as np
 import numpy.typing as npt
 import zarr
 from numcodecs.abc import Codec
+from packaging.version import Version
 from pydantic import AfterValidator, BaseModel, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
+from zarr.core.array import Array, AsyncArray
 from zarr.core.metadata import ArrayV2Metadata
+from zarr.core.sync import sync
 from zarr.errors import ContainsArrayError, ContainsGroupError
+from zarr.storage._common import make_store_path
 
 from pydantic_zarr.core import (
     IncEx,
     StrictBase,
-    contains_array,
-    contains_group,
     ensure_key_no_path,
+    maybe_node,
     model_like,
-    stringify_dtype,
+    parse_dtype_v2,
 )
 
 if TYPE_CHECKING:
     from zarr.abc.store import Store
+    from zarr.core.array_spec import ArrayConfigParams
 
 TBaseAttr: TypeAlias = Mapping[str, object] | BaseModel
 TBaseItem: TypeAlias = Union["GroupSpec", "ArraySpec"]
@@ -49,7 +54,18 @@ AnyGroupSpec: TypeAlias = "GroupSpec[Any, Any]"
 TAttr = TypeVar("TAttr", bound=TBaseAttr)
 TItem = TypeVar("TItem", bound=TBaseItem)
 
-DtypeStr = Annotated[str, BeforeValidator(stringify_dtype)]
+DtypeStr = Annotated[str, BeforeValidator(parse_dtype_v2)]
+
+BoolFillValue = bool
+IntFillValue = int
+# todo: introduce a type that represents hexadecimal representations of floats
+FloatFillValue = Literal["Infinity", "-Infinity", "NaN"] | float
+ComplexFillValue = tuple[FloatFillValue, FloatFillValue]
+RawFillValue = tuple[int, ...]
+
+FillValue = (
+    BoolFillValue | IntFillValue | FloatFillValue | ComplexFillValue | RawFillValue | str | None
+)
 
 DimensionSeparator = Literal[".", "/"]
 MemoryOrder = Literal["C", "F"]
@@ -155,8 +171,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     attributes: TAttr = cast(TAttr, {})
     shape: tuple[int, ...]
     chunks: tuple[int, ...]
-    dtype: DtypeStr
-    fill_value: int | float | None = 0
+    dtype: DtypeStr | list[tuple[Any, ...]]
+    fill_value: FillValue = 0
     order: MemoryOrder = "C"
     filters: list[CodecDict] | None = None
     dimension_separator: Annotated[
@@ -285,7 +301,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
         return cls(
             shape=shape_actual,
-            dtype=stringify_dtype(dtype_actual),
+            dtype=parse_dtype_v2(dtype_actual),
             chunks=chunks_actual,
             attributes=attributes_actual,
             fill_value=fill_value_actual,
@@ -322,32 +338,17 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             msg = "Array is not a Zarr format 2 array"
             raise TypeError(msg)
 
-        if len(array.compressors):
-            compressor = array.compressors[0]
-            if TYPE_CHECKING:
-                # TODO: overload array.compressors in zarr-python and remove this type check
-                assert isinstance(compressor, Codec)
-            compressor_dict = compressor.get_config()
-        else:
-            compressor_dict = None
+        if Version(version("zarr")) < Version("3.1.0"):
+            from zarr.core.buffer import default_buffer_prototype
 
-        return cls(
-            shape=array.shape,
-            chunks=array.chunks,
-            dtype=str(array.dtype),
-            # explicitly cast to numpy type and back to python
-            # so that int 0 isn't serialized as 0.0
-            fill_value=(
-                array.dtype.type(array.fill_value).tolist()
-                if array.fill_value is not None
-                else array.fill_value
-            ),
-            order=array.order,
-            filters=array.filters,
-            dimension_separator=array.metadata.dimension_separator,
-            compressor=compressor_dict,
-            attributes=array.attrs.asdict(),
-        )
+            stored_meta = array.metadata.to_buffer_dict(prototype=default_buffer_prototype())
+            meta_json = json.loads(stored_meta[".zarray"].to_bytes()) | {
+                "attributes": array.attrs.asdict()
+            }
+        else:
+            meta_json = array.metadata.to_dict()
+
+        return cls.model_validate(meta_json)
 
     def to_zarr(
         self,
@@ -355,7 +356,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         path: str,
         *,
         overwrite: bool = False,
-        **kwargs: Any,
+        config: ArrayConfigParams | None = None,
     ) -> zarr.Array:
         """
         Serialize an `ArraySpec` to a Zarr array at a specific path in a Zarr store. This operation
@@ -369,36 +370,32 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             The location of the array inside the store.
         overwrite : bool, default = False
             Whether to overwrite existing objects in storage to create the Zarr array.
-        **kwargs : Any
-            Additional keyword arguments are passed to `zarr.create`.
+        config : ArrayConfigParams | None, default = None
+            An instance of `ArrayConfigParams` that defines the runtime configuration for the array.
 
         Returns
         -------
         zarr.Array
             A Zarr array that is structurally identical to `self`.
         """
-        spec_dict = self.model_dump()
-        attrs = spec_dict.pop("attributes")
-        if self.compressor is not None:
-            spec_dict["compressor"] = numcodecs.get_codec(spec_dict["compressor"])
-        if self.filters is not None:
-            spec_dict["filters"] = [numcodecs.get_codec(f) for f in spec_dict["filters"]]
-        if contains_array(store, path):
-            extant_array = zarr.open_array(store, path=path, zarr_format=2)
+        store_path = sync(make_store_path(store, path=path))
 
-            if not self.like(extant_array):
-                if not overwrite:
-                    raise ContainsArrayError(store, path)
+        extant_node = maybe_node(store, path, zarr_format=2)
+        if isinstance(extant_node, zarr.Array):
+            if not self.like(extant_node) and not overwrite:
+                raise ContainsArrayError(store, path)
             else:
+                # If there's an existing array that is identical to the model, and overwrite is False,
+                # we can just return that existing array.
                 if not overwrite:
-                    # extant_array is read-only, so we make a new array handle that
-                    # takes **kwargs
-                    return zarr.open_array(
-                        store=extant_array.store, path=extant_array.path, zarr_format=2, **kwargs
-                    )
-        result = zarr.create(store=store, path=path, overwrite=overwrite, **spec_dict, **kwargs)
-        result.attrs.put(attrs)
-        return result
+                    return extant_node
+        if isinstance(extant_node, zarr.Group) and not overwrite:
+            raise ContainsGroupError(store, path)
+
+        meta: ArrayV2Metadata = ArrayV2Metadata.from_dict(self.model_dump())
+        async_array = AsyncArray(metadata=meta, store_path=store_path, config=config)
+        sync(async_array._save_metadata(meta))
+        return Array(_async_array=async_array)
 
     def like(
         self,
@@ -568,28 +565,34 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         """
         spec_dict = self.model_dump(exclude={"members": True})
         attrs = spec_dict.pop("attributes")
-        if contains_group(store, path):
-            extant_group = zarr.group(store, path=path, zarr_format=2)
-            if not self.like(extant_group):
+        extant_node = maybe_node(store, path, zarr_format=2)
+        if isinstance(extant_node, zarr.Group):
+            if not self.like(extant_node):
                 if not overwrite:
+                    """
                     msg = (
                         f"A group already exists at path {path}. "
                         "That group is structurally dissimilar to the group you are trying to store."
                         "Call to_zarr with overwrite=True to overwrite that group."
                     )
-                    raise ContainsGroupError(msg)
+                    """
+                    # Zarr's contains group error uses questionable design and doesn't take a message
+                    raise ContainsGroupError(store, path)
             else:
                 if not overwrite:
                     # if the extant group is structurally identical to self, and overwrite is false,
                     # then just return the extant group
-                    return extant_group
+                    return extant_node
 
-        elif contains_array(store, path) and not overwrite:
+        elif isinstance(extant_node, zarr.Array) and not overwrite:
+            """
             msg = (
                 f"An array already exists at path {path}. "
                 "Call to_zarr with overwrite=True to overwrite the array."
             )
-            raise ContainsArrayError(msg)
+            """
+            # Zarr's contains array error uses questionable design and doesn't take a message
+            raise ContainsArrayError(store, path)
         else:
             zarr.create_group(store=store, overwrite=overwrite, path=path, zarr_format=2)
 
