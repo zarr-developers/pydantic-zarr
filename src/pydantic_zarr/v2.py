@@ -26,8 +26,11 @@ from numcodecs.abc import Codec
 from packaging.version import Version
 from pydantic import AfterValidator, BaseModel, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
+from zarr.core.array import Array, AsyncArray
 from zarr.core.metadata import ArrayV2Metadata
+from zarr.core.sync import sync
 from zarr.errors import ContainsArrayError, ContainsGroupError
+from zarr.storage._common import make_store_path
 
 from pydantic_zarr.core import (
     IncEx,
@@ -375,11 +378,6 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         zarr.Array
             A Zarr array that is structurally identical to `self`.
         """
-        from zarr.core.array import Array, AsyncArray
-        from zarr.core.metadata.v2 import ArrayV2Metadata
-        from zarr.core.sync import sync
-        from zarr.storage._common import make_store_path
-
         store_path = sync(make_store_path(store, path=path))
 
         extant_node = maybe_node(store, path, zarr_format=2)
