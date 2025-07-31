@@ -14,12 +14,12 @@ jobs:
           uses: actions/setup-python@v5
           with:
             python-version: "3.x"
-        - name: Set up poetry
+        - name: Install Hatch
           run: |
-            pip install poetry==1.5.1
+            pip install hatch==1.14.1
         - name: Build package
           run: |
-            poetry build
+            hatch build
         - name: Publish distribution 📦 to PyPI
           uses: pypa/gh-action-pypi-publish@release/v1
           with:
