@@ -40,10 +40,10 @@ if TYPE_CHECKING:
     from zarr.abc.store import Store
 
 TBaseAttr: TypeAlias = Mapping[str, object] | BaseModel
-TBaseItem: TypeAlias = Union["GroupSpec", "ArraySpec"]
+TBaseItem: TypeAlias = Union["GroupSpec[TBaseAttr, TBaseItem]", "ArraySpec[TBaseAttr]"]
 
-AnyArraySpec: TypeAlias = "ArraySpec[Any]"
-AnyGroupSpec: TypeAlias = "GroupSpec[Any, Any]"
+AnyArraySpec: TypeAlias = "ArraySpec[TBaseAttr]"
+AnyGroupSpec: TypeAlias = "GroupSpec[TBaseAttr, TBaseItem]"
 
 TAttr = TypeVar("TAttr", bound=TBaseAttr)
 TItem = TypeVar("TItem", bound=TBaseItem)
@@ -398,7 +398,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
     def like(
         self,
-        other: ArraySpec | zarr.Array,
+        other: AnyArraySpec | zarr.Array,
         *,
         include: IncEx = None,
         exclude: IncEx = None,
@@ -447,7 +447,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         True
         """
 
-        other_parsed: ArraySpec
+        other_parsed: AnyArraySpec
         if isinstance(other, zarr.Array):
             other_parsed = ArraySpec.from_zarr(other)
         else:
@@ -601,7 +601,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
 
     def like(
         self,
-        other: GroupSpec | zarr.Group,
+        other: AnyGroupSpec | zarr.Group,
         include: IncEx = None,
         exclude: IncEx = None,
     ) -> bool:
@@ -652,7 +652,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         True
         """
 
-        other_parsed: GroupSpec
+        other_parsed: AnyGroupSpec
         if isinstance(other, zarr.Group):
             other_parsed = GroupSpec.from_zarr(other)
         else:
@@ -878,7 +878,7 @@ def to_flat(
     return dict(sorted(result.items(), key=lambda v: len(v[0])))
 
 
-def from_flat(data: dict[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
+def from_flat(data: dict[str, AnyArraySpec | AnyGroupSpec]) -> AnyArraySpec | AnyGroupSpec:
     """
     Wraps `from_flat_group`, handling the special case where a Zarr array is defined at the root of
     a hierarchy and thus is not contained by a Zarr group.

@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 
 
 TBaseAttr: TypeAlias = Mapping[str, object] | BaseModel
-TBaseItem: TypeAlias = Union["GroupSpec", "ArraySpec"]
+TBaseItem: TypeAlias = Union["GroupSpec[TBaseAttr, TBaseItem]", "ArraySpec[TBaseItem]"]
 
 # These types are for convenience when dealing with unknown ArraySpecs and GroupSpecs
 # because type variables don't have default values
@@ -962,7 +962,9 @@ def auto_dimension_names(data: object) -> tuple[str | None, ...] | None:
     return None
 
 
-def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, ArraySpec | GroupSpec]:
+def to_flat(
+    node: AnyArraySpec | AnyGroupSpec, root_path: str = ""
+) -> dict[str, AnyArraySpec | AnyGroupSpec]:
     """
     Flatten a `GroupSpec` or `ArraySpec`.
     Converts a `GroupSpec` or `ArraySpec` and a string, into a `dict` with string keys and
