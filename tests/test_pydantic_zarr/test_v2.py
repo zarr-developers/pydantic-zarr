@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import zarr
 import zarr.storage
-from pydantic import ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from zarr.errors import ContainsArrayError, ContainsGroupError
 
 from pydantic_zarr.core import tuplify_json
@@ -654,3 +654,23 @@ def test_arrayspec_from_zarr(dtype_example: DTypeExample) -> None:
         observed["dtype"] = list(observed["dtype"])
 
     assert arr_spec.model_dump() == observed
+
+
+def test_from_flat_kwargs() -> None:
+    """
+    Test that from_flat takes keyword arguments for `BaseModel.model_dump`. This is necessary for
+    handling fields with aliases properly.
+    """
+
+    class AliasedAttrs(BaseModel):
+        array_dimensions: tuple[str, ...] = Field(alias="_ARRAY_DIMENSIONS")
+
+    class AliasedGroup(GroupSpec[AliasedAttrs, Any]): ...
+
+    flat = {"": AliasedGroup(attributes=AliasedAttrs(_ARRAY_DIMENSIONS=("a", "b")))}
+
+    msg = r"Field required \[type=missing, input_value=\{'array_dimensions': \('a', 'b'\)}, input_type=dict]"
+
+    with pytest.raises(ValidationError, match=msg):
+        AliasedGroup.from_flat(flat)
+    assert AliasedGroup.from_flat(flat, by_alias=True) == flat[""]

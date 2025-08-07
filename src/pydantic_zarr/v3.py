@@ -14,6 +14,7 @@ from typing import (
     TypeAlias,
     TypeVar,
     Union,
+    Unpack,
     cast,
     overload,
 )
@@ -28,6 +29,7 @@ from zarr.errors import ContainsArrayError, ContainsGroupError
 
 from pydantic_zarr.core import (
     IncEx,
+    ModelDumpKwargs,
     StrictBase,
     ensure_key_no_path,
     maybe_node,
@@ -504,18 +506,25 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
     members: Annotated[Mapping[str, TItem] | None, AfterValidator(ensure_key_no_path)] = {}
 
     @classmethod
-    def from_flat(cls, data: Mapping[str, AnyArraySpec | AnyGroupSpec]) -> Self:
+    def from_flat(
+        cls,
+        data: Mapping[str, AnyArraySpec | AnyGroupSpec],
+        **model_dump_kwargs: Unpack[ModelDumpKwargs],
+    ) -> Self:
         """
         Create a `GroupSpec` from a flat hierarchy representation.
 
         The flattened hierarchy is a
-        `dict` with the following constraints: keys must be valid paths; values must
+        `Mapping` with the following constraints: keys must be valid paths; values must
         be `ArraySpec` or `GroupSpec` instances.
 
         Parameters
         ----------
-        data : Dict[str, ArraySpec | GroupSpec]
+        data : Mapping[str, ArraySpec | GroupSpec]
             A flattened representation of a Zarr hierarchy.
+
+        **model_dump_kwargs : `Unpack[ModelDumpKwargs]`
+            Additional keyword arguments to pass to the `pydantic.BaseModel.model_dump` method.
 
         Returns
         -------
@@ -554,7 +563,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         ```
         """
         from_flated = from_flat_group(data)
-        return cls(**from_flated.model_dump())
+        return cls(**from_flated.model_dump(**model_dump_kwargs))
 
     def to_flat(self, root_path: str = "") -> dict[str, AnyArraySpec | AnyGroupSpec]:
         """
@@ -869,8 +878,8 @@ def from_flat(
     Parameters
     ----------
 
-    data : Dict[str, ArraySpec | GroupSpec]
-        A flat representation of a Zarr hierarchy. This is a `dict` with keys that are strings,
+    data : Mapping[str, ArraySpec | GroupSpec]
+        A flat representation of a Zarr hierarchy. This is a `Mapping` with keys that are strings,
         and values that are either `GroupSpec` or `ArraySpec` instances.
 
     Returns
@@ -906,12 +915,12 @@ def from_flat_group(
     data: Mapping[str, AnyArraySpec | AnyGroupSpec],
 ) -> AnyGroupSpec:
     """
-    Generate a `GroupSpec` from a flat representation of a hierarchy, i.e. a `dict` with
+    Generate a `GroupSpec` from a flat representation of a hierarchy, i.e. a `Mapping` with
     string keys (paths) and `ArraySpec` / `GroupSpec` values (nodes).
 
     Parameters
     ----------
-    data : Dict[str, ArraySpec | GroupSpec]
+    data : Mapping[str, ArraySpec | GroupSpec]
         A flat representation of a Zarr hierarchy rooted at a Zarr group.
 
     Returns
