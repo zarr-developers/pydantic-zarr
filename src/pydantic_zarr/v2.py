@@ -14,6 +14,7 @@ from typing import (
     TypeAlias,
     TypeVar,
     Union,
+    Unpack,
     cast,
     get_args,
     overload,
@@ -34,6 +35,7 @@ from zarr.storage._common import make_store_path
 
 from pydantic_zarr.core import (
     IncEx,
+    ModelDumpKwargs,
     StrictBase,
     ensure_key_no_path,
     maybe_node,
@@ -670,6 +672,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
     def to_flat(self, root_path: str = "") -> dict[str, AnyArraySpec | AnyGroupSpec]:
         """
         Flatten this `GroupSpec`.
+
         This method returns a `dict` with string keys and values that are `GroupSpec` or
         `ArraySpec`.
 
@@ -704,16 +707,24 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         return to_flat(self, root_path=root_path)
 
     @classmethod
-    def from_flat(cls, data: dict[str, AnyArraySpec | AnyGroupSpec]) -> Self:
+    def from_flat(
+        cls,
+        data: Mapping[str, AnyArraySpec | AnyGroupSpec],
+        **model_dump_kwargs: Unpack[ModelDumpKwargs],
+    ) -> Self:
         """
-        Create a `GroupSpec` from a flat hierarchy representation. The flattened hierarchy is a
-        `dict` with the following constraints: keys must be valid paths; values must
-        be `ArraySpec` or `GroupSpec` instances.
+        Create a `GroupSpec` from a flat hierarchy representation.
+
+        The flattened hierarchy is a `dict` with the following constraints:
+        keys must be valid paths; values must be `ArraySpec` or `GroupSpec` instances.
 
         Parameters
         ----------
         data : Dict[str, ArraySpec | GroupSpec]
             A flattened representation of a Zarr hierarchy.
+
+        **model_dump_kwargs : `Unpack[ModelDumpKwargs]`
+            Additional keyword arguments to pass to the `pydantic.BaseModel.model_dump` method.
 
         Returns
         -------
@@ -734,7 +745,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         GroupSpec(zarr_format=2, attributes={'foo': 10}, members={'a': ArraySpec(zarr_format=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)})
         """
         from_flated = from_flat_group(data)
-        return cls(**from_flated.model_dump())
+        return cls(**from_flated.model_dump(**model_dump_kwargs))
 
 
 @overload
@@ -885,7 +896,7 @@ def to_flat(
     return dict(sorted(result.items(), key=lambda v: len(v[0])))
 
 
-def from_flat(data: dict[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
+def from_flat(data: Mapping[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
     """
     Wraps `from_flat_group`, handling the special case where a Zarr array is defined at the root of
     a hierarchy and thus is not contained by a Zarr group.
@@ -894,7 +905,7 @@ def from_flat(data: dict[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
     ----------
 
     data : Dict[str, ArraySpec | GroupSpec]
-        A flat representation of a Zarr hierarchy. This is a `dict` with keys that are strings,
+        A flat representation of a Zarr hierarchy. This is a `Mapping` with keys that are strings,
         and values that are either `GroupSpec` or `ArraySpec` instances.
 
     Returns
@@ -926,14 +937,14 @@ def from_flat(data: dict[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
         return from_flat_group(data)
 
 
-def from_flat_group(data: dict[str, AnyArraySpec | AnyGroupSpec]) -> AnyGroupSpec:
+def from_flat_group(data: Mapping[str, AnyArraySpec | AnyGroupSpec]) -> AnyGroupSpec:
     """
-    Generate a `GroupSpec` from a flat representation of a hierarchy, i.e. a `dict` with
+    Generate a `GroupSpec` from a flat representation of a hierarchy, i.e. a `Mapping` with
     string keys (paths) and `ArraySpec` / `GroupSpec` values (nodes).
 
     Parameters
     ----------
-    data : Dict[str, ArraySpec | GroupSpec]
+    data : Mapping[str, ArraySpec | GroupSpec]
         A flat representation of a Zarr hierarchy rooted at a Zarr group.
 
     Returns
@@ -961,7 +972,7 @@ def from_flat_group(data: dict[str, AnyArraySpec | AnyGroupSpec]) -> AnyGroupSpe
     # populates member_groups
     submember_by_parent_name: dict[str, dict[str, AnyArraySpec | AnyGroupSpec]] = {}
     # copy the input to ensure that mutations are contained inside this function
-    data_copy = data.copy()
+    data_copy = dict(data).copy()
     # Get the root node
     try:
         # The root node is a GroupSpec with the key ""

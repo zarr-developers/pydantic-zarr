@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from typing import Any
 
 import numpy as np
 import pytest
 import zarr
+from pydantic import BaseModel, Field, ValidationError
 
 from pydantic_zarr.core import tuplify_json
 from pydantic_zarr.v3 import (
@@ -210,3 +212,23 @@ class TestGroupSpec:
         assert group_in_3.attributes == tree[""].attributes  # type: ignore[attr-defined]
         assert group_in_3.members["1"].attributes == tree["/1"].attributes  # type: ignore[attr-defined]
         assert group_in_3.members["1"].members["2"].attributes == tree["/1/2"].attributes  # type: ignore[attr-defined]
+
+
+def test_from_flat_kwargs() -> None:
+    """
+    Test that from_flat takes keyword arguments for `BaseModel.model_dump`. This is necessary for
+    handling fields with aliases properly.
+    """
+
+    class AliasedAttrs(BaseModel):
+        array_dimensions: tuple[str, ...] = Field(alias="_ARRAY_DIMENSIONS")
+
+    class AliasedGroup(GroupSpec[AliasedAttrs, Any]): ...
+
+    flat = {"": AliasedGroup(attributes=AliasedAttrs(_ARRAY_DIMENSIONS=("a", "b")))}
+
+    msg = r"Field required \[type=missing, input_value=\{'array_dimensions': \('a', 'b'\)}, input_type=dict]"
+
+    with pytest.raises(ValidationError, match=msg):
+        AliasedGroup.from_flat(flat)
+    assert AliasedGroup.from_flat(flat, by_alias=True) == flat[""]

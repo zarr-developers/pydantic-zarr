@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import (
     TYPE_CHECKING,
     Any,
     Literal,
+    NotRequired,
     TypeAlias,
     overload,
 )
@@ -12,6 +13,7 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from pydantic import BaseModel, ConfigDict
+from typing_extensions import TypedDict
 from zarr.core.sync import sync
 from zarr.core.sync_group import get_node
 from zarr.storage._common import make_store_path
@@ -23,6 +25,24 @@ if TYPE_CHECKING:
 IncEx: TypeAlias = set[int] | set[str] | dict[int, Any] | dict[str, Any] | None
 
 AccessMode: TypeAlias = Literal["w", "w+", "r", "a"]
+
+
+class ModelDumpKwargs(TypedDict):
+    """
+    A typeddict model for the keyword arguments accepted by `pydantic.BaseModel.model_dump`
+    """
+
+    mode: NotRequired[Literal["json", "python"]]
+    include: NotRequired[IncEx | None]
+    exclude: NotRequired[IncEx | None]
+    by_alias: NotRequired[bool | None]
+    exclude_unset: NotRequired[bool]
+    exclude_defaults: NotRequired[bool]
+    exclude_none: NotRequired[bool]
+    round_trip: NotRequired[bool]
+    warnings: NotRequired[bool | Literal["none", "warn", "error"]]
+    fallback: NotRequired[Callable[[Any], Any] | None]
+    serialize_as_any: NotRequired[bool]
 
 
 @overload
