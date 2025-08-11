@@ -593,7 +593,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         return to_flat(self, root_path=root_path)
 
     @classmethod
-    def from_zarr(cls, group: zarr.Group, *, depth: int = -1) -> GroupSpec[TAttr, TItem]:
+    def from_zarr(cls, group: zarr.Group, *, depth: int = -1) -> Self:
         """
         Create a GroupSpec from a zarr group. Subgroups and arrays contained in the zarr
         group will be converted to instances of GroupSpec and ArraySpec, respectively,
