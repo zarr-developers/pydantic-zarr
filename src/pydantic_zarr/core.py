@@ -6,6 +6,7 @@ from typing import (
     Any,
     Literal,
     TypeAlias,
+    TypeVar,
     overload,
 )
 
@@ -23,6 +24,8 @@ if TYPE_CHECKING:
 IncEx: TypeAlias = set[int] | set[str] | dict[int, Any] | dict[str, Any] | None
 
 AccessMode: TypeAlias = Literal["w", "w+", "r", "a"]
+
+T = TypeVar("T")
 
 
 @overload
@@ -133,3 +136,12 @@ def maybe_node(
         return get_node(spath.store, spath.path, zarr_format=zarr_format)
     except FileNotFoundError:
         return None
+
+
+def ensure_multiple(data: Sequence[T]) -> Sequence[T]:
+    """
+    Ensure that there is at least one element in the sequence
+    """
+    if len(data) < 1:
+        raise ValueError("Invalid length. Expected 1 or more, got 0.")
+    return data

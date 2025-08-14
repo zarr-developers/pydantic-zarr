@@ -30,6 +30,7 @@ from pydantic_zarr.core import (
     IncEx,
     StrictBase,
     ensure_key_no_path,
+    ensure_multiple,
     maybe_node,
     model_like,
     tuplify_json,
@@ -92,6 +93,10 @@ class AnyNamedConfig(NamedConfig[str, Mapping[str, object]]):
     This class models any Zarr metadata object that takes the form of a
     {"name": ..., "configuration": ...} dict, where the "configuration" key is not required.
     """
+
+
+CodecLike = str | AnyNamedConfig
+"""A type modelling the permissible declarations for codecs"""
 
 
 class RegularChunkingConfig(TypedDict):
@@ -160,7 +165,9 @@ def parse_dtype_v3(dtype: npt.DTypeLike | Mapping[str, object]) -> Mapping[str, 
                 raise ValueError(f"Unsupported dtype: {dtype}")
 
 
-DtypeStr = Annotated[str, BeforeValidator(parse_dtype_v3)]
+DTypeStr = Annotated[str, BeforeValidator(parse_dtype_v3)]
+DTypeLike = DTypeStr | AnyNamedConfig
+CodecTuple = Annotated[tuple[CodecLike, ...], BeforeValidator(ensure_multiple)]
 
 
 class ArraySpec(NodeSpec, Generic[TAttr]):
@@ -196,11 +203,11 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     node_type: Literal["array"] = "array"
     attributes: TAttr = cast(TAttr, {})
     shape: tuple[int, ...]
-    data_type: DtypeStr | AnyNamedConfig
+    data_type: DTypeLike
     chunk_grid: RegularChunking  # todo: validate this against shape
     chunk_key_encoding: DefaultChunkKeyEncoding  # todo: validate this against shape
     fill_value: FillValue  # todo: validate this against the data type
-    codecs: tuple[AnyNamedConfig, ...]
+    codecs: CodecTuple
     storage_transformers: tuple[AnyNamedConfig, ...] = ()
     dimension_names: tuple[str | None, ...] | None = None  # todo: validate this against shape
 
@@ -252,7 +259,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         chunk_grid: Literal["auto"] | AnyNamedConfig = "auto",
         chunk_key_encoding: Literal["auto"] | AnyNamedConfig = "auto",
         fill_value: Literal["auto"] | FillValue = "auto",
-        codecs: Literal["auto"] | Sequence[AnyNamedConfig] = "auto",
+        codecs: Literal["auto"] | Sequence[CodecLike] = "auto",
         storage_transformers: Literal["auto"] | Sequence[AnyNamedConfig] = "auto",
         dimension_names: Literal["auto"] | Sequence[str | None] = "auto",
     ) -> Self:
@@ -293,11 +300,11 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         else:
             fill_value_actual = fill_value
 
-        codecs_actual: Sequence[AnyNamedConfig]
+        codecs_actual: tuple[CodecLike, ...]
         if codecs == "auto":
             codecs_actual = auto_codecs(array)
         else:
-            codecs_actual = codecs
+            codecs_actual = tuple(codecs)
         storage_transformers_actual: Sequence[AnyNamedConfig]
         if storage_transformers == "auto":
             storage_transformers_actual = auto_storage_transformers(array)
@@ -1017,10 +1024,14 @@ def auto_fill_value(data: object) -> FillValue:
     raise ValueError("Cannot determine default data type for object without shape attribute.")
 
 
-def auto_codecs(data: object) -> tuple[AnyNamedConfig, ...]:
+def auto_codecs(data: object) -> tuple[CodecLike, ...]:
+    """
+    Automatically create a tuple of codecs from an arbitrary python object.
+    """
     if hasattr(data, "codecs"):
+        # todo: type check
         return tuple(data.codecs)
-    return ()
+    return ({"name": "bytes"},)
 
 
 def auto_storage_transformers(data: object) -> tuple[AnyNamedConfig, ...]:
