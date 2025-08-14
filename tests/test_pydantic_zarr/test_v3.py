@@ -6,6 +6,7 @@ from dataclasses import asdict
 import numpy as np
 import pytest
 import zarr
+from pydantic import ValidationError
 
 from pydantic_zarr.core import tuplify_json
 from pydantic_zarr.v3 import (
@@ -18,6 +19,7 @@ from pydantic_zarr.v3 import (
     NamedConfig,
     RegularChunking,
     RegularChunkingConfig,
+    auto_codecs,
 )
 
 from .conftest import DTYPE_EXAMPLES_V3, DTypeExample
@@ -44,7 +46,8 @@ def test_serialize_deserialize() -> None:
 
 
 def test_from_array() -> None:
-    array_spec = ArraySpec.from_array(np.arange(10))
+    array = np.arange(10)
+    array_spec = ArraySpec.from_array(array)
     assert array_spec == ArraySpec(
         zarr_format=3,
         node_type="array",
@@ -58,10 +61,29 @@ def test_from_array() -> None:
             name="default", configuration=DefaultChunkKeyEncodingConfig(separator="/")
         ),
         fill_value=0,
-        codecs=(),
+        codecs=auto_codecs(array),
         storage_transformers=(),
         dimension_names=None,
     )
+
+
+def test_arrayspec_no_empty_codecs() -> None:
+    """
+    Ensure that it is not possible to create an ArraySpec with no codecs
+    """
+
+    with pytest.raises(
+        ValidationError, match="Value error, Invalid length. Expected 1 or more, got 0."
+    ):
+        ArraySpec(
+            shape=(1,),
+            data_type="uint8",
+            codecs=[],
+            attributes={},
+            fill_value=0,
+            chunk_grid={"name": "regular", "configuration": {"chunk_shape": (1,)}},
+            chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
+        )
 
 
 @pytest.mark.filterwarnings("ignore:The dtype:UserWarning")
