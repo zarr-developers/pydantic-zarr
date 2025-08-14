@@ -210,3 +210,10 @@ class TestGroupSpec:
         assert group_in_3.attributes == tree[""].attributes  # type: ignore[attr-defined]
         assert group_in_3.members["1"].attributes == tree["/1"].attributes  # type: ignore[attr-defined]
         assert group_in_3.members["1"].members["2"].attributes == tree["/1/2"].attributes  # type: ignore[attr-defined]
+
+
+def test_from_array_no_args():
+    # Check that ArarySpec from just an array (and no other arguments)
+    # can be converted back to a Zarr array
+    spec = ArraySpec.from_array(np.array([1]))
+    spec.to_zarr(store={}, path="")

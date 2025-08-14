@@ -298,6 +298,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             codecs_actual = auto_codecs(array)
         else:
             codecs_actual = codecs
+
         storage_transformers_actual: Sequence[AnyNamedConfig]
         if storage_transformers == "auto":
             storage_transformers_actual = auto_storage_transformers(array)
@@ -1020,7 +1021,7 @@ def auto_fill_value(data: object) -> FillValue:
 def auto_codecs(data: object) -> tuple[AnyNamedConfig, ...]:
     if hasattr(data, "codecs"):
         return tuple(data.codecs)
-    return ()
+    return ({"name": "bytes"},)
 
 
 def auto_storage_transformers(data: object) -> tuple[AnyNamedConfig, ...]:
