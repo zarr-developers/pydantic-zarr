@@ -30,6 +30,7 @@ from pydantic_zarr.core import (
     IncEx,
     StrictBase,
     ensure_key_no_path,
+    ensure_multiple,
     maybe_node,
     model_like,
     tuplify_json,
@@ -164,16 +165,8 @@ def parse_dtype_v3(dtype: npt.DTypeLike | Mapping[str, object]) -> Mapping[str, 
                 raise ValueError(f"Unsupported dtype: {dtype}")
 
 
-T = TypeVar("T")
-
-
-def ensure_multiple(data: Sequence[T]) -> Sequence[T]:
-    if len(data) < 1:
-        raise ValueError("Invalid length. Expected 1 or more, got 0.")
-    return data
-
-
-DTypeLike = Annotated[str, BeforeValidator(parse_dtype_v3)] | AnyNamedConfig
+DTypeStr = Annotated[str, BeforeValidator(parse_dtype_v3)]
+DTypeLike = DTypeStr | AnyNamedConfig
 CodecTuple = Annotated[tuple[CodecLike, ...], BeforeValidator(ensure_multiple)]
 
 
