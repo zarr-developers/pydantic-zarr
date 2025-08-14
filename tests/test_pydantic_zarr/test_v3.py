@@ -48,6 +48,7 @@ def test_serialize_deserialize() -> None:
 def test_from_array() -> None:
     array = np.arange(10)
     array_spec = ArraySpec.from_array(array)
+
     assert array_spec == ArraySpec(
         zarr_format=3,
         node_type="array",
@@ -65,6 +66,9 @@ def test_from_array() -> None:
         storage_transformers=(),
         dimension_names=None,
     )
+    # check that we can write this array to zarr
+    # TODO: fix type of the store argument in to_zarr
+    array_spec.to_zarr(store={}, path="")  # type: ignore[arg-type]
 
 
 def test_arrayspec_no_empty_codecs() -> None:
