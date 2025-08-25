@@ -5,6 +5,7 @@ Testts for pydantic_zarr.v2.
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -654,3 +655,16 @@ def test_arrayspec_from_zarr(dtype_example: DTypeExample) -> None:
         observed["dtype"] = list(observed["dtype"])
 
     assert arr_spec.model_dump() == observed
+
+
+def test_mix_v3_v2_fails() -> None:
+    from pydantic_zarr.v3 import ArraySpec as ArraySpecv3
+
+    members_flat = {"/a": ArraySpecv3.from_array(np.ones(1))}
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "Value at '/a' is not a v2 ArraySpec or GroupSpec (got type(value)=<class 'pydantic_zarr.v3.ArraySpec'>)"
+        ),
+    ):
+        GroupSpec.from_flat(members_flat)  # type: ignore[arg-type]
