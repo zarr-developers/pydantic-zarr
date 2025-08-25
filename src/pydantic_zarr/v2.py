@@ -704,7 +704,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         return to_flat(self, root_path=root_path)
 
     @classmethod
-    def from_flat(cls, data: dict[str, AnyArraySpec | AnyGroupSpec]) -> Self:
+    def from_flat(cls, data: Mapping[str, AnyArraySpec | AnyGroupSpec]) -> Self:
         """
         Create a `GroupSpec` from a flat hierarchy representation. The flattened hierarchy is a
         `dict` with the following constraints: keys must be valid paths; values must
@@ -926,7 +926,7 @@ def from_flat(data: dict[str, ArraySpec | GroupSpec]) -> ArraySpec | GroupSpec:
         return from_flat_group(data)
 
 
-def from_flat_group(data: dict[str, AnyArraySpec | AnyGroupSpec]) -> AnyGroupSpec:
+def from_flat_group(data: Mapping[str, AnyArraySpec | AnyGroupSpec]) -> AnyGroupSpec:
     """
     Generate a `GroupSpec` from a flat representation of a hierarchy, i.e. a `dict` with
     string keys (paths) and `ArraySpec` / `GroupSpec` values (nodes).
@@ -961,7 +961,7 @@ def from_flat_group(data: dict[str, AnyArraySpec | AnyGroupSpec]) -> AnyGroupSpe
     # populates member_groups
     submember_by_parent_name: dict[str, dict[str, AnyArraySpec | AnyGroupSpec]] = {}
     # copy the input to ensure that mutations are contained inside this function
-    data_copy = data.copy()
+    data_copy = dict(data).copy()
     # Get the root node
     try:
         # The root node is a GroupSpec with the key ""
