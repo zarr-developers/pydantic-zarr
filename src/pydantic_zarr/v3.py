@@ -948,6 +948,7 @@ def from_flat_group(
     # copy the input to ensure that mutations are contained inside this function
     data_copy = dict(data).copy()
     # Get the root node
+    print("hi")
     try:
         # The root node is a GroupSpec with the key ""
         root_node = data_copy.pop(root_name)
@@ -968,10 +969,14 @@ def from_flat_group(
             # this is an array or group that belongs to the group we are ultimately returning
             if isinstance(value, ArraySpec):
                 member_arrays[subparent_name] = value
-            else:
+            elif isinstance(value, GroupSpec):
                 if subparent_name not in submember_by_parent_name:
                     submember_by_parent_name[subparent_name] = {}
                 submember_by_parent_name[subparent_name][root_name] = value
+            else:
+                raise ValueError(
+                    f"Value at '{key}' is not a v3 ArraySpec or GroupSpec (got {type(value)=})"
+                )
         else:
             # these are groups or arrays that belong to one of the member groups
             # not great that we repeat this conditional dict initialization
