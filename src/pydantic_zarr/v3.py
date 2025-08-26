@@ -948,7 +948,6 @@ def from_flat_group(
     # copy the input to ensure that mutations are contained inside this function
     data_copy = dict(data).copy()
     # Get the root node
-    print("hi")
     try:
         # The root node is a GroupSpec with the key ""
         root_node = data_copy.pop(root_name)
