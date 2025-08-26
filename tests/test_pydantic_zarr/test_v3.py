@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict
 
 import numpy as np
@@ -236,3 +237,16 @@ class TestGroupSpec:
         assert group_in_3.attributes == tree[""].attributes  # type: ignore[attr-defined]
         assert group_in_3.members["1"].attributes == tree["/1"].attributes  # type: ignore[attr-defined]
         assert group_in_3.members["1"].members["2"].attributes == tree["/1/2"].attributes  # type: ignore[attr-defined]
+
+
+def test_mix_v3_v2_fails() -> None:
+    from pydantic_zarr.v2 import ArraySpec as ArraySpecv2
+
+    members_flat = {"/a": ArraySpecv2.from_array(np.ones(1))}
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "Value at '/a' is not a v3 ArraySpec or GroupSpec (got type(value)=<class 'pydantic_zarr.v2.ArraySpec'>)"
+        ),
+    ):
+        GroupSpec.from_flat(members_flat)  # type: ignore[arg-type]
