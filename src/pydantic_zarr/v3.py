@@ -1045,8 +1045,8 @@ def auto_storage_transformers(data: object) -> tuple[AnyNamedConfig, ...]:
 
 
 def auto_dimension_names(data: object) -> tuple[str | None, ...] | None:
-    if hasattr(data, "dimension_names"):
-        return tuple(data.dimension_names)
+    if hasattr(data, "metadata") and hasattr(data.metadata, "dimension_names"):
+        return tuple(data.metadata.dimension_names)
     return None
 
 

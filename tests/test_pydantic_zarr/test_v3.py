@@ -250,3 +250,9 @@ def test_mix_v3_v2_fails() -> None:
         ),
     ):
         GroupSpec.from_flat(members_flat)  # type: ignore[arg-type]
+
+
+def test_dim_names_from_zarr_array() -> None:
+    arr = zarr.zeros((1,), dimension_names=["x"])
+    spec = ArraySpec.from_zarr(arr)
+    assert spec.dimension_names == ("x",)
