@@ -21,6 +21,7 @@ from pydantic_zarr.v3 import (
     RegularChunking,
     RegularChunkingConfig,
     auto_codecs,
+    regular_chunk_config,
 )
 
 from .conftest import DTYPE_EXAMPLES_V3, DTypeExample
@@ -256,3 +257,8 @@ def test_dim_names_from_zarr_array() -> None:
     arr = zarr.zeros((1,), dimension_names=["x"])
     spec = ArraySpec.from_zarr(arr)
     assert spec.dimension_names == ("x",)
+
+
+def test_regular_chunk_config() -> None:
+    config = regular_chunk_config((23, 1))
+    assert config == {"configuration": {"chunk_shape": (23, 1)}, "name": "regular"}
