@@ -252,7 +252,13 @@ def test_mix_v3_v2_fails() -> None:
         GroupSpec.from_flat(members_flat)  # type: ignore[arg-type]
 
 
-def test_dim_names_from_zarr_array() -> None:
-    arr = zarr.zeros((1,), dimension_names=["x"])
-    spec = ArraySpec.from_zarr(arr)
-    assert spec.dimension_names == ("x",)
+@pytest.mark.parametrize(
+    ("arr", "expected_names"),
+    [
+        (zarr.zeros((1,), dimension_names=["x"]), ("x",)),
+        (zarr.zeros((1,)), None),
+    ],
+)
+def test_dim_names_from_zarr_array(arr: zarr.Array, expected_names: tuple[str, ...] | None) -> None:
+    spec: AnyArraySpec = ArraySpec.from_zarr(arr)
+    assert spec.dimension_names == expected_names
