@@ -106,6 +106,13 @@ class RegularChunkingConfig(TypedDict):
 RegularChunking = NamedConfig[Literal["regular"], RegularChunkingConfig]
 
 
+def regular_chunk_config(chunk_shape: tuple[int, ...]) -> RegularChunking:
+    """
+    Get configuration for regular chunking.
+    """
+    return NamedConfig(name="regular", configuration={"chunk_shape": chunk_shape})
+
+
 class DefaultChunkKeyEncodingConfig(TypedDict):
     separator: Literal[".", "/"]
 
