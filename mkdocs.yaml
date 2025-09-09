@@ -33,7 +33,10 @@ nav:
     - API:
       - core: api/core.md
       - v2: api/v2.md
-      - v3: api/v3.md
+      - v3:
+        - Core: api/v3.md
+        - Codecs: api/v3/codecs.md
+
 
 plugins:
 - mkdocstrings:
@@ -47,6 +50,8 @@ plugins:
             docstring_options:
               ignore_init_summary: true
             merge_init_into_class: true
+            extensions:
+            - griffe_pydantic:
 
 markdown_extensions:
   - pymdownx.highlight:

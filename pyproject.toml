@@ -31,11 +31,12 @@ Source = "https://github.com/zarr-developers/pydantic-zarr"
 test = ["coverage", "pytest<8.4", "pytest-cov", "pytest-examples"]
 
 docs = [
+    "griffe-pydantic",
     "mkdocs-material",
     "mkdocstrings[python]",
     "pytest-examples",
     "pydantic==2.11",
-    "zarr>=3.1.0"
+    "zarr>=3.1.0",
 ]
 
 [tool.hatch]
