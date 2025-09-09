@@ -35,6 +35,7 @@ from pydantic_zarr.core import (
     model_like,
     tuplify_json,
 )
+from pydantic_zarr.v3.codecs import Codec
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -95,7 +96,7 @@ class AnyNamedConfig(NamedConfig[str, Mapping[str, object]]):
     """
 
 
-CodecLike = str | AnyNamedConfig
+CodecLike = str | AnyNamedConfig | Codec
 """A type modelling the permissible declarations for codecs"""
 
 

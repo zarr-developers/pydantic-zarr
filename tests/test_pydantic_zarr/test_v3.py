@@ -22,6 +22,7 @@ from pydantic_zarr.v3 import (
     RegularChunkingConfig,
     auto_codecs,
 )
+from pydantic_zarr.v3.codecs import Bytes, BytesConfig, Gzip, GzipConfig
 
 from .conftest import DTYPE_EXAMPLES_V3, DTypeExample
 
@@ -31,14 +32,14 @@ def test_serialize_deserialize() -> None:
 
     group_attributes = {"group": True}
 
-    array_spec = ArraySpec(
+    array_spec: AnyArraySpec = ArraySpec(
         attributes=array_attributes,
         shape=[1000, 1000],
         dimension_names=["rows", "columns"],
         data_type="float64",
         chunk_grid=NamedConfig(name="regular", configuration={"chunk_shape": [1000, 100]}),
         chunk_key_encoding=NamedConfig(name="default", configuration={"separator": "/"}),
-        codecs=[NamedConfig(name="GZip", configuration={"level": 1})],
+        codecs=[Gzip(configuration=GzipConfig(level=1))],
         fill_value="NaN",
         storage_transformers=[],
     )
@@ -205,7 +206,7 @@ class TestGroupSpec:
 
     @staticmethod
     def test_from_zarr_depth() -> None:
-        codecs = ({"name": "bytes", "configuration": {}},)
+        codecs = (Bytes(configuration=BytesConfig()),)
         tree: dict[str, AnyGroupSpec | AnyArraySpec] = {
             "": GroupSpec(members=None, attributes={"level": 0, "type": "group"}),
             "/1": GroupSpec(members=None, attributes={"level": 1, "type": "group"}),
