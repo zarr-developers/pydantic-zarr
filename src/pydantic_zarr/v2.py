@@ -26,11 +26,6 @@ from packaging.version import Version
 from pydantic import AfterValidator, BaseModel, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
 
-# from zarr.core.array import Array, AsyncArray
-# from zarr.core.metadata import ArrayV2Metadata
-# from zarr.core.sync import sync
-# from zarr.errors import ContainsArrayError, ContainsGroupError
-# from zarr.storage._common import make_store_path
 from pydantic_zarr.core import (
     IncEx,
     StrictBase,
