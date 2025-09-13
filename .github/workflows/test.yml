@@ -21,7 +21,7 @@ jobs:
     strategy:
       matrix:
         python-version: ['3.11', '3.12', '3.13']
-        zarr-version: ['3.0.10', '3.1.0']
+        zarr-version: ['3.0.10', '3.1.0', 'none']
         os: ["ubuntu-latest"]
     runs-on: ${{ matrix.os }}
 
@@ -36,10 +36,16 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install hatch
-    - name: Run Tests
+    - name: Run Tests (with zarr)
+      if: matrix.zarr-version != 'none'
       run: |
         hatch run test.py${{ matrix.python-version }}-${{ matrix.zarr-version }}:list-env
         hatch run test.py${{ matrix.python-version }}-${{ matrix.zarr-version }}:test-cov
+    - name: Run Tests (without zarr)
+      if: matrix.zarr-version == 'none'
+      run: |
+        hatch run test-no-zarr.py${{ matrix.python-version }}:list-env
+        hatch run test-no-zarr.py${{ matrix.python-version }}:test-cov
     - name: Upload coverage
       uses: codecov/codecov-action@v5
       with:

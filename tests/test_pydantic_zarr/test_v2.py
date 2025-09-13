@@ -26,10 +26,8 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from numcodecs.abc import Codec
 
-import numcodecs
 import numpy as np
 import numpy.typing as npt
-from numcodecs import GZip
 from packaging.version import Version
 
 from pydantic_zarr.v2 import (
@@ -52,6 +50,11 @@ if sys.version_info < (3, 12):
     from typing_extensions import TypedDict
 else:
     from typing import TypedDict
+
+try:
+    import numcodecs
+except ImportError:
+    numcodecs = None
 
 with suppress(ImportError):
     from zarr.errors import ContainsArrayError, ContainsGroupError
@@ -88,7 +91,7 @@ def dimension_separator(request: pytest.FixtureRequest) -> DimensionSeparator:
 
 @pytest.mark.parametrize("chunks", [(1,), (1, 2), ((1, 2, 3))])
 @pytest.mark.parametrize("dtype", ["bool", "uint8", "float64"])
-@pytest.mark.parametrize("compressor", [None, numcodecs.LZMA(), numcodecs.GZip()])
+@pytest.mark.parametrize("compressor", [None, "LZMA", "GZip"])
 @pytest.mark.parametrize(
     "filters", [(None,), ("delta",), ("scale_offset",), ("delta", "scale_offset")]
 )
@@ -97,10 +100,15 @@ def test_array_spec(
     memory_order: ArrayMemoryOrder,
     dtype: str,
     dimension_separator: DimensionSeparator,
-    compressor: Codec | None,
+    compressor: str | None,
     filters: tuple[str, ...] | None,
 ) -> None:
     zarr = pytest.importorskip("zarr")
+    numcodecs = pytest.importorskip("numcodecs")
+
+    if compressor is not None:
+        compressor = getattr(numcodecs, compressor)()
+
     store = zarr.storage.MemoryStore()
     _filters: list[Codec] | None
     if filters is not None:
@@ -231,7 +239,7 @@ class FakeXarray(FakeDaskArray, WithAttrs): ...
 @pytest.mark.parametrize("order", ["omit", "auto", "F"])
 @pytest.mark.parametrize("filters", ["omit", "auto", []])
 @pytest.mark.parametrize("dimension_separator", ["omit", "auto", "."])
-@pytest.mark.parametrize("compressor", ["omit", "auto", GZip().get_config()])
+@pytest.mark.parametrize("compressor", ["omit", "auto", {"id": "gzip", "level": 1}])
 def test_array_spec_from_array(
     *,
     array: npt.NDArray[Any],
@@ -305,7 +313,10 @@ def test_array_spec_from_array(
 @pytest.mark.parametrize("chunks", [(1,), (1, 2), ((1, 2, 3))])
 @pytest.mark.parametrize("dtype", ["bool", "uint8", np.dtype("uint8"), "float64"])
 @pytest.mark.parametrize("dimension_separator", [".", "/"])
-@pytest.mark.parametrize("compressor", [numcodecs.LZMA().get_config(), numcodecs.GZip()])
+@pytest.mark.parametrize(
+    "compressor",
+    [{"id": "lzma", "format": 1, "check": -1, "preset": None, "filters": None}, "GZip"],
+)
 @pytest.mark.parametrize("filters", [(), ("delta",), ("scale_offset",), ("delta", "scale_offset")])
 def test_serialize_deserialize_groupspec(
     chunks: tuple[int, ...],
@@ -316,6 +327,10 @@ def test_serialize_deserialize_groupspec(
     filters: tuple[str, ...] | None,
 ) -> None:
     zarr = pytest.importorskip("zarr")
+    numcodecs = pytest.importorskip("numcodecs")
+    if isinstance(compressor, str):
+        compressor = getattr(numcodecs, compressor)()
+
     _filters: list[Codec] | None
     if filters is not None:
         _filters = []

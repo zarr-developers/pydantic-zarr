@@ -22,9 +22,6 @@ from typing import (
 
 import numpy as np
 import numpy.typing as npt
-
-# import zarr
-from numcodecs.abc import Codec
 from packaging.version import Version
 from pydantic import AfterValidator, BaseModel, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
@@ -45,6 +42,7 @@ from pydantic_zarr.core import (
 
 if TYPE_CHECKING:
     import zarr
+    from numcodecs.abc import Codec
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
 
@@ -93,7 +91,8 @@ def dictify_codec(value: dict[str, Any] | Codec) -> dict[str, Any]:
         object is returned. This should be a dict with string keys. All other values pass
         through unaltered.
     """
-    if isinstance(value, Codec):
+
+    if (numcodecs := sys.modules.get("numcodecs")) and isinstance(value, numcodecs.abc.Codec):
         return value.get_config()
     return value
 
