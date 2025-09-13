@@ -20,16 +20,17 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: Implementation :: CPython",
 ]
-dependencies = ["zarr>=3", "pydantic>2.0.0"]
+dependencies = ["pydantic>2.0.0", "numpy>=1.24.0"]
 [project.urls]
 Documentation = "https://zarr.dev/pydantic-zarr/"
 Issues = "https://github.com/zarr-developers/pydantic-zarr/issues"
 Source = "https://github.com/zarr-developers/pydantic-zarr"
 
 [project.optional-dependencies]
+zarr = ["zarr>=3.0.0"]
 # pytest pin is due to https://github.com/pytest-dev/pytest-cov/issues/693
-test = ["coverage", "pytest<8.4", "pytest-cov", "pytest-examples"]
-
+test-base = ["coverage", "pytest<8.4", "pytest-cov", "pytest-examples"]
+test = ["pydantic-zarr[test-base,zarr]"]
 docs = [
     "mkdocs-material",
     "mkdocstrings[python]",
@@ -56,6 +57,17 @@ list-env = "pip list"
 [[tool.hatch.envs.test.matrix]]
 python = ["3.11", "3.12", "3.13"]
 zarr = ["3.0.10", "3.1.0"]
+
+[tool.hatch.envs.test-base]
+features = ["test-base"]
+
+[tool.hatch.envs.test-base.scripts]
+test = "pytest tests/test_pydantic_zarr/"
+test-cov = "pytest --cov-config=pyproject.toml --cov=pkg --cov-report html --cov=src tests/test_pydantic_zarr"
+list-env = "pip list"
+
+[[tool.hatch.envs.test-base.matrix]]
+python = ["3.11", "3.12", "3.13"]
 
 [tool.hatch.envs.docs]
 features = ['docs']

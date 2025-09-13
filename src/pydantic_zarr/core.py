@@ -13,9 +13,6 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from pydantic import BaseModel, ConfigDict
-from zarr.core.sync import sync
-from zarr.core.sync_group import get_node
-from zarr.storage._common import make_store_path
 
 if TYPE_CHECKING:
     import zarr
@@ -130,6 +127,10 @@ def maybe_node(
     Return the array or group found at the store / path, if an array or group exists there.
     Otherwise return None.
     """
+    from zarr.core.sync import sync
+    from zarr.core.sync_group import get_node
+    from zarr.storage._common import make_store_path
+
     # convert the storelike store argument to a Zarr store
     spath = sync(make_store_path(store, path=path))
     try:
