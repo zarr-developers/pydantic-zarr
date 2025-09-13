@@ -20,16 +20,16 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: Implementation :: CPython",
 ]
-dependencies = ["zarr>=3", "pydantic>2.0.0"]
+dependencies = ["pydantic>2.0.0"]
 [project.urls]
 Documentation = "https://zarr.dev/pydantic-zarr/"
 Issues = "https://github.com/zarr-developers/pydantic-zarr/issues"
 Source = "https://github.com/zarr-developers/pydantic-zarr"
 
 [project.optional-dependencies]
+zarr = ["zarr>=3.0.0"]
 # pytest pin is due to https://github.com/pytest-dev/pytest-cov/issues/693
-test = ["coverage", "pytest<8.4", "pytest-cov", "pytest-examples"]
-
+test = ["pydantic-zarr[zarr]", "coverage", "pytest<8.4", "pytest-cov", "pytest-examples"]
 docs = [
     "mkdocs-material",
     "mkdocstrings[python]",

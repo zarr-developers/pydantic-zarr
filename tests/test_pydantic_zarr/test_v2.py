@@ -6,13 +6,11 @@ from __future__ import annotations
 
 import json
 import re
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
 import pytest
-import zarr
-import zarr.storage
 from pydantic import ValidationError
-from zarr.errors import ContainsArrayError, ContainsGroupError
 
 from pydantic_zarr.core import tuplify_json
 
@@ -31,7 +29,6 @@ if TYPE_CHECKING:
 import numcodecs
 import numpy as np
 import numpy.typing as npt
-import zarr
 from numcodecs import GZip
 from packaging.version import Version
 
@@ -55,6 +52,9 @@ if sys.version_info < (3, 12):
     from typing_extensions import TypedDict
 else:
     from typing import TypedDict
+
+with suppress(ImportError):
+    from zarr.errors import ContainsArrayError, ContainsGroupError
 
 ArrayMemoryOrder = Literal["C", "F"]
 DimensionSeparator = Literal[".", "/"]
@@ -100,6 +100,7 @@ def test_array_spec(
     compressor: Codec | None,
     filters: tuple[str, ...] | None,
 ) -> None:
+    zarr = pytest.importorskip("zarr")
     store = zarr.storage.MemoryStore()
     _filters: list[Codec] | None
     if filters is not None:
@@ -314,6 +315,7 @@ def test_serialize_deserialize_groupspec(
     compressor: Any,
     filters: tuple[str, ...] | None,
 ) -> None:
+    zarr = pytest.importorskip("zarr")
     _filters: list[Codec] | None
     if filters is not None:
         _filters = []
@@ -416,6 +418,7 @@ def test_validation() -> None:
     Test that specialized GroupSpec and ArraySpec instances cannot be serialized from
     the wrong inputs without a ValidationError.
     """
+    zarr = pytest.importorskip("zarr")
 
     class GroupAttrsA(TypedDict):
         group_a: bool
@@ -576,6 +579,7 @@ def test_array_like() -> None:
 
 
 def test_array_like_with_zarr() -> None:
+    zarr = pytest.importorskip("zarr")
     arr = ArraySpec(shape=(1,), dtype="uint8", chunks=(1,))
     store = zarr.storage.MemoryStore()
     arr_stored = arr.to_zarr(store, path="arr")
@@ -599,6 +603,7 @@ def test_group_like() -> None:
 
 # todo: parametrize
 def test_from_zarr_depth() -> None:
+    zarr = pytest.importorskip("zarr")
     tree: dict[str, GroupSpec | ArraySpec] = {
         "": GroupSpec(members=None, attributes={"level": 0, "type": "group"}),
         "/1": GroupSpec(members=None, attributes={"level": 1, "type": "group"}),
@@ -636,6 +641,7 @@ def test_arrayspec_from_zarr(dtype_example: DTypeExample) -> None:
     """
     Test that deserializing an ArraySpec from a zarr python store works as expected.
     """
+    zarr = pytest.importorskip("zarr")
     store = {}
     data_type = dtype_example.name
     if ZARR_PYTHON_VERSION >= Version("3.1.0") and data_type == "|O":
