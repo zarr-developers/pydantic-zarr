@@ -44,8 +44,8 @@ jobs:
     - name: Run Tests (without zarr)
       if: matrix.zarr-version == 'none'
       run: |
-        hatch run test-no-zarr.py${{ matrix.python-version }}:list-env
-        hatch run test-no-zarr.py${{ matrix.python-version }}:test-cov
+        hatch run test-base.py${{ matrix.python-version }}:list-env
+        hatch run test-base.py${{ matrix.python-version }}:test-cov
     - name: Upload coverage
       uses: codecov/codecov-action@v5
       with:
