@@ -143,7 +143,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
     Attributes
     ----------
-    attributes: TAttr, default = {}
+    attributes: TAttr
         User-defined metadata associated with this array. Should be JSON-serializable.
     shape: tuple[int, ...]
         The shape of this array.
@@ -168,7 +168,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         The default is "/".
     """
 
-    attributes: TAttr = cast(TAttr, {})
+    attributes: TAttr
     shape: tuple[int, ...]
     chunks: tuple[int, ...]
     dtype: DtypeStr | list[tuple[Any, ...]]
@@ -467,7 +467,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
     Attributes
     ----------
 
-    attributes: TAttr, default = {}
+    attributes: TAttr
         The user-defined attributes of this group. Should be JSON-serializable.
     members: dict[str, TItem] | None, default = {}
         The members of this group. `members` may be `None`, which models the condition
@@ -476,7 +476,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         are either `ArraySpec` or `GroupSpec`.
     """
 
-    attributes: TAttr = cast(TAttr, {})
+    attributes: TAttr
     members: Annotated[Mapping[str, TItem] | None, AfterValidator(ensure_key_no_path)] = {}
 
     @classmethod
