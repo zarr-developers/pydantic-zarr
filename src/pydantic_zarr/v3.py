@@ -419,7 +419,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             from zarr.errors import ContainsArrayError, ContainsGroupError
             from zarr.storage._common import make_store_path
         except ImportError as e:
-            raise ImportError("zarr must be installed to use this method") from e
+            raise ImportError("zarr must be installed to use to_zarr") from e
 
         store_path = sync(make_store_path(store, path=path))
         extant_node = maybe_node(store, path, zarr_format=3)
@@ -692,7 +692,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
             import zarr
             from zarr.errors import ContainsArrayError, ContainsGroupError
         except ImportError as e:
-            raise ImportError("zarr must be installed to use this method") from e
+            raise ImportError("zarr must be installed to use to_zarr") from e
 
         spec_dict = self.model_dump(exclude={"members": True})
         attrs = spec_dict.pop("attributes")
