@@ -142,6 +142,7 @@ def test_arrayspec_to_zarr(
     store = {}
 
     arr_spec = ArraySpec(
+        attributes={},
         shape=(10,),
         data_type=data_type,
         chunk_grid={"name": "regular", "configuration": {"chunk_shape": (10,)}},

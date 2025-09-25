@@ -122,7 +122,7 @@ from pydantic_zarr.v2 import ArraySpec, GroupSpec
 tree = {
     "": GroupSpec(members=None, attributes={"root": True}),
     "/a": GroupSpec(members=None, attributes={"root": False}),
-    "/a/b": ArraySpec(shape=(10, 10), dtype="uint8", chunks=(1, 1)),
+    "/a/b": ArraySpec(shape=(10, 10), dtype="uint8", chunks=(1, 1), attributes={}),
 }
 
 print(GroupSpec.from_flat(tree).model_dump())
@@ -166,7 +166,7 @@ from pydantic_zarr.v2 import ArraySpec, GroupSpec
 # the keys must be valid paths in the Zarr storage hierarchy
 # note that the `members` attribute is `None` for the `GroupSpec` instances in this `dict`.
 
-a_b = ArraySpec(shape=(10, 10), dtype="uint8", chunks=(1, 1))
+a_b = ArraySpec(shape=(10, 10), dtype="uint8", chunks=(1, 1), attributes={})
 a = GroupSpec(members={'b': a_b}, attributes={"root": False})
 root = GroupSpec(members={'a': a}, attributes={"root": True})
 
@@ -200,7 +200,7 @@ hierarchy without explicitly creating the intermediate groups first.
 ```python
 from pydantic_zarr.v2 import ArraySpec, GroupSpec
 
-tree = {'/a/b/c': ArraySpec(shape=(1,), dtype='uint8', chunks=(1,))}
+tree = {'/a/b/c': ArraySpec(shape=(1,), dtype='uint8', chunks=(1,), attributes={})}
 print(GroupSpec.from_flat(tree).model_dump())
 """
 {
@@ -250,9 +250,9 @@ import zarr.storage
 
 from pydantic_zarr.v2 import ArraySpec, GroupSpec
 
-arr_a = ArraySpec(shape=(1,), dtype='uint8', chunks=(1,))
+arr_a = ArraySpec(shape=(1,), dtype='uint8', chunks=(1,), attributes={})
 # make an array with a different shape
-arr_b = ArraySpec(shape=(2,), dtype='uint8', chunks=(1,))
+arr_b = ArraySpec(shape=(2,), dtype='uint8', chunks=(1,), attributes={})
 
 # Returns False, because of mismatched shape
 print(arr_a.like(arr_b))

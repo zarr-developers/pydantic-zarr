@@ -576,7 +576,7 @@ def test_array_like() -> None:
 
 
 def test_array_like_with_zarr() -> None:
-    arr = ArraySpec(shape=(1,), dtype="uint8", chunks=(1,))
+    arr = ArraySpec(shape=(1,), dtype="uint8", chunks=(1,), attributes={})
     store = zarr.storage.MemoryStore()
     arr_stored = arr.to_zarr(store, path="arr")
     assert arr.like(arr_stored)
