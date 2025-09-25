@@ -689,7 +689,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
             import zarr
             from zarr.errors import ContainsArrayError, ContainsGroupError
         except ImportError as e:
-            raise ImportError("zarr must be installed to use this method") from e
+            raise ImportError("zarr must be installed to use to_zarr") from e
 
         spec_dict = self.model_dump(exclude={"members": True})
         attrs = spec_dict.pop("attributes")
