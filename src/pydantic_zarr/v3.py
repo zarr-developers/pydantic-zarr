@@ -352,7 +352,10 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         ArraySpec(zarr_format=2, attributes={}, shape=(10, 10), chunks=(10, 10), dtype='<f8', fill_value=0.0, order='C', filters=None, dimension_separator='.', compressor={'id': 'blosc', 'cname': 'lz4', 'clevel': 5, 'shuffle': 1, 'blocksize': 0})
 
         """
-        from zarr.core.metadata import ArrayV3Metadata
+        try:
+            from zarr.core.metadata import ArrayV3Metadata
+        except ImportError as e:
+            raise ImportError("zarr must be installed to use from_zarr") from e
 
         meta_json: Mapping[str, object]
 
