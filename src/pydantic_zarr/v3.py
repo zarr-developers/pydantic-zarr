@@ -201,7 +201,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     """
 
     node_type: Literal["array"] = "array"
-    attributes: TAttr = cast("TAttr", {})
+    attributes: TAttr
     shape: tuple[int, ...]
     data_type: DTypeLike
     chunk_grid: RegularChunking  # todo: validate this against shape
@@ -516,7 +516,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
     """
 
     node_type: Literal["group"] = "group"
-    attributes: TAttr = cast("TAttr", {})
+    attributes: TAttr
     members: Annotated[Mapping[str, TItem] | None, AfterValidator(ensure_key_no_path)] = {}
 
     @classmethod
