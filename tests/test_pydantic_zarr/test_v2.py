@@ -6,13 +6,11 @@ from __future__ import annotations
 
 import json
 import re
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
 import pytest
-import zarr
-import zarr.storage
 from pydantic import ValidationError
-from zarr.errors import ContainsArrayError, ContainsGroupError
 
 from pydantic_zarr.core import tuplify_json
 
@@ -28,11 +26,8 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from numcodecs.abc import Codec
 
-import numcodecs
 import numpy as np
 import numpy.typing as npt
-import zarr
-from numcodecs import GZip
 from packaging.version import Version
 
 from pydantic_zarr.v2 import (
@@ -55,6 +50,14 @@ if sys.version_info < (3, 12):
     from typing_extensions import TypedDict
 else:
     from typing import TypedDict
+
+try:
+    import numcodecs
+except ImportError:
+    numcodecs = None
+
+with suppress(ImportError):
+    from zarr.errors import ContainsArrayError, ContainsGroupError
 
 ArrayMemoryOrder = Literal["C", "F"]
 DimensionSeparator = Literal[".", "/"]
@@ -88,7 +91,7 @@ def dimension_separator(request: pytest.FixtureRequest) -> DimensionSeparator:
 
 @pytest.mark.parametrize("chunks", [(1,), (1, 2), ((1, 2, 3))])
 @pytest.mark.parametrize("dtype", ["bool", "uint8", "float64"])
-@pytest.mark.parametrize("compressor", [None, numcodecs.LZMA(), numcodecs.GZip()])
+@pytest.mark.parametrize("compressor", [None, "LZMA", "GZip"])
 @pytest.mark.parametrize(
     "filters", [(None,), ("delta",), ("scale_offset",), ("delta", "scale_offset")]
 )
@@ -97,9 +100,15 @@ def test_array_spec(
     memory_order: ArrayMemoryOrder,
     dtype: str,
     dimension_separator: DimensionSeparator,
-    compressor: Codec | None,
+    compressor: str | None,
     filters: tuple[str, ...] | None,
 ) -> None:
+    zarr = pytest.importorskip("zarr")
+    numcodecs = pytest.importorskip("numcodecs")
+
+    if compressor is not None:
+        compressor = getattr(numcodecs, compressor)()
+
     store = zarr.storage.MemoryStore()
     _filters: list[Codec] | None
     if filters is not None:
@@ -230,7 +239,7 @@ class FakeXarray(FakeDaskArray, WithAttrs): ...
 @pytest.mark.parametrize("order", ["omit", "auto", "F"])
 @pytest.mark.parametrize("filters", ["omit", "auto", []])
 @pytest.mark.parametrize("dimension_separator", ["omit", "auto", "."])
-@pytest.mark.parametrize("compressor", ["omit", "auto", GZip().get_config()])
+@pytest.mark.parametrize("compressor", ["omit", "auto", {"id": "gzip", "level": 1}])
 def test_array_spec_from_array(
     *,
     array: npt.NDArray[Any],
@@ -304,7 +313,10 @@ def test_array_spec_from_array(
 @pytest.mark.parametrize("chunks", [(1,), (1, 2), ((1, 2, 3))])
 @pytest.mark.parametrize("dtype", ["bool", "uint8", np.dtype("uint8"), "float64"])
 @pytest.mark.parametrize("dimension_separator", [".", "/"])
-@pytest.mark.parametrize("compressor", [numcodecs.LZMA().get_config(), numcodecs.GZip()])
+@pytest.mark.parametrize(
+    "compressor",
+    [{"id": "lzma", "format": 1, "check": -1, "preset": None, "filters": None}, "GZip"],
+)
 @pytest.mark.parametrize("filters", [(), ("delta",), ("scale_offset",), ("delta", "scale_offset")])
 def test_serialize_deserialize_groupspec(
     chunks: tuple[int, ...],
@@ -314,6 +326,11 @@ def test_serialize_deserialize_groupspec(
     compressor: Any,
     filters: tuple[str, ...] | None,
 ) -> None:
+    zarr = pytest.importorskip("zarr")
+    numcodecs = pytest.importorskip("numcodecs")
+    if isinstance(compressor, str):
+        compressor = getattr(numcodecs, compressor)()
+
     _filters: list[Codec] | None
     if filters is not None:
         _filters = []
@@ -416,6 +433,7 @@ def test_validation() -> None:
     Test that specialized GroupSpec and ArraySpec instances cannot be serialized from
     the wrong inputs without a ValidationError.
     """
+    zarr = pytest.importorskip("zarr")
 
     class GroupAttrsA(TypedDict):
         group_a: bool
@@ -576,6 +594,7 @@ def test_array_like() -> None:
 
 
 def test_array_like_with_zarr() -> None:
+    zarr = pytest.importorskip("zarr")
     arr = ArraySpec(shape=(1,), dtype="uint8", chunks=(1,), attributes={})
     store = zarr.storage.MemoryStore()
     arr_stored = arr.to_zarr(store, path="arr")
@@ -599,6 +618,7 @@ def test_group_like() -> None:
 
 # todo: parametrize
 def test_from_zarr_depth() -> None:
+    zarr = pytest.importorskip("zarr")
     tree: dict[str, GroupSpec | ArraySpec] = {
         "": GroupSpec(members=None, attributes={"level": 0, "type": "group"}),
         "/1": GroupSpec(members=None, attributes={"level": 1, "type": "group"}),
@@ -636,6 +656,7 @@ def test_arrayspec_from_zarr(dtype_example: DTypeExample) -> None:
     """
     Test that deserializing an ArraySpec from a zarr python store works as expected.
     """
+    zarr = pytest.importorskip("zarr")
     store = {}
     data_type = dtype_example.name
     if ZARR_PYTHON_VERSION >= Version("3.1.0") and data_type == "|O":

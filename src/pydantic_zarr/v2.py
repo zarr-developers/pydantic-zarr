@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 from collections.abc import Mapping
 from importlib.metadata import version
 from typing import (
@@ -21,16 +22,9 @@ from typing import (
 
 import numpy as np
 import numpy.typing as npt
-import zarr
-from numcodecs.abc import Codec
 from packaging.version import Version
 from pydantic import AfterValidator, BaseModel, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
-from zarr.core.array import Array, AsyncArray
-from zarr.core.metadata import ArrayV2Metadata
-from zarr.core.sync import sync
-from zarr.errors import ContainsArrayError, ContainsGroupError
-from zarr.storage._common import make_store_path
 
 from pydantic_zarr.core import (
     IncEx,
@@ -42,6 +36,8 @@ from pydantic_zarr.core import (
 )
 
 if TYPE_CHECKING:
+    import zarr
+    from numcodecs.abc import Codec
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
 
@@ -90,7 +86,8 @@ def dictify_codec(value: dict[str, Any] | Codec) -> dict[str, Any]:
         object is returned. This should be a dict with string keys. All other values pass
         through unaltered.
     """
-    if isinstance(value, Codec):
+
+    if (numcodecs := sys.modules.get("numcodecs")) and isinstance(value, numcodecs.abc.Codec):
         return value.get_config()
     return value
 
@@ -334,6 +331,11 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         ArraySpec(zarr_format=2, attributes={}, shape=(10, 10), chunks=(10, 10), dtype='<f8', fill_value=0.0, order='C', filters=None, dimension_separator='.', compressor={'id': 'blosc', 'cname': 'lz4', 'clevel': 5, 'shuffle': 1, 'blocksize': 0})
 
         """
+        try:
+            from zarr.core.metadata import ArrayV2Metadata
+        except ImportError as e:
+            raise ImportError("zarr must be installed to use from_zarr") from e
+
         if not isinstance(array.metadata, ArrayV2Metadata):
             msg = "Array is not a Zarr format 2 array"
             raise TypeError(msg)
@@ -378,6 +380,16 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         zarr.Array
             A Zarr array that is structurally identical to `self`.
         """
+        try:
+            import zarr
+            from zarr.core.array import Array, AsyncArray
+            from zarr.core.metadata import ArrayV2Metadata
+            from zarr.core.sync import sync
+            from zarr.errors import ContainsArrayError, ContainsGroupError
+            from zarr.storage._common import make_store_path
+        except ImportError as e:
+            raise ImportError("zarr must be installed to use to_zarr") from e
+
         store_path = sync(make_store_path(store, path=path))
 
         extant_node = maybe_node(store, path, zarr_format=2)
@@ -449,10 +461,10 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         """
 
         other_parsed: ArraySpec
-        if isinstance(other, zarr.Array):
+        if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Array):
             other_parsed = ArraySpec.from_zarr(other)
         else:
-            other_parsed = other
+            other_parsed = other  # type: ignore[assignment]
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
@@ -505,6 +517,10 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         -------
         An instance of GroupSpec that represents the structure of the Zarr hierarchy.
         """
+        try:
+            import zarr
+        except ImportError as e:
+            raise ImportError("zarr must be installed to use from_zarr") from e
 
         result: GroupSpec[TAttr, TItem]
         attributes = group.attrs.asdict()
@@ -563,6 +579,12 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
             A zarr group that is structurally identical to `self`.
 
         """
+        try:
+            import zarr
+            from zarr.errors import ContainsArrayError, ContainsGroupError
+        except ImportError as e:
+            raise ImportError("zarr must be installed to use to_zarr") from e
+
         spec_dict = self.model_dump(exclude={"members": True})
         attrs = spec_dict.pop("attributes")
         extant_node = maybe_node(store, path, zarr_format=2)
@@ -660,10 +682,10 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         """
 
         other_parsed: GroupSpec
-        if isinstance(other, zarr.Group):
+        if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
             other_parsed = GroupSpec.from_zarr(other)
         else:
-            other_parsed = other
+            other_parsed = other  # type: ignore[assignment]
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
@@ -764,6 +786,7 @@ def from_zarr(element: zarr.Array | zarr.Group, depth: int = -1) -> AnyArraySpec
         An instance of `GroupSpec` or `ArraySpec` that models the structure of the input Zarr group
         or array.
     """
+    import zarr
 
     if isinstance(element, zarr.Array):
         return ArraySpec.from_zarr(element)

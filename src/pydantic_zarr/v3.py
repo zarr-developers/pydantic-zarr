@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Callable, Mapping
 from importlib.metadata import version
 from typing import (
@@ -20,11 +21,9 @@ from typing import (
 
 import numpy as np
 import numpy.typing as npt
-import zarr
 from packaging.version import Version
 from pydantic import AfterValidator, BaseModel, BeforeValidator
 from typing_extensions import TypedDict
-from zarr.errors import ContainsArrayError, ContainsGroupError
 
 from pydantic_zarr.core import (
     IncEx,
@@ -40,6 +39,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     import numpy.typing as npt
+    import zarr  # noqa: TC004
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
 
@@ -280,7 +280,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
         """
         if attributes == "auto":
-            attributes_actual = cast(TAttr, auto_attributes(array))
+            attributes_actual = cast("TAttr", auto_attributes(array))
         else:
             attributes_actual = attributes
 
@@ -352,8 +352,12 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         ArraySpec(zarr_format=2, attributes={}, shape=(10, 10), chunks=(10, 10), dtype='<f8', fill_value=0.0, order='C', filters=None, dimension_separator='.', compressor={'id': 'blosc', 'cname': 'lz4', 'clevel': 5, 'shuffle': 1, 'blocksize': 0})
 
         """
+        try:
+            from zarr.core.metadata import ArrayV3Metadata
+        except ImportError as e:
+            raise ImportError("zarr must be installed to use from_zarr") from e
+
         meta_json: Mapping[str, object]
-        from zarr.core.metadata import ArrayV3Metadata
 
         if not isinstance(array.metadata, ArrayV3Metadata):
             raise ValueError("Only zarr v3 arrays are supported")  # noqa: TRY004
@@ -407,10 +411,15 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         A zarr array that is structurally identical to the ArraySpec.
         This operation will create metadata documents in the store.
         """
-        from zarr.core.array import Array, AsyncArray
-        from zarr.core.metadata.v3 import ArrayV3Metadata
-        from zarr.core.sync import sync
-        from zarr.storage._common import make_store_path
+        try:
+            import zarr
+            from zarr.core.array import Array, AsyncArray
+            from zarr.core.metadata.v3 import ArrayV3Metadata
+            from zarr.core.sync import sync
+            from zarr.errors import ContainsArrayError, ContainsGroupError
+            from zarr.storage._common import make_store_path
+        except ImportError as e:
+            raise ImportError("zarr must be installed to use to_zarr") from e
 
         store_path = sync(make_store_path(store, path=path))
         extant_node = maybe_node(store, path, zarr_format=3)
@@ -620,6 +629,10 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         -------
         An instance of GroupSpec that represents the structure of the zarr hierarchy.
         """
+        try:
+            import zarr
+        except ImportError as e:
+            raise ImportError("zarr must be installed to use from_zarr") from e
 
         result: GroupSpec[TAttr, TItem]
         attributes = group.attrs.asdict()
@@ -675,6 +688,11 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         A zarr group that is structurally identical to the GroupSpec.
         This operation will create metadata documents in the store.
         """
+        try:
+            import zarr
+            from zarr.errors import ContainsArrayError, ContainsGroupError
+        except ImportError as e:
+            raise ImportError("zarr must be installed to use to_zarr") from e
 
         spec_dict = self.model_dump(exclude={"members": True})
         attrs = spec_dict.pop("attributes")
@@ -776,10 +794,10 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         """
 
         other_parsed: GroupSpec[Any, Any]
-        if isinstance(other, zarr.Group):
+        if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
             other_parsed = GroupSpec.from_zarr(other)
         else:
-            other_parsed = other
+            other_parsed = other  # type: ignore[assignment]
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 

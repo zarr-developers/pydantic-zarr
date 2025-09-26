@@ -15,4 +15,6 @@ def test_docstrings(example: CodeExample, eval_example: EvalExample) -> None:
 
 @pytest.mark.parametrize("example", find_examples("docs"), ids=str)
 def test_docs_examples(example: CodeExample, eval_example: EvalExample) -> None:
+    pytest.importorskip("zarr")
+
     eval_example.run_print_check(example)

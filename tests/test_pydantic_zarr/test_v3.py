@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import json
 import re
 from dataclasses import asdict
 
 import numpy as np
 import pytest
-import zarr
 from pydantic import ValidationError
 
 from pydantic_zarr.core import tuplify_json
@@ -24,6 +25,8 @@ from pydantic_zarr.v3 import (
 )
 
 from .conftest import DTYPE_EXAMPLES_V3, DTypeExample
+
+ZARR_AVAILABLE = importlib.util.find_spec("zarr") is not None
 
 
 def test_serialize_deserialize() -> None:
@@ -69,6 +72,8 @@ def test_from_array() -> None:
     )
     # check that we can write this array to zarr
     # TODO: fix type of the store argument in to_zarr
+    if not ZARR_AVAILABLE:
+        return
     array_spec.to_zarr(store={}, path="")  # type: ignore[arg-type]
 
 
@@ -99,6 +104,7 @@ def test_arrayspec_from_zarr(dtype_example: DTypeExample) -> None:
     """
     Test that deserializing an ArraySpec from a zarr python store works as expected.
     """
+    zarr = pytest.importorskip("zarr")
     store = {}
 
     data_type = dtype_example.name
@@ -151,6 +157,8 @@ def test_arrayspec_to_zarr(
         fill_value=fill_value,
         dimension_names=("x",),
     )
+    if not ZARR_AVAILABLE:
+        return
     arr = arr_spec.to_zarr(store=store, path=path, overwrite=overwrite, config=config)
     assert arr._async_array.metadata == arr._async_array.metadata
     for key, value in config.items():
@@ -206,6 +214,7 @@ class TestGroupSpec:
 
     @staticmethod
     def test_from_zarr_depth() -> None:
+        zarr = pytest.importorskip("zarr")
         codecs = ({"name": "bytes", "configuration": {}},)
         tree: dict[str, AnyGroupSpec | AnyArraySpec] = {
             "": GroupSpec(members=None, attributes={"level": 0, "type": "group"}),
@@ -254,12 +263,17 @@ def test_mix_v3_v2_fails() -> None:
 
 
 @pytest.mark.parametrize(
-    ("arr", "expected_names"),
+    ("args", "kwargs", "expected_names"),
     [
-        (zarr.zeros((1,), dimension_names=["x"]), ("x",)),
-        (zarr.zeros((1,)), None),
+        ((1,), {"dimension_names": ["x"]}, ("x",)),
+        ((1,), {}, None),
     ],
 )
-def test_dim_names_from_zarr_array(arr: zarr.Array, expected_names: tuple[str, ...] | None) -> None:
+def test_dim_names_from_zarr_array(
+    args: tuple, kwargs: dict, expected_names: tuple[str, ...] | None
+) -> None:
+    zarr = pytest.importorskip("zarr")
+
+    arr = zarr.zeros(*args, **kwargs)
     spec: AnyArraySpec = ArraySpec.from_zarr(arr)
     assert spec.dimension_names == expected_names

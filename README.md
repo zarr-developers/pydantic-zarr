@@ -6,7 +6,11 @@
 
 ## Installation
 
-`pip install -U pydantic-zarr`
+```sh
+pip install -U pydantic-zarr
+# or, with zarr i/o support
+pip install -U "pydantic-zarr[zarr]"
+```
 
 ## Getting help
 
