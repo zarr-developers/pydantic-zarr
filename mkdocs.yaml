@@ -37,6 +37,8 @@ nav:
         - Core: api/v3.md
         - Codecs: api/v3/codecs.md
 
+watch:
+  - src
 
 plugins:
 - mkdocstrings:
