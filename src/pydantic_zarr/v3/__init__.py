@@ -96,7 +96,7 @@ class AnyNamedConfig(NamedConfig[str, Mapping[str, object]]):
     """
 
 
-CodecLike = str | AnyNamedConfig | Codec
+CodecLike = str | Codec
 """A type modelling the permissible declarations for codecs"""
 
 
