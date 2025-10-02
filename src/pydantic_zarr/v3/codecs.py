@@ -1,6 +1,9 @@
+"""
+Models for Zarr v3 codecs."""
+
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, PositiveInt, PrivateAttr, field_validator, model_serializer
+from pydantic import BaseModel, Field, PositiveInt, field_validator, model_serializer
 
 
 class Codec(BaseModel):
@@ -10,7 +13,6 @@ class Codec(BaseModel):
 
     name: str
     configuration: BaseModel
-    _codec_type: Literal["array-array", "array-bytes", "bytes-bytes"] = PrivateAttr()
 
 
 class BloscConfiguration(BaseModel):
@@ -32,7 +34,6 @@ class Blosc(Codec):
 
     name: Literal["blosc"] = "blosc"
     configuration: BloscConfiguration
-    _codec_type: Literal["bytes-bytes"] = "bytes-bytes"
 
 
 class BytesConfig(BaseModel):
@@ -57,7 +58,6 @@ class Bytes(Codec):
 
     name: Literal["bytes"] = "bytes"
     configuration: BytesConfig
-    _codec_type: Literal["array-bytes"] = "array-bytes"
 
 
 class CRC32CConfig(BaseModel):
@@ -73,8 +73,6 @@ class CRC32C(Codec):
 
     name: Literal["crc32c"] = "crc32c"
     configuration: CRC32CConfig = Field(default=CRC32CConfig())
-
-    _codec_type: Literal["bytes-bytes"] = "bytes-bytes"
 
 
 class GzipConfig(BaseModel):
@@ -93,8 +91,6 @@ class Gzip(Codec):
     name: Literal["gzip"] = "gzip"
     configuration: GzipConfig
 
-    _codec_type: Literal["bytes-bytes"] = "bytes-bytes"
-
 
 class ShardingConfig(BaseModel):
     """
@@ -109,13 +105,6 @@ class ShardingConfig(BaseModel):
     )
     index_location: Literal["start", "end"] = "end"
 
-    @field_validator("codecs", "index_codecs")
-    @classmethod
-    def check_single_array_bytes_codec(cls, codecs: tuple[Codec, ...]) -> tuple[Codec, ...]:
-        if sum([(codec._codec_type == "array-bytes") for codec in codecs]) != 1:
-            raise ValueError("Codec list must contain exactly one array-bytes codec")
-        return codecs
-
 
 class Sharding(Codec):
     """
@@ -124,7 +113,6 @@ class Sharding(Codec):
 
     name: Literal["sharding_indexed"] = "sharding_indexed"
     configuration: ShardingConfig
-    _codec_type: Literal["bytes-bytes"] = "bytes-bytes"
 
 
 class TransposeConfig(BaseModel):
@@ -149,4 +137,3 @@ class Transpose(Codec):
 
     name: Literal["transpose"] = "transpose"
     configuration: TransposeConfig
-    _codec_type: Literal["array-array"] = "array-array"
