@@ -25,11 +25,11 @@ print(spec.model_dump_json(indent=2))
 """
 {
   "zarr_format": 3,
-  "node_type": "group",
   "attributes": {
     "foo": 42,
     "bar": false
   },
+  "node_type": "group",
   "members": {
     "array": {
       "zarr_format": 3,

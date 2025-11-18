@@ -114,14 +114,14 @@ methods to convert to / from these dictionaries.
 This example demonstrates how to create a `GroupSpec` from a `dict` representation of a Zarr hierarchy.
 
 ```python
-from pydantic_zarr.v2 import ArraySpec, GroupSpec
+from pydantic_zarr.v2 import ArraySpec, GroupSpec, BaseGroupSpec
 
 # other than the key representing the root path "",
 # the keys must be valid paths in the Zarr storage hierarchy
-# note that the `members` attribute is `None` for the `GroupSpec` instances in this `dict`.
+# note that groups without members are represented as `BaseGroupSpec` instances in this `dict`.
 tree = {
-    "": GroupSpec(members=None, attributes={"root": True}),
-    "/a": GroupSpec(members=None, attributes={"root": False}),
+    "": BaseGroupSpec(attributes={"root": True}),
+    "/a": BaseGroupSpec(attributes={"root": False}),
     "/a/b": ArraySpec(shape=(10, 10), dtype="uint8", chunks=(1, 1), attributes={}),
 }
 
@@ -164,7 +164,7 @@ from pydantic_zarr.v2 import ArraySpec, GroupSpec
 
 # other than the key representing the root path "",
 # the keys must be valid paths in the Zarr storage hierarchy
-# note that the `members` attribute is `None` for the `GroupSpec` instances in this `dict`.
+# note that groups without members are represented as `BaseGroupSpec` instances in this `dict`.
 
 a_b = ArraySpec(shape=(10, 10), dtype="uint8", chunks=(1, 1), attributes={})
 a = GroupSpec(members={'b': a_b}, attributes={"root": False})
@@ -173,8 +173,8 @@ root = GroupSpec(members={'a': a}, attributes={"root": True})
 print(root.to_flat())
 """
 {
-    '': GroupSpec(zarr_format=2, attributes={'root': True}, members=None),
-    '/a': GroupSpec(zarr_format=2, attributes={'root': False}, members=None),
+    '': BaseGroupSpec(zarr_format=2, attributes={'root': True}),
+    '/a': BaseGroupSpec(zarr_format=2, attributes={'root': False}),
     '/a/b': ArraySpec(
         zarr_format=2,
         attributes={},
@@ -309,7 +309,7 @@ import sys
 from collections.abc import Mapping
 from pydantic import ValidationError
 
-from pydantic_zarr.v2 import ArraySpec, GroupSpec, TAttr, TItem, TBaseItem
+from pydantic_zarr.v2 import ArraySpec, GroupSpec
 from typing import Any
 if sys.version_info < (3, 12):
     from typing_extensions import TypedDict
@@ -324,33 +324,33 @@ class GroupAttrs(TypedDict):
 
 
 # a Zarr group with attributes consistent with GroupAttrs
-SpecificAttrsGroup = GroupSpec[GroupAttrs, Any]
+SpecificAttrsGroup = GroupSpec[Mapping[str, "ArraySpec | GroupSpec"]]
 
 try:
-    SpecificAttrsGroup(attributes={'a': 10, 'b': 'foo'})
+    SpecificAttrsGroup(attributes={'a': 10, 'b': 'foo'}, members={})
 except ValidationError as exc:
     print(exc)
     """
-    1 validation error for GroupSpec[GroupAttrs, Any]
+    1 validation error for GroupSpec[Mapping[str, ArraySpec | GroupSpec]]
     attributes.b
       Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='foo', input_type=str]
         For further information visit https://errors.pydantic.dev/2.11/v/int_parsing
     """
 
 # this passes validation
-print(SpecificAttrsGroup(attributes={'a': 100, 'b': 100}))
+print(SpecificAttrsGroup(attributes={'a': 100, 'b': 100}, members={}))
 #> zarr_format=2 attributes={'a': 100, 'b': 100} members={}
 
 # a Zarr group that only contains arrays -- no subgroups!
 # The attributes are allowed to be any Mapping[str, object]
-ArraysOnlyGroup = GroupSpec[Mapping[str, object], ArraySpec]
+ArraysOnlyGroup = GroupSpec[Mapping[str, ArraySpec]]
 
 try:
-    ArraysOnlyGroup(attributes={}, members={'foo': GroupSpec(attributes={})})
+    ArraysOnlyGroup(attributes={}, members={'foo': GroupSpec(members={}, attributes={})})
 except ValidationError as exc:
     print(exc)
     """
-    1 validation error for GroupSpec[Mapping[str, object], ArraySpec]
+    1 validation error for GroupSpec[Mapping[str, ArraySpec]]
     members.foo
       Input should be a valid dictionary or instance of ArraySpec [type=model_type, input_value=GroupSpec(zarr_format=2, ...tributes={}, members={}), input_type=GroupSpec]
         For further information visit https://errors.pydantic.dev/2.11/v/model_type

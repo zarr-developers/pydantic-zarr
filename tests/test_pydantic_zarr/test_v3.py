@@ -12,7 +12,6 @@ from pydantic import ValidationError
 
 from pydantic_zarr.core import tuplify_json
 from pydantic_zarr.v3 import (
-    AnyArraySpec,
     AnyGroupSpec,
     ArraySpec,
     DefaultChunkKeyEncoding,
@@ -172,23 +171,31 @@ def get_flat_example() -> tuple[dict[str, AnyArraySpec | AnyGroupSpec], AnyGroup
     The returned value is a tuple with two elements: a flattened dict representation of a hierarchy,
     and the root group, with all of its members (i.e., the non-flat version of that hierarchy).
     """
+    from pydantic_zarr.v3 import BaseGroupSpec
+
     named_nodes: tuple[AnyArraySpec | AnyGroupSpec, ...] = (
-        GroupSpec(attributes={"name": ""}, members=None),
+        GroupSpec(attributes={"name": ""}, members={}),
         ArraySpec.from_array(np.arange(10), attributes={"name": "/a1"}),
-        GroupSpec(attributes={"name": "/g1"}, members=None),
+        GroupSpec(attributes={"name": "/g1"}, members={}),
         ArraySpec.from_array(np.arange(10), attributes={"name": "/g1/a2"}),
-        GroupSpec(attributes={"name": "/g1/g2"}, members=None),
+        GroupSpec(attributes={"name": "/g1/g2"}, members={}),
         ArraySpec.from_array(np.arange(10), attributes={"name": "/g1/g2/a3"}),
     )
 
+    # For the flattened representation, groups should be BaseGroupSpec instances (without members)
     members_flat: dict[str, AnyArraySpec | AnyGroupSpec] = {
-        a.attributes["name"]: a for a in named_nodes
+        "": BaseGroupSpec(attributes={"name": ""}),
+        "/a1": named_nodes[1],  # ArraySpec
+        "/g1": BaseGroupSpec(attributes={"name": "/g1"}),
+        "/g1/a2": named_nodes[3],  # ArraySpec
+        "/g1/g2": BaseGroupSpec(attributes={"name": "/g1/g2"}),
+        "/g1/g2/a3": named_nodes[5],  # ArraySpec
     }
-    g2 = members_flat["/g1/g2"].model_copy(update={"members": {"a3": members_flat["/g1/g2/a3"]}})
-    g1 = members_flat["/g1"].model_copy(
-        update={"members": {"a2": members_flat["/g1/a2"], "g2": g2}}
-    )
-    root = members_flat[""].model_copy(update={"members": {"g1": g1, "a1": members_flat["/a1"]}})
+
+    # Build the non-flat hierarchy
+    g2 = GroupSpec(attributes={"name": "/g1/g2"}, members={"a3": members_flat["/g1/g2/a3"]})
+    g1 = GroupSpec(attributes={"name": "/g1"}, members={"a2": members_flat["/g1/a2"], "g2": g2})
+    root = GroupSpec(attributes={"name": ""}, members={"g1": g1, "a1": members_flat["/a1"]})
     return members_flat, root
 
 
@@ -215,12 +222,14 @@ class TestGroupSpec:
     @staticmethod
     def test_from_zarr_depth() -> None:
         zarr = pytest.importorskip("zarr")
+        from pydantic_zarr.v3 import BaseGroupSpec
+
         codecs = ({"name": "bytes", "configuration": {}},)
         tree: dict[str, AnyGroupSpec | AnyArraySpec] = {
-            "": GroupSpec(members=None, attributes={"level": 0, "type": "group"}),
-            "/1": GroupSpec(members=None, attributes={"level": 1, "type": "group"}),
-            "/1/2": GroupSpec(members=None, attributes={"level": 2, "type": "group"}),
-            "/1/2/1": GroupSpec(members=None, attributes={"level": 3, "type": "group"}),
+            "": BaseGroupSpec(attributes={"level": 0, "type": "group"}),
+            "/1": BaseGroupSpec(attributes={"level": 1, "type": "group"}),
+            "/1/2": BaseGroupSpec(attributes={"level": 2, "type": "group"}),
+            "/1/2/1": BaseGroupSpec(attributes={"level": 3, "type": "group"}),
             "/1/2/2": ArraySpec.from_array(
                 np.arange(20), attributes={"level": 3, "type": "array"}, codecs=codecs
             ),
@@ -256,7 +265,7 @@ def test_mix_v3_v2_fails() -> None:
     with pytest.raises(
         ValueError,
         match=re.escape(
-            "Value at '/a' is not a v3 ArraySpec or GroupSpec (got type(value)=<class 'pydantic_zarr.v2.ArraySpec'>)"
+            "Value at '/a' is not a v3 ArraySpec, GroupSpec, or BaseGroupSpec (got type(value)=<class 'pydantic_zarr.v2.ArraySpec'>)"
         ),
     ):
         GroupSpec.from_flat(members_flat)  # type: ignore[arg-type]
