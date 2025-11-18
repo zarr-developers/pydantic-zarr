@@ -4,7 +4,6 @@ Testts for pydantic_zarr.v2.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import json
 import re
 from contextlib import suppress
@@ -367,7 +366,6 @@ def test_serialize_deserialize_groupspec(
     class SpecGroup(GroupSpec):
         attributes: RootAttrs
 
-
     spec = SpecGroup(
         attributes=RootAttrs(foo=10, bar=[0, 1, 2]),
         members={
@@ -464,10 +462,10 @@ def test_validation() -> None:
     class ArrayB(ArraySpec):
         attributes: ArrayAttrsB
 
-    class GroupA(GroupSpec[Mapping[str, ArrayA]]):
+    class GroupA(GroupSpec):
         attributes: GroupAttrsA
 
-    class GroupB(GroupSpec[Mapping[str, ArrayB]]):
+    class GroupB(GroupSpec):
         attributes: GroupAttrsB
 
     store = zarr.storage.MemoryStore
