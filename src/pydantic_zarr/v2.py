@@ -9,11 +9,9 @@ from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
-    Generic,
     Literal,
     Self,
     TypeAlias,
-    TypeVar,
     cast,
     get_args,
     overload,
@@ -45,8 +43,6 @@ AnyGroupSpec: TypeAlias = "GroupSpec"
 
 BaseMember: TypeAlias = Mapping[str, "ArraySpec | GroupSpec | BaseGroupSpec"]
 BaseMemberMut: TypeAlias = dict[str, "ArraySpec | GroupSpec | BaseGroupSpec"]
-
-TMembers = TypeVar("TMembers", bound=BaseMember)
 
 DtypeStr = Annotated[str, BeforeValidator(parse_dtype_v2)]
 
@@ -115,6 +111,7 @@ def parse_dimension_separator(data: Any) -> DimensionSeparator:
 
 CodecDict = Annotated[dict[str, Any], BeforeValidator(dictify_codec)]
 
+
 class ArraySpec(StrictBase):
     """
     A model of a Zarr Version 2 Array. The specification for the data structure being modeled by
@@ -147,6 +144,7 @@ class ArraySpec(StrictBase):
         Must be either "/" or ".", or absent, in which case it is interpreted as ".".
         The default is "/".
     """
+
     zarr_format: Literal[2] = 2
     attributes: BaseAttributes
     shape: tuple[int, ...]
@@ -456,10 +454,12 @@ class BaseGroupSpec(StrictBase):
     """
     A base GroupSpec class that only has core Zarr V2 group attributes
     """
+
     zarr_format: Literal[2] = 2
     attributes: BaseAttributes
 
-class GroupSpec(BaseGroupSpec, Generic[TMembers]):
+
+class GroupSpec(BaseGroupSpec):
     """
     A model of a Zarr Version 2 Group.
     The specification for the data structure being modeled by this
@@ -471,17 +471,16 @@ class GroupSpec(BaseGroupSpec, Generic[TMembers]):
 
     attributes: `BaseAttributes`
         The user-defined attributes of this group. Should be JSON-serializable.
-    members: dict[str, TItem] | None, default = {}
-        The members of this group. `members` may be `None`, which models the condition
-        where the members are unknown, e.g., because they have not been discovered yet.
-        If `members` is not `None`, then it must be a `Mapping` with string keys and values that
-        are either `ArraySpec` or `GroupSpec`.
+    members: dict[str, ArraySpec | GroupSpec | BaseGroupSpec], default = {}
+        The members of this group. This must be a `Mapping` with string keys and values that
+        are either `ArraySpec`, `GroupSpec`, or `BaseGroupSpec`.
     """
-    members: TMembers
+
+    members: BaseMemberMut
 
     @field_validator("members", mode="after")
     @classmethod
-    def validate_members(cls, v: TMembers) -> TMembers:
+    def validate_members(cls, v: BaseMemberMut) -> BaseMemberMut:
         return ensure_key_no_path(v)
 
     @classmethod

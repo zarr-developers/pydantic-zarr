@@ -14,7 +14,6 @@ from typing import (
     Self,
     TypeAlias,
     TypeVar,
-    Union,
     cast,
     overload,
 )
@@ -22,7 +21,7 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
-from pydantic import AfterValidator, BaseModel, BeforeValidator, field_validator
+from pydantic import BeforeValidator, field_validator
 from typing_extensions import TypedDict
 
 from pydantic_zarr.core import (
@@ -44,12 +43,8 @@ if TYPE_CHECKING:
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
 
-AnyGroupSpec: TypeAlias = "GroupSpec"
-
 BaseMember: TypeAlias = Mapping[str, "ArraySpec | GroupSpec | BaseGroupSpec"]
 BaseMemberMut: TypeAlias = dict[str, "ArraySpec | GroupSpec | BaseGroupSpec"]
-
-TMembers = TypeVar("TMembers", bound=BaseMember)
 
 NodeType = Literal["group", "array"]
 
@@ -64,6 +59,7 @@ FillValue = BoolFillValue | IntFillValue | FloatFillValue | ComplexFillValue | R
 
 TName = TypeVar("TName", bound=str)
 TConfig = TypeVar("TConfig", bound=Mapping[str, object])
+
 
 class NamedConfig(TypedDict, Generic[TName, TConfig]):
     """
@@ -486,21 +482,24 @@ class ArraySpec(NodeSpec):
         """
 
         other_parsed: ArraySpec
-        if isinstance(other, zarr.Array):
+        if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Array):
             other_parsed = ArraySpec.from_zarr(other)
         else:
             other_parsed = other
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
+
 class BaseGroupSpec(StrictBase):
     """
     A base GroupSpec class that only has core Zarr V3 group attributes
     """
+
     zarr_format: Literal[3] = 3
     attributes: BaseAttributes
 
-class GroupSpec(BaseGroupSpec, Generic[TMembers]):
+
+class GroupSpec(BaseGroupSpec):
     """
     A model of a Zarr Version 3 Group.
 
@@ -509,20 +508,20 @@ class GroupSpec(BaseGroupSpec, Generic[TMembers]):
 
     node_type: Literal['group']
         The type of this node. Must be the string "group".
-    attributes: TAttr
+    attributes: BaseAttributes
         The user-defined attributes of this group.
-    members: dict[str, TItem] | None
-        The members of this group. `members` is a dict with string keys and values that
-        must inherit from either ArraySpec or GroupSpec.
+    members: dict[str, ArraySpec | GroupSpec | BaseGroupSpec]
+        The members of this group. This is a dict with string keys and values that
+        must be ArraySpec, GroupSpec, or BaseGroupSpec instances.
     """
 
     node_type: Literal["group"] = "group"
     attributes: BaseAttributes
-    members:  TMembers
+    members: BaseMemberMut
 
     @field_validator("members", mode="after")
     @classmethod
-    def validate_members(cls, v: TMembers) -> TMembers:
+    def validate_members(cls, v: BaseMemberMut) -> BaseMemberMut:
         return ensure_key_no_path(v)
 
     @classmethod
@@ -640,7 +639,7 @@ class GroupSpec(BaseGroupSpec, Generic[TMembers]):
         except ImportError as e:
             raise ImportError("zarr must be installed to use from_zarr") from e
 
-        result: GroupSpec[TAttr, TItem]
+        result: GroupSpec
         attributes = group.attrs.asdict()
         members = {}
 
@@ -797,7 +796,7 @@ class GroupSpec(BaseGroupSpec, Generic[TMembers]):
         True
         """
 
-        other_parsed: GroupSpec[Any, Any]
+        other_parsed: GroupSpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
             other_parsed = GroupSpec.from_zarr(other)
         else:
@@ -962,11 +961,11 @@ def from_flat_group(
     member_arrays: dict[str, ArraySpec[Any]] = {}
     # groups, and their members, that will be members of the returned GroupSpec.
     # this dict is populated by recursively applying `from_flat_group` function.
-    member_groups: dict[str, GroupSpec[Any, Any]] = {}
+    member_groups: dict[str, GroupSpec] = {}
     # this dict collects the arrayspecs and groupspecs that belong to one of the members of the
     # groupspecs we are constructing. They will later be aggregated in a recursive step that
     # populates member_groups
-    submember_by_parent_name: dict[str, dict[str, ArraySpec[Any] | GroupSpec[Any, Any]]] = {}
+    submember_by_parent_name: dict[str, dict[str, ArraySpec[Any] | GroupSpec]] = {}
     # copy the input to ensure that mutations are contained inside this function
     data_copy = dict(data).copy()
     # Get the root node
