@@ -409,7 +409,7 @@ Define strict schemas for group members using `TypedDict` to enable runtime vali
 === "Zarr V2"
 
     ```python
-    from typing import TypedDict
+    from typing_extensions import TypedDict
     from pydantic_zarr.experimental.v2 import ArraySpec, GroupSpec
 
     # Define the expected structure of group members
@@ -452,7 +452,7 @@ Define strict schemas for group members using `TypedDict` to enable runtime vali
 === "Zarr V3"
 
     ```python
-    from typing import TypedDict
+    from typing_extensions import TypedDict
     from pydantic_zarr.experimental.v3 import ArraySpec, GroupSpec
 
     # Define the expected structure of group members
