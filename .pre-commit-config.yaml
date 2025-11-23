@@ -28,7 +28,7 @@ repos:
         files: src
         additional_dependencies:
           - pytest
-          - pydantic
+          - pydantic>2.0.0
           - numpy
           - zarr>=3.1.0
           - numcodecs
