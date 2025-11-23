@@ -23,7 +23,7 @@ from packaging.version import Version
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
 
-from pydantic_zarr.core import (
+from pydantic_zarr.experimental.core import (
     BaseAttributes,
     IncEx,
     StrictBase,

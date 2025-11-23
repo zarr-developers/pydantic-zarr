@@ -23,7 +23,7 @@ from packaging.version import Version
 from pydantic import BeforeValidator, Field, field_validator
 from typing_extensions import TypedDict
 
-from pydantic_zarr.core import (
+from pydantic_zarr.experimental.core import (
     BaseAttributes,
     IncEx,
     StrictBase,

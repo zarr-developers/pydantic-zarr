@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     import zarr
     from zarr.storage._common import StoreLike
 
+BaseAttributes = Mapping[str, object] | BaseModel
+
 IncEx: TypeAlias = set[int] | set[str] | dict[int, Any] | dict[str, Any] | None
 
 AccessMode: TypeAlias = Literal["w", "w+", "r", "a"]
