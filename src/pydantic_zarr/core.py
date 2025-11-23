@@ -146,6 +146,3 @@ def ensure_multiple(data: Sequence[T]) -> Sequence[T]:
     if len(data) < 1:
         raise ValueError("Invalid length. Expected 1 or more, got 0.")
     return data
-
-
-BaseAttributes = Mapping[str, object] | BaseModel
