@@ -72,7 +72,7 @@ of the members are part of the schema definition for that group.
 The `GroupSpec` classes defined in `pydantic_zarr.experimental` accept `TypedDict` annotations for their `members` attribute. As `pydantic` can validate values against a `TypedDict` type annotation, we get a very concise type check on the names of the members of a Zarr group.
 
 ```python
-from typing import TypedDict
+from typing_extensions import TypedDict
 from pydantic import BaseModel
 
 from pydantic_zarr.experimental.v3 import ArraySpec, GroupSpec
