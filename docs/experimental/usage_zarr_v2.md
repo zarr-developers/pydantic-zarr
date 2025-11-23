@@ -19,7 +19,7 @@ Note that `to_zarr` will _not_ write any array data. You have to do this separat
 ```python
 from zarr import create_array, create_group
 
-from pydantic_zarr.v2 import GroupSpec
+from pydantic_zarr.experimental.v2 import GroupSpec
 
 # create an in-memory Zarr group + array with attributes
 grp = create_group(store={}, path='foo', zarr_format=2)
@@ -78,7 +78,7 @@ The `ArraySpec` class has a `from_array` static method that takes an array-like 
 ```python
 import numpy as np
 
-from pydantic_zarr.v2 import ArraySpec
+from pydantic_zarr.experimental.v2 import ArraySpec
 
 print(ArraySpec.from_array(np.arange(10)).model_dump())
 """
@@ -114,14 +114,14 @@ methods to convert to / from these dictionaries.
 This example demonstrates how to create a `GroupSpec` from a `dict` representation of a Zarr hierarchy.
 
 ```python
-from pydantic_zarr.v2 import ArraySpec, GroupSpec
+from pydantic_zarr.experimental.v2 import ArraySpec, BaseGroupSpec, GroupSpec
 
 # other than the key representing the root path "",
 # the keys must be valid paths in the Zarr storage hierarchy
-# note that the `members` attribute is `None` for the `GroupSpec` instances in this `dict`.
+# note that the `members` attribute is absent for the `BaseGroupSpec` instances in this `dict`.
 tree = {
-    "": GroupSpec(members=None, attributes={"root": True}),
-    "/a": GroupSpec(members=None, attributes={"root": False}),
+    "": BaseGroupSpec(attributes={"root": True}),
+    "/a": BaseGroupSpec(attributes={"root": False}),
     "/a/b": ArraySpec(shape=(10, 10), dtype="uint8", chunks=(1, 1), attributes={}),
 }
 
@@ -160,7 +160,7 @@ This is similar to the example above, except that we are working in reverse -- w
 flat `dict` from the `GroupSpec` object.
 
 ```python
-from pydantic_zarr.v2 import ArraySpec, GroupSpec
+from pydantic_zarr.experimental.v2 import ArraySpec, GroupSpec
 
 # other than the key representing the root path "",
 # the keys must be valid paths in the Zarr storage hierarchy
@@ -173,8 +173,8 @@ root = GroupSpec(members={'a': a}, attributes={"root": True})
 print(root.to_flat())
 """
 {
-    '': GroupSpec(zarr_format=2, attributes={'root': True}, members=None),
-    '/a': GroupSpec(zarr_format=2, attributes={'root': False}, members=None),
+    '': BaseGroupSpec(zarr_format=2, attributes={'root': True}),
+    '/a': BaseGroupSpec(zarr_format=2, attributes={'root': False}),
     '/a/b': ArraySpec(
         zarr_format=2,
         attributes={},
@@ -198,7 +198,7 @@ hierarchy without explicitly creating the intermediate groups first.
 `from_flat` models this behavior. For example, `{'/a/b/c': ArraySpec(...)}` implicitly defines the existence of a groups named `a` and `b` (which is contained in `a`). `from_flat` will create the expected `GroupSpec` object from such `dict` instances.
 
 ```python
-from pydantic_zarr.v2 import ArraySpec, GroupSpec
+from pydantic_zarr.experimental.v2 import ArraySpec, GroupSpec
 
 tree = {'/a/b/c': ArraySpec(shape=(1,), dtype='uint8', chunks=(1,), attributes={})}
 print(GroupSpec.from_flat(tree).model_dump())
@@ -248,7 +248,7 @@ The `like` method takes keyword arguments `include` and `exclude`, which determi
 import zarr
 import zarr.storage
 
-from pydantic_zarr.v2 import ArraySpec, GroupSpec
+from pydantic_zarr.experimental.v2 import ArraySpec, GroupSpec
 
 arr_a = ArraySpec(shape=(1,), dtype='uint8', chunks=(1,), attributes={})
 # make an array with a different shape
@@ -307,21 +307,7 @@ The `ArraySpec` class has a `from_array` static method that takes an array-like 
 ```python
 import numpy as np
 
-from pydantic_zarr.v2 import ArraySpec
+from pydantic_zarr.experimental.v2 import ArraySpec
 
-print(ArraySpec.from_array(np.arange(10)).model_dump())
-"""
-{
-    'zarr_format': 2,
-    'attributes': {},
-    'shape': (10,),
-    'chunks': (10,),
-    'dtype': '<i8',
-    'fill_value': 0,
-    'order': 'C',
-    'filters': None,
-    'dimension_separator': '/',
-    'compressor': None,
-}
-"""
+spec = ArraySpec.from_array(np.arange(10))
 ```

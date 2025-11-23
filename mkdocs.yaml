@@ -30,10 +30,17 @@ nav:
     - About: index.md
     - Usage (Zarr V3): usage_zarr_v3.md
     - Usage (Zarr V2): usage_zarr_v2.md
+    - Experimental features:
+      - Overview: experimental/index.md
+      - Usage: experimental/usage.md
     - API:
       - core: api/core.md
       - v2: api/v2.md
       - v3: api/v3.md
+      - experimental:
+        - core: api/experimental/core.md
+        - v2: api/experimental/v2.md
+        - v3: api/experimental/v3.md
 
 plugins:
 - mkdocstrings:
@@ -56,6 +63,8 @@ markdown_extensions:
   - pymdownx.inlinehilite
   - pymdownx.snippets
   - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
   - toc:
       baselevel: 2
       toc_depth: 4

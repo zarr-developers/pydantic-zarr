@@ -32,7 +32,6 @@ from packaging.version import Version
 
 from pydantic_zarr.v2 import (
     ArraySpec,
-    BaseGroupSpec,
     GroupSpec,
     auto_attributes,
     auto_chunks,
@@ -351,25 +350,17 @@ def test_serialize_deserialize_groupspec(
         a: str
         b: float
 
-    class SubGroup(GroupSpec):
-        attributes: SubGroupAttrs
-        members: Any
+    SubGroup = GroupSpec[SubGroupAttrs, Any]
 
     class ArrayAttrs(TypedDict):
         scale: list[float]
 
-    class SpecArray(ArraySpec):
-        attributes: ArrayAttrs
-
     store = zarr.storage.MemoryStore()
 
-    class SpecGroup(GroupSpec):
-        attributes: RootAttrs
-
-    spec = SpecGroup(
+    spec = GroupSpec[RootAttrs, ArraySpec | SubGroup](
         attributes=RootAttrs(foo=10, bar=[0, 1, 2]),
         members={
-            "s0": SpecArray(
+            "s0": ArraySpec[ArrayAttrs](
                 shape=(10,) * len(chunks),
                 chunks=chunks,
                 dtype=dtype,
@@ -379,7 +370,7 @@ def test_serialize_deserialize_groupspec(
                 dimension_separator=dimension_separator,
                 attributes=ArrayAttrs(scale=[1.0]),
             ),
-            "s1": SpecArray(
+            "s1": ArraySpec[ArrayAttrs](
                 shape=(5,) * len(chunks),
                 chunks=chunks,
                 dtype=dtype,
@@ -389,18 +380,18 @@ def test_serialize_deserialize_groupspec(
                 dimension_separator=dimension_separator,
                 attributes=ArrayAttrs(scale=[2.0]),
             ),
-            "subgroup": SubGroup(attributes=SubGroupAttrs(a="foo", b=1.0), members={}),
+            "subgroup": SubGroup(attributes=SubGroupAttrs(a="foo", b=1.0)),
         },
     )
     # check that the model round-trips dict representation
-    assert spec.like(GroupSpec(**spec.model_dump()))
+    assert spec == GroupSpec(**spec.model_dump())
 
     # materialize a zarr group, based on the spec
     group = to_zarr(spec, store, "/group_a")
 
     # parse the spec from that group
     observed = from_zarr(group)
-    assert observed.like(spec)
+    assert observed == spec
 
     # assert that we get the same group twice
     assert to_zarr(spec, store, "/group_a", overwrite=True) == group
@@ -423,7 +414,7 @@ def test_serialize_deserialize_groupspec(
     # again with class methods
     group3 = spec.to_zarr(store, "/group_b")
     observed = spec.from_zarr(group3)
-    assert observed.like(spec)
+    assert observed == spec
 
 
 @pytest.mark.parametrize("base", range(1, 5))
@@ -456,17 +447,10 @@ def test_validation() -> None:
     class ArrayAttrsB(TypedDict):
         array_b: bool
 
-    class ArrayA(ArraySpec):
-        attributes: ArrayAttrsA
-
-    class ArrayB(ArraySpec):
-        attributes: ArrayAttrsB
-
-    class GroupA(GroupSpec):
-        attributes: GroupAttrsA
-
-    class GroupB(GroupSpec):
-        attributes: GroupAttrsB
+    ArrayA = ArraySpec[ArrayAttrsA]
+    ArrayB = ArraySpec[ArrayAttrsB]
+    GroupA = GroupSpec[GroupAttrsA, ArrayA]
+    GroupB = GroupSpec[GroupAttrsB, ArrayB]
 
     store = zarr.storage.MemoryStore
 
@@ -505,17 +489,23 @@ def test_validation() -> None:
     groupAMat = specA.to_zarr(store, path="group_a")
     groupBMat = specB.to_zarr(store, path="group_b")
 
-    # from_zarr creates generic GroupSpec/ArraySpec instances
-    groupA_from_zarr = GroupSpec.from_zarr(groupAMat)
-    groupB_from_zarr = GroupSpec.from_zarr(groupBMat)
+    GroupA.from_zarr(groupAMat)
+    GroupB.from_zarr(groupBMat)
 
-    # Check that the reconstructed groups match the originals
-    assert groupA_from_zarr.attributes == specA.attributes
-    assert groupB_from_zarr.attributes == specB.attributes
+    ArrayA.from_zarr(groupAMat["a"])
+    ArrayB.from_zarr(groupBMat["a"])
 
-    # ArraySpec instances can be reconstructed
-    ArraySpec.from_zarr(groupAMat["a"])
-    ArraySpec.from_zarr(groupBMat["a"])
+    with pytest.raises(ValidationError):
+        ArrayA.from_zarr(groupBMat["a"])
+
+    with pytest.raises(ValidationError):
+        ArrayB.from_zarr(groupAMat["a"])
+
+    with pytest.raises(ValidationError):
+        GroupB.from_zarr(groupAMat)
+
+    with pytest.raises(ValidationError):
+        GroupA.from_zarr(groupBMat)
 
 
 @pytest.mark.parametrize("shape", [(1,), (2, 2), (3, 4, 5)])
@@ -555,7 +545,7 @@ def test_member_name(data: str) -> None:
                 members={"a": ArraySpec.from_array(np.arange(5), attributes={"foo": 100})},
             ),
             {
-                "": BaseGroupSpec(attributes={"foo": 10}),
+                "": GroupSpec(attributes={"foo": 10}, members=None),
                 "/a": ArraySpec.from_array(np.arange(5), attributes={"foo": 100}),
             },
         ),
@@ -571,8 +561,8 @@ def test_member_name(data: str) -> None:
                 },
             ),
             {
-                "": BaseGroupSpec(attributes={}),
-                "/a": BaseGroupSpec(attributes={"foo": 10}),
+                "": GroupSpec(attributes={}, members=None),
+                "/a": GroupSpec(attributes={"foo": 10}, members=None),
                 "/a/a": ArraySpec.from_array(np.arange(5), attributes={"foo": 100}),
                 "/b": ArraySpec.from_array(np.arange(2), attributes={"foo": 3}),
             },
@@ -613,9 +603,9 @@ def test_array_like_with_zarr() -> None:
 
 # todo: parametrize
 def test_group_like() -> None:
-    tree: dict[str, BaseGroupSpec | ArraySpec] = {
-        "": BaseGroupSpec(attributes={"path": ""}),
-        "/a": BaseGroupSpec(attributes={"path": "/a"}),
+    tree: dict[str, GroupSpec | ArraySpec] = {
+        "": GroupSpec(attributes={"path": ""}, members=None),
+        "/a": GroupSpec(attributes={"path": "/a"}, members=None),
         "/b": ArraySpec.from_array(np.arange(10), attributes={"path": "/b"}),
         "/a/b": ArraySpec.from_array(np.arange(10), attributes={"path": "/a/b"}),
     }
@@ -629,11 +619,11 @@ def test_group_like() -> None:
 # todo: parametrize
 def test_from_zarr_depth() -> None:
     zarr = pytest.importorskip("zarr")
-    tree: dict[str, BaseGroupSpec | ArraySpec] = {
-        "": BaseGroupSpec(attributes={"level": 0, "type": "group"}),
-        "/1": BaseGroupSpec(attributes={"level": 1, "type": "group"}),
-        "/1/2": BaseGroupSpec(attributes={"level": 2, "type": "group"}),
-        "/1/2/1": BaseGroupSpec(attributes={"level": 3, "type": "group"}),
+    tree: dict[str, GroupSpec | ArraySpec] = {
+        "": GroupSpec(members=None, attributes={"level": 0, "type": "group"}),
+        "/1": GroupSpec(members=None, attributes={"level": 1, "type": "group"}),
+        "/1/2": GroupSpec(members=None, attributes={"level": 2, "type": "group"}),
+        "/1/2/1": GroupSpec(members=None, attributes={"level": 3, "type": "group"}),
         "/1/2/2": ArraySpec.from_array(np.arange(20), attributes={"level": 3, "type": "array"}),
     }
 

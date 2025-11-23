@@ -3,7 +3,7 @@
 ## Defining Zarr v3 hierarchies
 
 ```python
-from pydantic_zarr.v3 import ArraySpec, GroupSpec, NamedConfig
+from pydantic_zarr.experimental.v3 import ArraySpec, GroupSpec, NamedConfig
 
 array_attributes = {"baz": [1, 2, 3]}
 group_attributes = {"foo": 42, "bar": False}
@@ -25,11 +25,11 @@ print(spec.model_dump_json(indent=2))
 """
 {
   "zarr_format": 3,
-  "node_type": "group",
   "attributes": {
     "foo": 42,
     "bar": false
   },
+  "node_type": "group",
   "members": {
     "array": {
       "zarr_format": 3,
