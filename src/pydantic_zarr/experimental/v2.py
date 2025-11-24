@@ -9,6 +9,7 @@ from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
+    Final,
     Literal,
     Self,
     TypeAlias,
@@ -20,7 +21,7 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
 
 from pydantic_zarr.experimental.core import (
@@ -31,6 +32,7 @@ from pydantic_zarr.experimental.core import (
     maybe_node,
     model_like,
     parse_dtype_v2,
+    tuplify_json,
 )
 
 if TYPE_CHECKING:
@@ -56,7 +58,9 @@ FillValue = (
 )
 
 DimensionSeparator = Literal[".", "/"]
+DIMENSION_SEPARATOR: Final[tuple[Literal["."], Literal["/"]]] = (".", "/")
 MemoryOrder = Literal["C", "F"]
+MEMORY_ORDER: Final[tuple[Literal["C"], Literal["F"]]] = ("C", "F")
 
 
 def dictify_codec(value: dict[str, Any] | Codec) -> dict[str, Any]:
@@ -144,13 +148,13 @@ class ArraySpec(StrictBase):
     """
 
     zarr_format: Literal[2] = 2
-    attributes: BaseAttributes = Field(default_factory=dict)  # type: ignore[arg-type]
+    attributes: BaseAttributes
     shape: tuple[int, ...]
     chunks: tuple[int, ...]
     dtype: DtypeStr | list[tuple[Any, ...]]
     fill_value: FillValue = 0
     order: MemoryOrder = "C"
-    filters: list[CodecDict] | None = None
+    filters: tuple[CodecDict, ...] | None = None
     dimension_separator: Annotated[
         DimensionSeparator, BeforeValidator(parse_dimension_separator)
     ] = "/"
@@ -158,9 +162,9 @@ class ArraySpec(StrictBase):
 
     @field_validator("filters", mode="after")
     @classmethod
-    def validate_filters(cls, value: list[CodecDict] | None) -> list[CodecDict] | None:
+    def validate_filters(cls, value: tuple[CodecDict, ...] | None) -> tuple[CodecDict, ...] | None:
         # Make sure filters is never an empty list
-        if value == []:
+        if value == ():
             return None
         return value
 
@@ -328,7 +332,7 @@ class ArraySpec(StrictBase):
             }
         else:
             meta_json = array.metadata.to_dict()
-
+        meta_json = tuplify_json(meta_json)
         return cls.model_validate(meta_json)
 
     def to_zarr(
@@ -454,7 +458,7 @@ class BaseGroupSpec(StrictBase):
     """
 
     zarr_format: Literal[2] = 2
-    attributes: BaseAttributes = Field(default_factory=dict)  # type: ignore[arg-type]
+    attributes: BaseAttributes
 
 
 class GroupSpec(BaseGroupSpec):
@@ -474,7 +478,7 @@ class GroupSpec(BaseGroupSpec):
         are either `ArraySpec`, `GroupSpec`, or `BaseGroupSpec`.
     """
 
-    members: BaseMemberMut = Field(default_factory=dict)
+    members: BaseMemberMut
 
     @field_validator("members", mode="after")
     @classmethod
@@ -514,7 +518,7 @@ class GroupSpec(BaseGroupSpec):
 
         result: GroupSpec
         attributes = group.attrs.asdict()
-        members: BaseMemberMut = {}
+        members: dict[str, object] = {}
 
         if depth < -1:
             msg = (
@@ -524,13 +528,13 @@ class GroupSpec(BaseGroupSpec):
             raise ValueError(msg)
         if depth == 0:
             # When depth is 0, we don't have members, so return a BaseGroupSpec
-            return BaseGroupSpec(attributes=attributes)  # type: ignore[return-value]
+            return GroupSpec(attributes=attributes, members={})  # type: ignore[return-value]
         new_depth = max(depth - 1, -1)
         for name, item in group.members():
             if isinstance(item, zarr.Array):
-                members[name] = ArraySpec.from_zarr(item)
+                members[name] = ArraySpec.from_zarr(item).model_dump()
             elif isinstance(item, zarr.Group):
-                members[name] = GroupSpec.from_zarr(item, depth=new_depth)
+                members[name] = GroupSpec.from_zarr(item, depth=new_depth).model_dump()
             else:
                 msg = (  # type: ignore[unreachable]
                     f"Unparsable object encountered: {type(item)}. Expected zarr.Array"

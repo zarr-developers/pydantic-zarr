@@ -116,8 +116,7 @@ def model_like(a: BaseModel, b: BaseModel, exclude: IncEx = None, include: IncEx
 
     a_dict = a.model_dump(exclude=exclude, include=include)
     b_dict = b.model_dump(exclude=exclude, include=include)
-
-    return a_dict == b_dict
+    return json_eq(a_dict, b_dict)
 
 
 # TODO: expose contains_array and contains_group as public functions in zarr-python
@@ -148,3 +147,25 @@ def ensure_multiple(data: Sequence[T]) -> Sequence[T]:
     if len(data) < 1:
         raise ValueError("Invalid length. Expected 1 or more, got 0.")
     return data
+
+
+def json_eq(a: object, b: object) -> bool:
+    """
+    An equality check between python objects that recurses into dicts and sequences and ignores
+    the difference between tuples and lists. Otherwise, it's just regular equality. Useful
+    for comparing dicts that would become identical JSON, but where one has lists and the other
+    has tuples.
+    """
+    # treat lists & tuples as the same "sequence" type
+    seq_types = (list, tuple)
+
+    # both are sequences → compare element-wise
+    if isinstance(a, seq_types) and isinstance(b, seq_types):
+        return len(a) == len(b) and all(json_eq(x, y) for x, y in zip(a, b, strict=False))
+
+    # recurse into mappings
+    if isinstance(a, Mapping) and isinstance(b, Mapping):
+        return a.keys() == b.keys() and all(json_eq(a[k], b[k]) for k in a)
+
+    # otherwise → regular equality
+    return a == b

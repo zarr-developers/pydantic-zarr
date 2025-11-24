@@ -968,7 +968,7 @@ def from_flat_group(
                 submember_by_parent_name[subparent_name][root_name] = value
             else:
                 raise ValueError(
-                    f"Value at '{key}' is not a v3 ArraySpec, GroupSpec, or BaseGroupSpec (got {type(value)=})"
+                    f"Value at '{key}' is not a v3 ArraySpec or BaseGroupSpec (got {type(value)=})"
                 )
         else:
             # these are groups or arrays that belong to one of the member groups
