@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from collections.abc import Mapping  # noqa: TC003
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -20,8 +21,6 @@ from pydantic_zarr.experimental.core import json_eq
 from ..conftest import DTYPE_EXAMPLES_V2, ZARR_PYTHON_VERSION, DTypeExample
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from numcodecs.abc import Codec
 
 import numpy as np
