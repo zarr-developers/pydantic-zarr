@@ -434,7 +434,7 @@ Use the `like()` method to compare `ArraySpec` or `GroupSpec` instances to check
 
     group2 = GroupSpec(
         attributes={'version': 2},
-        members={'data': array2}
+        members={'data': array1}
     )
 
     # False because of differing attributes
@@ -494,7 +494,7 @@ Use the `like()` method to compare `ArraySpec` or `GroupSpec` instances to check
 
     group2 = GroupSpec(
         attributes={'version': 2},
-        members={'data': array2}
+        members={'data': array1}
     )
 
     # False because of differing attributes
