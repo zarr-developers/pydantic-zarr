@@ -1,10 +1,10 @@
 # Usage
 
-This page demonstrates how to use the experimental `ArraySpec` and `GroupSpec` models. The code examples show both Zarr V2 and V3 implementations side-by-side.
+This page demonstrates how to use the experimental `ArraySpec` and `GroupSpec` models for Zarr V2 and V3.
 
-## Creating an Array Specification
+## Creating an `ArraySpec`
 
-The `ArraySpec` model represents a Zarr array with its metadata and configuration.
+The `ArraySpec` model represents Zarr array metadata.
 
 === "Zarr V2"
 
@@ -19,8 +19,32 @@ The `ArraySpec` model represents a Zarr array with its metadata and configuratio
         attributes={'description': 'my array', 'units': 'meters'}
     )
 
-    # Get the model as a dictionary
-    spec_dict = array.model_dump()
+    # Get the model as a JSON string
+    spec_json = array.model_dump_json(indent=2)
+    print(spec_json)
+    """
+    {
+      "zarr_format": 2,
+      "attributes": {
+        "description": "my array",
+        "units": "meters"
+      },
+      "shape": [
+        1000,
+        1000
+      ],
+      "chunks": [
+        100,
+        100
+      ],
+      "dtype": "|u1",
+      "fill_value": 0,
+      "order": "C",
+      "filters": null,
+      "dimension_separator": "/",
+      "compressor": null
+    }
+    """
     ```
 
 === "Zarr V3"
@@ -44,6 +68,45 @@ The `ArraySpec` model represents a Zarr array with its metadata and configuratio
 
     # Get the model as JSON string
     spec_json = array.model_dump_json(indent=2)
+    print(spec_json)
+    """
+    {
+      "zarr_format": 3,
+      "node_type": "array",
+      "attributes": {
+        "description": "my array",
+        "units": "meters"
+      },
+      "shape": [
+        1000,
+        1000
+      ],
+      "data_type": "uint8",
+      "chunk_grid": {
+        "name": "regular",
+        "configuration": {
+          "chunk_shape": [
+            100,
+            100
+          ]
+        }
+      },
+      "chunk_key_encoding": {
+        "name": "default",
+        "configuration": {
+          "separator": "/"
+        }
+      },
+      "fill_value": 0,
+      "codecs": [
+        {
+          "name": "bytes"
+        }
+      ],
+      "storage_transformers": [],
+      "dimension_names": null
+    }
+    """
     ```
 
 ## Creating a Group Specification
@@ -55,7 +118,7 @@ The `GroupSpec` model represents a Zarr group that can contain arrays and other 
     ```python
     from pydantic_zarr.experimental.v2 import ArraySpec, GroupSpec
 
-    # Create array specifications for group members
+    # Create ArraySpec for group members
     data_array = ArraySpec(
         shape=(1000, 1000),
         dtype='float32',
@@ -89,7 +152,7 @@ The `GroupSpec` model represents a Zarr group that can contain arrays and other 
     ```python
     from pydantic_zarr.experimental.v3 import ArraySpec, GroupSpec
 
-    # Create array specifications for group members
+    # Create ArraySpec for group members
     data_array = ArraySpec(
         shape=(1000, 1000),
         data_type='float32',
@@ -116,7 +179,7 @@ The `GroupSpec` model represents a Zarr group that can contain arrays and other 
         attributes={'description': 'pixel metadata'}
     )
 
-    # Create a group containing these arrays
+    # Create a GroupSpec containing these arrays
     group = GroupSpec(
         attributes={
             'name': 'experiment_001',
@@ -230,7 +293,7 @@ You can create hierarchical structures by nesting groups within groups.
 
 ## Working with Flattened Hierarchies
 
-The `to_flat()` method converts a hierarchical group structure into a flat dictionary representation using `BaseGroupSpec` for groups without members.
+The `to_flat()` method converts a hierarchical group structure into a flat dictionary representation. In the dict form, instances of `GroupSpec` are converted to instances of `BaseGroupSpec`, which models a Zarr group without any members. We use a different type because in the flat representation, the hierarchy structure is fully encoded by the keys of the dict.
 
 === "Zarr V2"
 
@@ -257,11 +320,25 @@ The `to_flat()` method converts a hierarchical group structure into a flat dicti
 
     # Convert to flat representation
     flat = root.to_flat()
-
-    # Iterate over the flat representation
-    for path, spec in flat.items():
-        # This shows how BaseGroupSpec replaces GroupSpec in flattened form
-        pass
+    print(flat)
+    """
+    {
+        '': BaseGroupSpec(zarr_format=2, attributes={'level': 0}),
+        '/sub': BaseGroupSpec(zarr_format=2, attributes={'level': 1}),
+        '/sub/data': ArraySpec(
+            zarr_format=2,
+            attributes={},
+            shape=(100,),
+            chunks=(10,),
+            dtype='<f4',
+            fill_value=0,
+            order='C',
+            filters=None,
+            dimension_separator='/',
+            compressor=None,
+        ),
+    }
+    """
     ```
 
 === "Zarr V3"
@@ -295,16 +372,31 @@ The `to_flat()` method converts a hierarchical group structure into a flat dicti
 
     # Convert to flat representation
     flat = root.to_flat()
-
-    # Iterate over the flat representation
-    for path, spec in flat.items():
-        # This shows how BaseGroupSpec replaces GroupSpec in flattened form
-        pass
+    print(flat)
+    """
+    {
+        '': BaseGroupSpec(zarr_format=3, attributes={'level': 0}),
+        '/sub': BaseGroupSpec(zarr_format=3, attributes={'level': 1}),
+        '/sub/data': ArraySpec(
+            zarr_format=3,
+            node_type='array',
+            attributes={},
+            shape=(100,),
+            data_type='float32',
+            chunk_grid={'name': 'regular', 'configuration': {'chunk_shape': (10,)}},
+            chunk_key_encoding={'name': 'default', 'configuration': {'separator': '/'}},
+            fill_value=0,
+            codecs=({'name': 'bytes'},),
+            storage_transformers=(),
+            dimension_names=None,
+        ),
+    }
+    """
     ```
 
-## Comparing Specifications
+## Comparing Arrays and Groups
 
-Use the `like()` method to compare two specifications and check if they are structurally equivalent.
+Use the `like()` method to compare `ArraySpec` or `GroupSpec` instances to check if they are structurally equivalent.
 
 === "Zarr V2"
 
@@ -326,10 +418,13 @@ Use the `like()` method to compare two specifications and check if they are stru
         attributes={'name': 'array2'}
     )
 
-    # Compare ignoring attributes
-    if array1.like(array2, exclude={'attributes'}):
-        print("Arrays have the same structure")
-        #> Arrays have the same structure
+    # False because of differing attributes
+    print(array1.like(array2))
+    #> False
+
+    # True because we are ignoring attributes
+    print(array1.like(array2, exclude={'attributes'}))
+    #> True
 
     # Create two groups
     group1 = GroupSpec(
@@ -342,10 +437,13 @@ Use the `like()` method to compare two specifications and check if they are stru
         members={'data': array2}
     )
 
-    # Compare groups
-    if group1.like(group2, exclude={'attributes'}):
-        print("Groups have the same structure")
-        #> Groups have the same structure
+    # False because of differing attributes
+    print(group1.like(group2))
+    #> False
+
+    # True because we are ignoring attributes
+    print(group1.like(group2, exclude={'attributes'}))
+    #> True
     ```
 
 === "Zarr V3"
@@ -380,10 +478,13 @@ Use the `like()` method to compare two specifications and check if they are stru
         attributes={'name': 'array2'}
     )
 
-    # Compare ignoring attributes
-    if array1.like(array2, exclude={'attributes'}):
-        print("Arrays have the same structure")
-        #> Arrays have the same structure
+    # False because of differing attributes
+    print(array1.like(array2))
+    #> False
+
+    # True because we are ignoring attributes
+    print(array1.like(array2, exclude={'attributes'}))
+    #> True
 
     # Create two groups
     group1 = GroupSpec(
@@ -396,10 +497,13 @@ Use the `like()` method to compare two specifications and check if they are stru
         members={'data': array2}
     )
 
-    # Compare groups
-    if group1.like(group2, exclude={'attributes'}):
-        print("Groups have the same structure")
-        #> Groups have the same structure
+    # False because of differing attributes
+    print(group1.like(group2))
+    #> False
+
+    # True because we are ignoring attributes
+    print(group1.like(group2, exclude={'attributes'}))
+    #> True
     ```
 
 ## Type-safe Group Members with TypedDict
@@ -417,7 +521,7 @@ Define strict schemas for group members using `TypedDict` to enable runtime vali
         timestamps: ArraySpec
         values: ArraySpec
 
-    # Create array specifications
+    # Create ArraySpec
     timestamps = ArraySpec(
         shape=(10000,),
         dtype='float64',
@@ -441,12 +545,21 @@ Define strict schemas for group members using `TypedDict` to enable runtime vali
         attributes={'sensor': 'accelerometer'},
         members={'timestamps': timestamps, 'values': values}
     )
-    print("Timeseries group created successfully")
-    #> Timeseries group created successfully
 
-    # Validation enforces all required members present
-    # Attempting to create without 'values' would raise ValidationError
-    # Attempting to add extra members not in TypedDict would raise ValidationError
+    # This fails because the required member 'values' is missing
+    try:
+        ts_group = TimeseriesGroup(
+            attributes={'sensor': 'accelerometer'},
+            members={'timestamps': timestamps}
+        )
+    except ValueError as e:
+        print(e)
+        """
+        1 validation error for TimeseriesGroup
+        members.values
+          Field required [type=missing, input_value={'timestamps': ArraySpec(...r='/', compressor=None)}, input_type=dict]
+            For further information visit https://errors.pydantic.dev/2.11/v/missing
+        """
     ```
 
 === "Zarr V3"
@@ -460,7 +573,7 @@ Define strict schemas for group members using `TypedDict` to enable runtime vali
         timestamps: ArraySpec
         values: ArraySpec
 
-    # Create array specifications
+    # Create ArraySpec
     timestamps = ArraySpec(
         shape=(10000,),
         data_type='float64',
@@ -496,10 +609,19 @@ Define strict schemas for group members using `TypedDict` to enable runtime vali
         attributes={'sensor': 'accelerometer'},
         members={'timestamps': timestamps, 'values': values}
     )
-    print("Timeseries group created successfully")
-    #> Timeseries group created successfully
 
-    # Validation enforces all required members present
-    # Attempting to create without 'values' would raise ValidationError
-    # Attempting to add extra members not in TypedDict would raise ValidationError
+    # This fails because the required member 'values' is missing
+    try:
+        ts_group = TimeseriesGroup(
+            attributes={'sensor': 'accelerometer'},
+            members={'timestamps': timestamps}
+        )
+    except ValueError as e:
+        print(e)
+        """
+        1 validation error for TimeseriesGroup
+        members.values
+          Field required [type=missing, input_value={'timestamps': ArraySpec(..., dimension_names=None)}, input_type=dict]
+            For further information visit https://errors.pydantic.dev/2.11/v/missing
+        """
     ```
