@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from importlib.metadata import version
 from typing import (
     TYPE_CHECKING,
@@ -32,7 +32,6 @@ from pydantic_zarr.experimental.core import (
     maybe_node,
     model_like,
     parse_dtype_v2,
-    tuplify_json,
 )
 
 if TYPE_CHECKING:
@@ -331,7 +330,6 @@ class ArraySpec(StrictBase):
             }
         else:
             meta_json = array.metadata.to_dict()
-        meta_json = tuplify_json(meta_json)
         return cls.model_validate(meta_json)
 
     def to_zarr(
@@ -1025,8 +1023,9 @@ def auto_chunks(data: Any) -> tuple[int, ...]:
     """
     if hasattr(data, "chunksize"):
         return data.chunksize
-    if hasattr(data, "chunks"):
-        return data.chunks
+    if hasattr(data, "chunks") and data.chunks is not None:  # noqa: SIM102
+        if isinstance(data.chunks, Sequence) and all(isinstance(x, int) for x in data.chunks):
+            return tuple(data.chunks)
     return _guess_chunks(data.shape, np.dtype(data.dtype).itemsize)
 
 

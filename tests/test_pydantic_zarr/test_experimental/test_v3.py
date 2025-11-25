@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from pydantic_zarr.core import tuplify_json
+from pydantic_zarr.experimental.core import json_eq
 from pydantic_zarr.experimental.v3 import (
     ArraySpec,
     BaseGroupSpec,
@@ -116,9 +116,7 @@ def test_arrayspec_from_zarr(dtype_example: DTypeExample) -> None:
     arr = zarr.create_array(store=store, shape=(10,), dtype=data_type, zarr_format=3)
 
     arr_spec = ArraySpec.from_zarr(arr)
-    assert arr_spec.model_dump() == json.loads(
-        store["zarr.json"].to_bytes(), object_hook=tuplify_json
-    )
+    assert json_eq(arr_spec.model_dump(), json.loads(store["zarr.json"].to_bytes()))
 
 
 @pytest.mark.parametrize("path", ["", "foo"])

@@ -9,11 +9,12 @@ import re
 import sys
 from collections.abc import Mapping  # noqa: TC003
 from contextlib import suppress
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import dask.array as da
 import pytest
-from pydantic import Field, ValidationError
+import xarray as xr
+from pydantic import ValidationError
 
 from pydantic_zarr.core import tuplify_json
 from pydantic_zarr.experimental.core import json_eq
@@ -63,17 +64,24 @@ with suppress(ImportError):
     from zarr.errors import ContainsArrayError, ContainsGroupError
 
 
-@pytest.mark.parametrize("chunks", [(1,), (1, 2), ((1, 2, 3))])
-@pytest.mark.parametrize("dtype", ["bool", "uint8", "float64"])
+@pytest.mark.parametrize(("chunks", "shape"), [((1,), (10,)), ((1, 2, 3), (4, 5, 6))])
+@pytest.mark.parametrize("dtype", ["bool", "float64", "|u1", np.float32])
 @pytest.mark.parametrize("compressor", [None, {"id": "gzip", "level": 1}])
 @pytest.mark.parametrize(
-    "filters", [(None,), ("delta",), ("scale_offset",), ("delta", "scale_offset")]
+    "filters",
+    [
+        None,
+        (),
+        ({"id": "delta", "dtype": "uint8"},),
+        ({"id": "delta", "dtype": "uint8"}, {"id": "gzip", "level": 1}),
+    ],
 )
 @pytest.mark.parametrize("dimension_separator", DIMENSION_SEPARATOR)
 @pytest.mark.parametrize("memory_order", MEMORY_ORDER)
-@pytest.mark.parametrize("attributes", [{}, {"foo": (100, 200, 300), "bar": "hello"}])
+@pytest.mark.parametrize("attributes", [{}, {"a": [100]}, {"b": ("e", "f")}])
 def test_array_spec(
     chunks: tuple[int, ...],
+    shape: tuple[int, ...],
     memory_order: MemoryOrder,
     dtype: str,
     dimension_separator: DimensionSeparator,
@@ -82,22 +90,16 @@ def test_array_spec(
     attributes: dict[str, object],
 ) -> None:
     zarr = pytest.importorskip("zarr")
-    numcodecs = pytest.importorskip("numcodecs")
+    import numcodecs
 
-    store = {}
-    _filters: list[Codec] | None
     if filters is not None:
-        _filters = []
-        for filter in filters:
-            if filter == "delta":
-                _filters.append(numcodecs.Delta(dtype))
-            if filter == "scale_offset":
-                _filters.append(numcodecs.FixedScaleOffset(0, 1.0, dtype=dtype))
+        _filters = tuple(numcodecs.get_codec(f) for f in filters)
     else:
-        _filters = filters
+        _filters = None
+    store = {}
 
     array = zarr.create_array(
-        shape=(100,) * len(chunks),
+        shape=shape,
         store=store,
         chunks=chunks,
         dtype=dtype,
@@ -111,61 +113,60 @@ def test_array_spec(
 
     spec = ArraySpec.from_zarr(array)
 
-    assert spec.model_dump() == tuplify_json(
-        {**json.loads(store[".zarray"].to_bytes()), "attributes": attributes}
+    assert json_eq(
+        spec.model_dump(), {**json.loads(store[".zarray"].to_bytes()), "attributes": attributes}
+    )
+
+
+@pytest.mark.parametrize("overwrite", [True, False])
+@pytest.mark.parametrize("path", ["", "foo"])
+@pytest.mark.parametrize("config", [None, {}, {"order": "C", "write_empty_chunks": True}])
+def test_arrayspec_to_zarr(overwrite: bool, path: str, config: dict[str, object] | None) -> None:
+    """
+    Test serializing an arrayspec to zarr and back again
+    """
+    zarr = pytest.importorskip("zarr")
+    from zarr.core.array_spec import ArrayConfig
+
+    spec = ArraySpec(
+        shape=(10,),
+        dtype="uint8",
+        chunks=(1,),
+        attributes={"a": 10},
     )
 
     # test serialization
     store = zarr.storage.MemoryStore()
-    stored = spec.to_zarr(store, path="foo")
-    assert ArraySpec.from_zarr(stored) == spec
+    stored = spec.to_zarr(store, path=path, config=config)  # type: ignore[arg-type]
 
-    # test that to_zarr is idempotent
-    assert json_eq(spec.to_zarr(store, path="foo").metadata.to_dict(), stored.metadata.to_dict())
+    if config not in (None, {}):
+        assert stored._async_array._config == ArrayConfig(
+            order=config["order"], write_empty_chunks=config["write_empty_chunks"]
+        )
+
+    assert json_eq(ArraySpec.from_zarr(stored).model_dump(), spec.model_dump())
+
+    # test that to_zarr is idempotent when the arrays match
+    assert json_eq(spec.to_zarr(store, path=path).metadata.to_dict(), stored.metadata.to_dict())
 
     # test that to_zarr raises if the extant array is different
+    # unless overwrite is True
     spec_2 = spec.model_copy(update={"attributes": {"baz": 10}})
-    with pytest.raises(ContainsArrayError):
-        spec_2.to_zarr(store, path="foo")
-
-    # test that we can overwrite the dissimilar array
-    stored_2 = spec_2.to_zarr(store, path="foo", overwrite=True)
-    assert ArraySpec.from_zarr(stored_2) == spec_2
-
-    assert spec_2.to_zarr(store, path="foo").read_only is False
-
-
-@dataclass
-class FakeArray:
-    shape: tuple[int, ...]
-    dtype: np.dtype[Any]
-
-
-@dataclass
-class WithAttrs:
-    attrs: dict[str, Any]
-
-
-@dataclass
-class WithChunksize:
-    chunksize: tuple[int, ...]
-
-
-@dataclass
-class FakeDaskArray(FakeArray, WithChunksize): ...
-
-
-@dataclass
-class FakeXarray(FakeDaskArray, WithAttrs): ...
+    if not overwrite:
+        with pytest.raises(ContainsArrayError):
+            spec_2.to_zarr(store, path=path, overwrite=overwrite)
+    else:
+        arr_2 = spec_2.to_zarr(store, path=path, overwrite=overwrite)
+        assert json_eq(arr_2.attrs.asdict(), spec_2.attributes)
 
 
 @pytest.mark.parametrize(
     "array",
     [
         np.zeros((100), dtype="uint8"),
-        FakeArray(shape=(11,), dtype=np.dtype("float64")),
-        FakeDaskArray(shape=(22,), dtype=np.dtype("uint8"), chunksize=(11,)),
-        FakeXarray(shape=(22,), dtype=np.dtype("uint8"), chunksize=(11,), attrs={"foo": "bar"}),
+        xr.DataArray(np.arange(10), attrs={"foo": 10}),
+        xr.DataArray(da.arange(10), attrs={"foo": 10}),
+        da.arange(10),
     ],
 )
 @pytest.mark.parametrize("chunks", ["omit", "auto", (10,)])
@@ -266,8 +267,8 @@ def test_serialize_deserialize_groupspec() -> None:
         attributes: ArrayAttrs
 
     class RootGroup(GroupSpec):
-        attributes: RootAttrs = Field(default_factory=lambda v: {"foo": 1, "bar": [1]})
-        members: Mapping[str, MemberArray | SubGroup] = {}
+        attributes: RootAttrs
+        members: Mapping[str, MemberArray | SubGroup]
 
     store = zarr.storage.MemoryStore()
 
@@ -431,24 +432,6 @@ def test_validation() -> None:
         GroupA.from_zarr(groupBMat)
 
 
-@pytest.mark.parametrize("shape", [(1,), (2, 2), (3, 4, 5)])
-@pytest.mark.parametrize("dtype", [None, "uint8", "float32"])
-def test_from_array(shape: tuple[int, ...], dtype: str | None) -> None:
-    template = np.zeros(shape=shape, dtype=dtype)
-    spec = ArraySpec.from_array(template)  # type: ignore[var-annotated]
-
-    assert spec.shape == template.shape
-    assert np.dtype(spec.dtype) == np.dtype(template.dtype)
-    assert spec.chunks == template.shape
-    assert spec.attributes == {}
-
-    chunks = template.ndim * (1,)
-    attrs = {"foo": 100}
-    spec2 = ArraySpec.from_array(template, chunks=chunks, attributes=attrs)
-    assert spec2.chunks == chunks
-    assert spec2.attributes == attrs
-
-
 @pytest.mark.parametrize("data", ["/", "a/b/c"])
 def test_member_name(data: str) -> None:
     with pytest.raises(ValidationError, match='Strings containing "/" are invalid.'):
@@ -523,6 +506,10 @@ def test_array_like_with_zarr() -> None:
     arr_stored = arr.to_zarr(store, path="arr")
     assert arr.like(arr_stored)
 
+    dissimilar_arr = arr.model_copy(update={"attributes": {"a": 10}}).to_zarr(store, path="arr_2")
+    assert not arr.like(dissimilar_arr)
+    assert arr.like(dissimilar_arr, exclude={"attributes"})
+
 
 # todo: parametrize
 def test_group_like() -> None:
@@ -534,9 +521,9 @@ def test_group_like() -> None:
     }
     group = GroupSpec.from_flat(tree)  # type: ignore[var-annotated]
     assert group.like(group)
-    assert not group.like(group.model_copy(update={"attributes": None}))
-    assert group.like(group.model_copy(update={"attributes": None}), exclude={"attributes"})
-    assert group.like(group.model_copy(update={"attributes": None}), include={"members"})
+    assert not group.like(group.model_copy(update={"attributes": {}}))
+    assert group.like(group.model_copy(update={"attributes": {}}), exclude={"attributes"})
+    assert group.like(group.model_copy(update={"attributes": {}}), include={"members"})
 
 
 # todo: parametrize

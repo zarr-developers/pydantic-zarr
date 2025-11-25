@@ -29,7 +29,14 @@ Source = "https://github.com/zarr-developers/pydantic-zarr"
 [project.optional-dependencies]
 zarr = ["zarr>=3.0.0"]
 # pytest pin is due to https://github.com/pytest-dev/pytest-cov/issues/693
-test-base = ["coverage", "pytest<8.4", "pytest-cov", "pytest-examples"]
+test-base = [
+    "coverage",
+    "pytest<8.4",
+    "pytest-cov",
+    "pytest-examples",
+    "xarray==2025.10.0",
+    "dask==2025.11.0"
+    ]
 test = ["pydantic-zarr[test-base,zarr]"]
 docs = [
     "mkdocs-material",

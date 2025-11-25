@@ -31,7 +31,6 @@ from pydantic_zarr.experimental.core import (
     ensure_multiple,
     maybe_node,
     model_like,
-    tuplify_json,
 )
 
 if TYPE_CHECKING:
@@ -326,11 +325,9 @@ class ArraySpec(NodeSpec):
             # this class was removed from zarr python 3.1.0
             from zarr.core.metadata.v3 import V3JsonEncoder  # type: ignore[attr-defined]
 
-            meta_json = tuplify_json(
-                json.loads(json.dumps(array.metadata.to_dict(), cls=V3JsonEncoder))
-            )
+            meta_json = json.loads(json.dumps(array.metadata.to_dict(), cls=V3JsonEncoder))
         else:
-            meta_json = tuplify_json(array.metadata.to_dict())
+            meta_json = array.metadata.to_dict()
         return cls(
             attributes=meta_json["attributes"],
             shape=array.shape,
