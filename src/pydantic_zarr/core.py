@@ -14,8 +14,6 @@ import numpy as np
 import numpy.typing as npt
 from pydantic import BaseModel, ConfigDict
 
-from pydantic_zarr.experimental.core import json_eq
-
 if TYPE_CHECKING:
     import zarr
     from zarr.storage._common import StoreLike
@@ -116,7 +114,7 @@ def model_like(a: BaseModel, b: BaseModel, exclude: IncEx = None, include: IncEx
 
     a_dict = a.model_dump(exclude=exclude, include=include)
     b_dict = b.model_dump(exclude=exclude, include=include)
-    return json_eq(a_dict, b_dict)
+    return a_dict == b_dict
 
 
 # TODO: expose contains_array and contains_group as public functions in zarr-python
