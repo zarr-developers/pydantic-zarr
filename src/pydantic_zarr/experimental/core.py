@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     import zarr
     from zarr.storage._common import StoreLike
 
-BaseAttributes = BaseModel
+BaseAttributes = Mapping[str, object] | BaseModel
 
 IncEx: TypeAlias = set[int] | set[str] | dict[int, Any] | dict[str, Any] | None
 
