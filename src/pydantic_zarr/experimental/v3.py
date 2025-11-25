@@ -43,7 +43,6 @@ if TYPE_CHECKING:
     from zarr.core.array_spec import ArrayConfigParams
 
 BaseMember: TypeAlias = Mapping[str, "ArraySpec | GroupSpec"]
-BaseMemberMut: TypeAlias = dict[str, "ArraySpec | GroupSpec"]
 
 NodeType = Literal["group", "array"]
 
@@ -488,11 +487,11 @@ class GroupSpec(BaseGroupSpec):
 
     node_type: Literal["group"] = "group"
     attributes: BaseAttributes = Field(default_factory=dict)  # type: ignore[arg-type]
-    members: BaseMemberMut = Field(default_factory=dict)
+    members: BaseMember = Field(default_factory=dict)
 
     @field_validator("members", mode="after")
     @classmethod
-    def validate_members(cls, v: BaseMemberMut) -> BaseMemberMut:
+    def validate_members(cls, v: BaseMember) -> BaseMember:
         return ensure_key_no_path(v)
 
     @classmethod

@@ -42,7 +42,6 @@ if TYPE_CHECKING:
     from zarr.core.array_spec import ArrayConfigParams
 
 BaseMember: TypeAlias = Mapping[str, "ArraySpec | GroupSpec"]
-BaseMemberMut: TypeAlias = dict[str, "ArraySpec | GroupSpec"]
 
 DtypeStr = Annotated[str, BeforeValidator(parse_dtype_v2)]
 
@@ -478,11 +477,11 @@ class GroupSpec(BaseGroupSpec):
         are either `ArraySpec`, `GroupSpec`, or `BaseGroupSpec`.
     """
 
-    members: BaseMemberMut
+    members: BaseMember
 
     @field_validator("members", mode="after")
     @classmethod
-    def validate_members(cls, v: BaseMemberMut) -> BaseMemberMut:
+    def validate_members(cls, v: BaseMember) -> BaseMember:
         return ensure_key_no_path(v)
 
     @classmethod
