@@ -463,7 +463,7 @@ class BaseGroupSpec(StrictBase):
     """
 
     zarr_format: Literal[3] = 3
-    attributes: BaseAttributes = Field(default_factory=dict)  # type: ignore[arg-type]
+    attributes: BaseAttributes
 
 
 class GroupSpec(BaseGroupSpec):
@@ -483,8 +483,8 @@ class GroupSpec(BaseGroupSpec):
     """
 
     node_type: Literal["group"] = "group"
-    attributes: BaseAttributes = Field(default_factory=dict)  # type: ignore[arg-type]
-    members: BaseMember = Field(default_factory=dict)
+    attributes: BaseAttributes
+    members: BaseMember
 
     @field_validator("members", mode="after")
     @classmethod
@@ -617,7 +617,7 @@ class GroupSpec(BaseGroupSpec):
             )
             raise ValueError(msg)
         if depth == 0:
-            return GroupSpec(attributes=attributes)  # type: ignore[return-value]
+            return cls(attributes=attributes, members={})
         new_depth = max(depth - 1, -1)
         for name, item in group.members():
             if isinstance(item, zarr.Array):
