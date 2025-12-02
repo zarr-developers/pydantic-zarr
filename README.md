@@ -14,7 +14,7 @@ pip install -U "pydantic-zarr[zarr]"
 
 ## Getting help
 
-- Docs: see the [documentation](https://pydantic-zarr.readthedocs.io/stable/) for detailed information about this project.
+- Docs: see the [documentation](https://pydantic-zarr.readthedocs.io/) for detailed information about this project.
 - Chat: We use [Zulip](https://ossci.zulipchat.com/#narrow/channel/423692-Zarr) for project-related chat.
 
 ## Example

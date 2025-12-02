@@ -22,7 +22,7 @@ classifiers = [
 ]
 dependencies = ["pydantic>2.0.0", "numpy>=1.24.0"]
 [project.urls]
-Documentation = "https://zarr.dev/pydantic-zarr/"
+Documentation = "https://pydantic-zarr.readthedocs.io/"
 Issues = "https://github.com/zarr-developers/pydantic-zarr/issues"
 Source = "https://github.com/zarr-developers/pydantic-zarr"
 

@@ -1,5 +1,5 @@
 site_name: "pydantic-zarr"
-site_url: https://zarr.dev/pydantic-zarr/
+site_url: https://pydantic-zarr.readthedocs.io/
 site_author: Davis Bennett
 site_description: >-
   Documentation for pydantic-zarr
@@ -7,9 +7,6 @@ site_description: >-
 # Repository
 repo_name: zarr-developers/pydantic-zarr
 repo_url: https://github.com/zarr-developers/pydantic-zarr
-
-# Copyright
-copyright: Copyright &copy; 2016 - 2024 HHMI / Janelia
 
 theme:
   name: material
