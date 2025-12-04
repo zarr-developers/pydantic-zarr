@@ -95,7 +95,7 @@ class MyGroup(GroupSpec):
 
 # validation fails: missing array named "b"
 try:
-    MyGroup(members={"a": array})
+    MyGroup(members={"a": array}, attributes={})
 except ValueError as e:
     print(e)
     """
@@ -107,7 +107,7 @@ except ValueError as e:
 
 # validation fails: extra array named "c"
 try:
-    MyGroup(members={"a": array, "b": array, "c": array})
+    MyGroup(members={"a": array, "b": array, "c": array}, attributes={})
 except ValueError as e:
     print(e)
     """
@@ -118,5 +118,5 @@ except ValueError as e:
     """
 
 # validation succeeds
-MyGroup(members={"a" : array, "b": array})
+MyGroup(members={"a" : array, "b": array}, attributes={})
 ```
