@@ -20,9 +20,10 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: Implementation :: CPython",
 ]
-dependencies = ["pydantic>2.0.0", "numpy>=1.24.0"]
+dependencies = ["pydantic>2.0.0", "numpy>=1.24.0", "packaging>=21.0"]
+
 [project.urls]
-Documentation = "https://zarr.dev/pydantic-zarr/"
+Documentation = "https://pydantic-zarr.readthedocs.io/"
 Issues = "https://github.com/zarr-developers/pydantic-zarr/issues"
 Source = "https://github.com/zarr-developers/pydantic-zarr"
 
