@@ -300,87 +300,28 @@ print(g_a.like(g_a.to_zarr(store, path='g_a')))
 #> True
 ```
 
-## Using generic types
+## Creating from an array
 
-This example shows how to specialize `GroupSpec` and `ArraySpec` with type parameters. By specializing `GroupSpec` or `ArraySpec` in this way, python type checkers and Pydantic can type-check elements of a Zarr hierarchy.
+The `ArraySpec` class has a `from_array` static method that takes an array-like object and returns an `ArraySpec` with `shape` and `dtype` fields matching those of the array-like object.
 
 ```python
-import sys
-from collections.abc import Mapping
-from pydantic import ValidationError
+import numpy as np
 
-from pydantic_zarr.v2 import ArraySpec, GroupSpec, TAttr, TItem, TBaseItem
-from typing import Any
-if sys.version_info < (3, 12):
-    from typing_extensions import TypedDict
-else:
-    from typing import TypedDict
+from pydantic_zarr.v2 import ArraySpec
 
-
-# a Pydantic BaseModel would also work here
-class GroupAttrs(TypedDict):
-    a: int
-    b: int
-
-
-# a Zarr group with attributes consistent with GroupAttrs
-SpecificAttrsGroup = GroupSpec[GroupAttrs, Any]
-
-try:
-    SpecificAttrsGroup(attributes={'a': 10, 'b': 'foo'})
-except ValidationError as exc:
-    print(exc)
-    """
-    1 validation error for GroupSpec[GroupAttrs, Any]
-    attributes.b
-      Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='foo', input_type=str]
-        For further information visit https://errors.pydantic.dev/2.11/v/int_parsing
-    """
-
-# this passes validation
-print(SpecificAttrsGroup(attributes={'a': 100, 'b': 100}))
-#> zarr_format=2 attributes={'a': 100, 'b': 100} members={}
-
-# a Zarr group that only contains arrays -- no subgroups!
-# The attributes are allowed to be any Mapping[str, object]
-ArraysOnlyGroup = GroupSpec[Mapping[str, object], ArraySpec]
-
-try:
-    ArraysOnlyGroup(attributes={}, members={'foo': GroupSpec(attributes={})})
-except ValidationError as exc:
-    print(exc)
-    """
-    1 validation error for GroupSpec[Mapping[str, object], ArraySpec]
-    members.foo
-      Input should be a valid dictionary or instance of ArraySpec [type=model_type, input_value=GroupSpec(zarr_format=2, ...tributes={}, members={}), input_type=GroupSpec]
-        For further information visit https://errors.pydantic.dev/2.11/v/model_type
-    """
-
-# this passes validation
-items = {
-    'foo': ArraySpec(
-        attributes={}, shape=(1,), dtype='uint8', chunks=(1,), compressor=None
-    )
-}
-print(ArraysOnlyGroup(attributes={}, members=items).model_dump())
+print(ArraySpec.from_array(np.arange(10)).model_dump())
 """
 {
     'zarr_format': 2,
     'attributes': {},
-    'members': {
-        'foo': {
-            'zarr_format': 2,
-            'attributes': {},
-            'shape': (1,),
-            'chunks': (1,),
-            'dtype': '|u1',
-            'fill_value': 0,
-            'order': 'C',
-            'filters': None,
-            'dimension_separator': '/',
-            'compressor': None,
-        }
-    },
+    'shape': (10,),
+    'chunks': (10,),
+    'dtype': '<i8',
+    'fill_value': 0,
+    'order': 'C',
+    'filters': None,
+    'dimension_separator': '/',
+    'compressor': None,
 }
 """
 ```
