@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from importlib.metadata import version
 from typing import (
     TYPE_CHECKING,
@@ -213,40 +213,14 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
     def model_dump(
         self,
-        *,
-        mode: Literal["json", "python"] | str = "python",  # noqa: PYI051
-        include: IncEx | None = None,  # type: ignore[override]
-        exclude: IncEx | None = None,  # type: ignore[override]
-        context: Any | None = None,
-        by_alias: bool | None = None,
-        exclude_unset: bool = False,
-        exclude_defaults: bool = False,
-        exclude_none: bool = False,
-        exclude_computed_fields: bool = False,
-        round_trip: bool = False,
-        warnings: (bool | Literal["none", "warn", "error"]) = True,
-        fallback: Callable[[Any], Any] | None = None,
-        serialize_as_any: bool = False,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         """
         Override this method because the Zarr V3 spec requires that the dimension_names
-        field be omitted from metadata entirely if it's empty.
+        field be omitted from metadata entirely if it's set to None.
         """
-        d = super().model_dump(
-            mode=mode,
-            include=include,
-            exclude=exclude,
-            context=context,
-            by_alias=by_alias,
-            exclude_unset=exclude_unset,
-            exclude_defaults=exclude_defaults,
-            exclude_none=exclude_none,
-            exclude_computed_fields=exclude_computed_fields,
-            round_trip=round_trip,
-            warnings=warnings,
-            fallback=fallback,
-            serialize_as_any=serialize_as_any,
-        )
+        # TODO: use exclude_if when we require a newer version of pydantic
+        d = super().model_dump(**kwargs)
 
         if d["dimension_names"] is None:
             d.pop("dimension_names")
