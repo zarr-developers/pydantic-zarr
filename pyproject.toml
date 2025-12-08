@@ -260,6 +260,6 @@ checks = [
 [tool.towncrier]
 directory = 'changes'
 filename = "docs/release-notes.md"
-underlines = ["", "", ""]
+title_format = "## {name} {version} ({project_date})"
 issue_format = "[#{issue}](https://github.com/zarr-developers/pydantic-zarr/issues/{issue})"
 start_string = "<!-- towncrier release notes start -->\n"
