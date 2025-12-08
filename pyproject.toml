@@ -45,7 +45,6 @@ docs = [
     "pytest-examples",
     "pydantic==2.11",
     "zarr>=3.1.0",
-    "towncrier",
 ]
 
 [dependency-groups]
