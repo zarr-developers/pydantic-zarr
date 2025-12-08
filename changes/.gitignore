@@ -1,0 +1,7 @@
+# Ignore all files in this directory...
+*
+# ...except for the gitignore itself and the README
+!.gitignore
+!README.md
+# And keep the actual changelog fragments
+!*.md

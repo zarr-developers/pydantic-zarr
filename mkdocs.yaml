@@ -38,7 +38,7 @@ nav:
         - core: api/experimental/core.md
         - v2: api/experimental/v2.md
         - v3: api/experimental/v3.md
-
+    - Release Notes: release-notes.md
 plugins:
 - mkdocstrings:
     handlers:
