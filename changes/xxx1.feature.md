@@ -1,0 +1,1 @@
+Made `zarr` an optional dependency.

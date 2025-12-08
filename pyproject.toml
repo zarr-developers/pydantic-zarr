@@ -36,7 +36,25 @@ docs = [
     "mkdocstrings[python]",
     "pytest-examples",
     "pydantic==2.11",
-    "zarr>=3.1.0"
+    "zarr>=3.1.0",
+    "towncrier",
+]
+
+[dependency-groups]
+zarr = ["zarr>=3.0.0"]
+# pytest pin is due to https://github.com/pytest-dev/pytest-cov/issues/693
+test-base = ["coverage", "pytest<8.4", "pytest-cov", "pytest-examples"]
+test = [
+    {include-group = "test-base"},
+    {include-group = "zarr"},
+]
+docs = [
+    "mkdocs-material",
+    "mkdocstrings[python]",
+    "pytest-examples",
+    "pydantic==2.11",
+    "zarr>=3.1.0",
+    "towncrier",
 ]
 
 [tool.hatch]
@@ -223,3 +241,10 @@ checks = [
     "PR05",
     "PR06",
 ]
+
+[tool.towncrier]
+directory = 'changes'
+filename = "docs/release-notes.md"
+underlines = ["", "", ""]
+issue_format = "[#{issue}](https://github.com/zarr-developers/pydantic-zarr/issues/{issue})"
+start_string = "<!-- towncrier release notes start -->\n"
