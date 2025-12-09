@@ -216,8 +216,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         if self.dimension_names is not None and len(self.dimension_names) != len(self.shape):
             msg = (
                 "Invalid `dimension names` attribute. "
-                f"Got length={len(self.dimension_names)}, "
-                f"expected length={len(self.shape)}."
+                f"Length of dimension names ({len(self.dimension_names)}), "
+                f"does not match number of array dimensions ({len(self.shape)})."
             )
             raise ValueError(msg)
         return self
