@@ -29,6 +29,27 @@ from .conftest import DTYPE_EXAMPLES_V3, DTypeExample
 ZARR_AVAILABLE = importlib.util.find_spec("zarr") is not None
 
 
+@pytest.mark.parametrize("invalid_dimension_names", [[], "hi", ["1", 2, None]], ids=str)
+def test_dimension_names_validation(invalid_dimension_names: object) -> None:
+    """
+    Test that the `dimension_names` attribute is rejected if any of the following are true:
+    - it is a sequence with length different from the number of dimensions of the array
+    - it is a sequence containing values other than strings or `None`.
+    - it is neither a valid sequence nor the value `None`.
+    """
+    base_array: AnyArraySpec = ArraySpec(
+        shape=(1, 2, 3),
+        data_type="int8",
+        codecs=({"name": "bytes"},),
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (1, 2, 3)}},
+        chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
+        fill_value=0,
+        attributes={},
+    )
+    with pytest.raises(ValidationError):
+        ArraySpec(**(base_array.model_dump() | {"dimension_names": invalid_dimension_names}))
+
+
 def test_serialize_deserialize() -> None:
     array_attributes = {"foo": 42, "bar": "apples", "baz": [1, 2, 3, 4]}
 
