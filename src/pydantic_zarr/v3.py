@@ -22,7 +22,7 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
-from pydantic import AfterValidator, BaseModel, BeforeValidator
+from pydantic import AfterValidator, BaseModel, BeforeValidator, model_validator
 from typing_extensions import TypedDict
 
 from pydantic_zarr.core import (
@@ -210,6 +210,17 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     codecs: CodecTuple
     storage_transformers: tuple[AnyNamedConfig, ...] = ()
     dimension_names: tuple[str | None, ...] | None = None  # todo: validate this against shape
+
+    @model_validator(mode="after")
+    def validate_dimension_names(self) -> Self:
+        if self.dimension_names is not None and len(self.dimension_names) != len(self.shape):
+            msg = (
+                "Invalid `dimension names` attribute. "
+                f"Got length={len(self.dimension_names)}, "
+                f"expected length={len(self.shape)}."
+            )
+            raise ValueError(msg)
+        return self
 
     def model_dump(
         self,
