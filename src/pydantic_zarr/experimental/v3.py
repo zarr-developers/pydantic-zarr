@@ -515,7 +515,7 @@ class ArraySpec(NodeSpec):
         """
         return type(self)(**{**self.model_dump(), "data_type": data_type})
 
-    def with_chunk_grid(self, chunk_grid: RegularChunking) -> Self:
+    def with_chunk_grid(self, chunk_grid: AnyNamedConfig) -> Self:
         """
         Return a copy of this model with a new `chunk_grid` field.
 
@@ -531,7 +531,7 @@ class ArraySpec(NodeSpec):
         """
         return type(self)(**{**self.model_dump(), "chunk_grid": chunk_grid})
 
-    def with_chunk_key_encoding(self, chunk_key_encoding: DefaultChunkKeyEncoding) -> Self:
+    def with_chunk_key_encoding(self, chunk_key_encoding: AnyNamedConfig) -> Self:
         """
         Return a copy of this model with a new `chunk_key_encoding` field.
 
