@@ -16,7 +16,7 @@ This release contains breaking changes. See [Bugfixes](#090-bugfixes)
 ### Bugfixes<a id='090-bugfixes'></a>
 
 - Remove default empty dictionary for attributes in ArraySpec and GroupSpec. This is a breaking change.
-To migrate your code, provide a default parameter for `attributes` when creating an `ArraySpec` or
+To migrate your code, provide a value for the `attributes` argument when creating an `ArraySpec` or
 `GroupSpec`. ([#115](https://github.com/zarr-developers/pydantic-zarr/issues/115))
 - Fix a broken bare install by making the dependency on `packaging` explicit. ([#125](https://github.com/zarr-developers/pydantic-zarr/issues/125))
 
