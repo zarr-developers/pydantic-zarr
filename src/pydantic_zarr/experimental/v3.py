@@ -467,6 +467,150 @@ class ArraySpec(NodeSpec):
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
+    def with_attributes(self, attributes: BaseAttributes) -> Self:
+        """
+        Return a copy of this model with a new `attributes` field.
+
+        Parameters
+        ----------
+        attributes : BaseAttributes
+            The new `attributes` field for the copy of this model.
+
+        Returns
+        -------
+        ArraySpec
+            A copy of this model with a new `attributes` field.
+        """
+        return type(self)(**{**self.model_dump(), "attributes": attributes})
+
+    def with_shape(self, shape: tuple[int, ...]) -> Self:
+        """
+        Return a copy of this model with a new `shape` field.
+
+        Parameters
+        ----------
+        shape : tuple[int, ...]
+            The new `shape` field for the copy of this model.
+
+        Returns
+        -------
+        ArraySpec
+            A copy of this model with a new `shape` field.
+        """
+        return type(self)(**{**self.model_dump(), "shape": shape})
+
+    def with_data_type(self, data_type: DTypeLike) -> Self:
+        """
+        Return a copy of this model with a new `data_type` field.
+
+        Parameters
+        ----------
+        data_type : DTypeLike
+            The new `data_type` field for the copy of this model.
+
+        Returns
+        -------
+        ArraySpec
+            A copy of this model with a new `data_type` field.
+        """
+        return type(self)(**{**self.model_dump(), "data_type": data_type})
+
+    def with_chunk_grid(self, chunk_grid: RegularChunking) -> Self:
+        """
+        Return a copy of this model with a new `chunk_grid` field.
+
+        Parameters
+        ----------
+        chunk_grid : RegularChunking
+            The new `chunk_grid` field for the copy of this model.
+
+        Returns
+        -------
+        ArraySpec
+            A copy of this model with a new `chunk_grid` field.
+        """
+        return type(self)(**{**self.model_dump(), "chunk_grid": chunk_grid})
+
+    def with_chunk_key_encoding(self, chunk_key_encoding: DefaultChunkKeyEncoding) -> Self:
+        """
+        Return a copy of this model with a new `chunk_key_encoding` field.
+
+        Parameters
+        ----------
+        chunk_key_encoding : DefaultChunkKeyEncoding
+            The new `chunk_key_encoding` field for the copy of this model.
+
+        Returns
+        -------
+        ArraySpec
+            A copy of this model with a new `chunk_key_encoding` field.
+        """
+        return type(self)(**{**self.model_dump(), "chunk_key_encoding": chunk_key_encoding})
+
+    def with_fill_value(self, fill_value: FillValue) -> Self:
+        """
+        Return a copy of this model with a new `fill_value` field.
+
+        Parameters
+        ----------
+        fill_value : FillValue
+            The new `fill_value` field for the copy of this model.
+
+        Returns
+        -------
+        ArraySpec
+            A copy of this model with a new `fill_value` field.
+        """
+        return type(self)(**{**self.model_dump(), "fill_value": fill_value})
+
+    def with_codecs(self, codecs: CodecTuple) -> Self:
+        """
+        Return a copy of this model with a new `codecs` field.
+
+        Parameters
+        ----------
+        codecs : CodecTuple
+            The new `codecs` field for the copy of this model.
+
+        Returns
+        -------
+        ArraySpec
+            A copy of this model with a new `codecs` field.
+        """
+        return type(self)(**{**self.model_dump(), "codecs": codecs})
+
+    def with_storage_transformers(self, storage_transformers: tuple[AnyNamedConfig, ...]) -> Self:
+        """
+        Return a copy of this model with a new `storage_transformers` field.
+
+        Parameters
+        ----------
+        storage_transformers : tuple[AnyNamedConfig, ...]
+            The new `storage_transformers` field for the copy of this model.
+
+        Returns
+        -------
+        ArraySpec
+            A copy of this model with a new `storage_transformers` field.
+        """
+        return type(self)(**{**self.model_dump(), "storage_transformers": storage_transformers})
+
+    def with_dimension_names(self, dimension_names: tuple[str | None, ...] | None) -> Self:
+        """
+        Return a copy of this model with a new `dimension_names` field.
+
+        Parameters
+        ----------
+        dimension_names : tuple[str | None, ...] | None
+            The new `dimension_names` field for the copy of this model.
+
+        Returns
+        -------
+        ArraySpec
+            A copy of this model with a new `dimension_names` field.
+        """
+        return type(self)(**{**self.model_dump(), "dimension_names": dimension_names})
+
 
 class BaseGroupSpec(StrictBase):
     """
@@ -475,6 +619,25 @@ class BaseGroupSpec(StrictBase):
 
     zarr_format: Literal[3] = 3
     attributes: BaseAttributes
+
+    def with_attributes(self, attributes: BaseAttributes) -> Self:
+        """
+        Return a copy of this model with a new `attributes` field.
+
+        The new model will be validated.
+
+        Parameters
+        ----------
+        attributes : BaseAttributes
+            The new `attributes` field for the copy of this model.
+
+        Returns
+        -------
+        ArraySpec
+            A copy of this model with a new `attributes` field.
+
+        """
+        return type(self)(**{**self.model_dump(), "attributes": attributes})
 
 
 class GroupSpec(BaseGroupSpec):
@@ -502,6 +665,23 @@ class GroupSpec(BaseGroupSpec):
     def validate_members(cls, v: BaseMember) -> BaseMember:
         return ensure_key_no_path(v)
 
+    def with_members(self, members: BaseMember) -> Self:
+        """
+        Return a copy of this model with a new `members` field.
+
+        The new model will be validated.
+
+        Parameters
+        ----------
+        members : Mapping[str, ArraySpec | GroupSpec]
+            The new `members` field for the copy of this model.
+
+        Returns
+        -------
+        A copy of this model with a new `members` field.
+        """
+        return type(self)(**{**self.model_dump(), "members": members})
+
     @classmethod
     def from_flat(cls, data: Mapping[str, ArraySpec | BaseGroupSpec]) -> Self:
         """
@@ -526,7 +706,7 @@ class GroupSpec(BaseGroupSpec):
         ```py
         from pydantic_zarr.experimental.v3 import GroupSpec, ArraySpec, BaseGroupSpec
         import numpy as np
-        flat = {'': BaseGroupSpec(attributes={'foo': 10})}
+        flat = {'' : BaseGroupSpec(attributes={'foo': 10})}
         GroupSpec.from_flat(flat)
         # GroupSpec(zarr_format=3, node_type='group', attributes={'foo': 10}, members={})
         flat = {

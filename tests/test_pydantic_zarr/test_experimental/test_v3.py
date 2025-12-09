@@ -302,3 +302,105 @@ def test_dim_names_from_zarr_array(
     arr = zarr.zeros(*args, **kwargs)
     spec: ArraySpec = ArraySpec.from_zarr(arr)
     assert spec.dimension_names == expected_names
+
+
+def test_arrayspec_with_methods() -> None:
+    """
+    Test that ArraySpec with_* methods create new validated copies
+    """
+    original = ArraySpec.from_array(np.arange(10), attributes={"foo": "bar"})
+
+    # Test with_attributes
+    new_attrs = original.with_attributes({"baz": "qux"})
+    assert new_attrs.attributes == {"baz": "qux"}
+    assert original.attributes == {"foo": "bar"}  # Original unchanged
+    assert new_attrs is not original
+
+    # Test with_shape
+    new_shape = original.with_shape((20,))
+    assert new_shape.shape == (20,)
+    assert original.shape == (10,)
+
+    # Test with_data_type
+    new_dtype = original.with_data_type("float32")
+    assert new_dtype.data_type == "float32"
+    assert original.data_type == "int64"
+
+    # Test with_chunk_grid
+    new_grid = original.with_chunk_grid({"name": "regular", "configuration": {"chunk_shape": (5,)}})
+    assert new_grid.chunk_grid["configuration"]["chunk_shape"] == (5,)  # type: ignore[index]
+    assert original.chunk_grid["configuration"]["chunk_shape"] == (10,)  # type: ignore[index]
+
+    # Test with_chunk_key_encoding
+    new_encoding = original.with_chunk_key_encoding(
+        {"name": "default", "configuration": {"separator": "."}}
+    )
+    assert new_encoding.chunk_key_encoding["configuration"]["separator"] == "."  # type: ignore[index]
+    assert original.chunk_key_encoding["configuration"]["separator"] == "/"  # type: ignore[index]
+
+    # Test with_fill_value
+    new_fill = original.with_fill_value(999)
+    assert new_fill.fill_value == 999
+    assert original.fill_value == 0
+
+    # Test with_codecs
+    new_codecs = original.with_codecs(({"name": "gzip", "configuration": {"level": 1}},))
+    assert len(new_codecs.codecs) == 1
+    assert new_codecs.codecs[0]["name"] == "gzip"  # type: ignore[index]
+
+    # Test with_storage_transformers
+    new_transformers = original.with_storage_transformers(({"name": "test", "configuration": {}},))
+    assert len(new_transformers.storage_transformers) == 1
+    assert original.storage_transformers == ()
+
+    # Test with_dimension_names
+    new_dims = original.with_dimension_names(("x",))
+    assert new_dims.dimension_names == ("x",)
+    assert original.dimension_names is None
+
+
+def test_arrayspec_with_methods_validation() -> None:
+    """
+    Test that ArraySpec with_* methods trigger validation
+    """
+    spec = ArraySpec.from_array(np.arange(10), attributes={})
+
+    # Test that validation fails when dimension_names length doesn't match shape
+    with pytest.raises(ValidationError, match="Invalid `dimension names` attribute"):
+        spec.with_dimension_names(("x", "y"))  # 2 names for 1D array
+
+    # Test that validation fails with empty codecs
+    with pytest.raises(ValidationError, match="Invalid length. Expected 1 or more, got 0"):
+        spec.with_codecs(())
+
+
+def test_groupspec_with_methods() -> None:
+    """
+    Test that GroupSpec with_* methods create new validated copies
+    """
+    array_spec = ArraySpec.from_array(np.arange(10), attributes={})
+    original = GroupSpec(attributes={"group": "attr"}, members={"arr": array_spec})
+
+    # Test with_attributes
+    new_attrs = original.with_attributes({"new": "attr"})
+    assert new_attrs.attributes == {"new": "attr"}
+    assert original.attributes == {"group": "attr"}  # Original unchanged
+    assert new_attrs is not original
+
+    # Test with_members
+    new_array = ArraySpec.from_array(np.arange(5), attributes={})
+    new_members = original.with_members({"new_arr": new_array})
+    assert "new_arr" in new_members.members
+    assert "arr" not in new_members.members  # Replacement, not merge
+    assert "arr" in original.members  # Original unchanged
+
+
+def test_groupspec_with_members_validation() -> None:
+    """
+    Test that GroupSpec with_members triggers validation
+    """
+    spec = GroupSpec(attributes={}, members={})
+
+    # Test that validation fails with invalid member names
+    with pytest.raises(ValidationError, match='Strings containing "/" are invalid'):
+        spec.with_members({"a/b": ArraySpec.from_array(np.arange(10), attributes={})})
