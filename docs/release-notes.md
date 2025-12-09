@@ -4,14 +4,20 @@
 
 ## pydantic-zarr 0.9.0 (2025-12-08)
 
+### Breaking Changes
+
+This release contains breaking changes. See [Bugfixes](#090-bugfixes)
+
 ### Features
 
 - Make the zarr dependency optional to allow usage without installing zarr-python. ([#112](https://github.com/zarr-developers/pydantic-zarr/issues/112))
 - Add experimental module with improved implementations of `ArraySpec` and `GroupSpec` classes. ([#120](https://github.com/zarr-developers/pydantic-zarr/issues/120))
 
-### Bugfixes
+### Bugfixes<a id='090-bugfixes'></a>
 
-- Remove default empty dictionary for attributes in ArraySpec and GroupSpec. ([#115](https://github.com/zarr-developers/pydantic-zarr/issues/115))
+- Remove default empty dictionary for attributes in ArraySpec and GroupSpec. This is a breaking change.
+To migrate your code, provide a default parameter for `attributes` when creating an `ArraySpec` or
+`GroupSpec`. ([#115](https://github.com/zarr-developers/pydantic-zarr/issues/115))
 - Fix a broken bare install by making the dependency on `packaging` explicit. ([#125](https://github.com/zarr-developers/pydantic-zarr/issues/125))
 
 ### Improved Documentation
