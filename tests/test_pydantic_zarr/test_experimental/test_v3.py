@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import importlib
-import importlib.util
 import json
 import re
 from dataclasses import asdict
@@ -24,9 +22,7 @@ from pydantic_zarr.experimental.v3 import (
     auto_codecs,
 )
 
-from ..conftest import DTYPE_EXAMPLES_V3, DTypeExample
-
-ZARR_AVAILABLE = importlib.util.find_spec("zarr") is not None
+from ..conftest import DTYPE_EXAMPLES_V3, ZARR_AVAILABLE, DTypeExample
 
 
 @pytest.mark.parametrize("invalid_dimension_names", [[], "hi", ["1", 2, None]], ids=str)
@@ -305,10 +301,12 @@ def test_dim_names_from_zarr_array(
     assert spec.dimension_names == expected_names
 
 
+@pytest.mark.skipif(not ZARR_AVAILABLE)
 def test_typed_members() -> None:
     """
     Test GroupSpec creation with typed members
     """
+
     array1d = ArraySpec(
         shape=(1,),
         data_type="uint8",

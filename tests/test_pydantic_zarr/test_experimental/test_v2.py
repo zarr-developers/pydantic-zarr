@@ -19,7 +19,7 @@ from pydantic import ValidationError
 from pydantic_zarr.core import tuplify_json
 from pydantic_zarr.experimental.core import json_eq
 
-from ..conftest import DTYPE_EXAMPLES_V2, ZARR_PYTHON_VERSION, DTypeExample
+from ..conftest import DTYPE_EXAMPLES_V2, ZARR_AVAILABLE, ZARR_PYTHON_VERSION, DTypeExample
 
 if TYPE_CHECKING:
     from numcodecs.abc import Codec
@@ -598,6 +598,7 @@ def test_mix_v3_v2_fails() -> None:
         GroupSpec.from_flat(members_flat)  # type: ignore[arg-type]
 
 
+@pytest.mark.skipif(not ZARR_AVAILABLE)
 def test_typed_members() -> None:
     """
     Test GroupSpec creation with typed members
