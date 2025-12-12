@@ -84,6 +84,7 @@ array = ArraySpec(
     chunk_grid={"name": "regular", "configuration": {"chunk_shape": (1,)}},
     chunk_key_encoding = {"name": "default"},
     fill_value = 0,
+    attributes={}
     )
 
 class MyMembers(TypedDict):
