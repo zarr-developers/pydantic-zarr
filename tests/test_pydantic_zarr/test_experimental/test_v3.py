@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import importlib
-import importlib.util
 import json
 import re
 from dataclasses import asdict
@@ -9,6 +7,7 @@ from dataclasses import asdict
 import numpy as np
 import pytest
 from pydantic import ValidationError
+from typing_extensions import TypedDict
 
 from pydantic_zarr.experimental.core import json_eq
 from pydantic_zarr.experimental.v3 import (
@@ -23,9 +22,7 @@ from pydantic_zarr.experimental.v3 import (
     auto_codecs,
 )
 
-from ..conftest import DTYPE_EXAMPLES_V3, DTypeExample
-
-ZARR_AVAILABLE = importlib.util.find_spec("zarr") is not None
+from ..conftest import DTYPE_EXAMPLES_V3, ZARR_AVAILABLE, DTypeExample
 
 
 @pytest.mark.parametrize("invalid_dimension_names", [[], "hi", ["1", 2, None]], ids=str)
@@ -302,6 +299,50 @@ def test_dim_names_from_zarr_array(
     arr = zarr.zeros(*args, **kwargs)
     spec: ArraySpec = ArraySpec.from_zarr(arr)
     assert spec.dimension_names == expected_names
+
+
+@pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr-python is not installed")
+def test_typed_members() -> None:
+    """
+    Test GroupSpec creation with typed members
+    """
+
+    array1d = ArraySpec(
+        shape=(1,),
+        data_type="uint8",
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (1,)}},
+        chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
+        fill_value=0,
+        codecs=({"name": "bytes"},),
+        attributes={},
+    )
+
+    class DatasetMembers(TypedDict):
+        x: ArraySpec
+        y: ArraySpec
+
+    class DatasetGroup(GroupSpec):
+        members: DatasetMembers
+
+    class ExpectedMembers(TypedDict):
+        r10m: DatasetGroup
+        r20m: DatasetGroup
+
+    class ExpectedGroup(GroupSpec):
+        members: ExpectedMembers
+
+    flat = {
+        "": BaseGroupSpec(attributes={}),
+        "/r10m": BaseGroupSpec(attributes={}),
+        "/r20m": BaseGroupSpec(attributes={}),
+        "/r10m/x": array1d,
+        "/r10m/y": array1d,
+        "/r20m/x": array1d,
+        "/r20m/y": array1d,
+    }
+
+    zg = GroupSpec.from_flat(flat).to_zarr({}, path="")
+    ExpectedGroup.from_zarr(zg)
 
 
 def test_arrayspec_with_methods() -> None:

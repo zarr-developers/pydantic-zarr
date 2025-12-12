@@ -19,7 +19,7 @@ from pydantic import ValidationError
 from pydantic_zarr.core import tuplify_json
 from pydantic_zarr.experimental.core import json_eq
 
-from ..conftest import DTYPE_EXAMPLES_V2, ZARR_PYTHON_VERSION, DTypeExample
+from ..conftest import DTYPE_EXAMPLES_V2, ZARR_AVAILABLE, ZARR_PYTHON_VERSION, DTypeExample
 
 if TYPE_CHECKING:
     from numcodecs.abc import Codec
@@ -596,6 +596,48 @@ def test_mix_v3_v2_fails() -> None:
         ),
     ):
         GroupSpec.from_flat(members_flat)  # type: ignore[arg-type]
+
+
+@pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr-python is not installed")
+def test_typed_members() -> None:
+    """
+    Test GroupSpec creation with typed members
+    """
+    array1d = ArraySpec(
+        shape=(1,),
+        dtype="uint8",
+        chunks=(1,),
+        fill_value=0,
+        compressor=None,
+        attributes={},
+    )
+
+    class DatasetMembers(TypedDict):
+        x: ArraySpec
+        y: ArraySpec
+
+    class DatasetGroup(GroupSpec):
+        members: DatasetMembers
+
+    class ExpectedMembers(TypedDict):
+        r10m: DatasetGroup
+        r20m: DatasetGroup
+
+    class ExpectedGroup(GroupSpec):
+        members: ExpectedMembers
+
+    flat = {
+        "": BaseGroupSpec(attributes={}),
+        "/r10m": BaseGroupSpec(attributes={}),
+        "/r20m": BaseGroupSpec(attributes={}),
+        "/r10m/x": array1d,
+        "/r10m/y": array1d,
+        "/r20m/x": array1d,
+        "/r20m/y": array1d,
+    }
+
+    zg = GroupSpec.from_flat(flat).to_zarr({}, path="")
+    ExpectedGroup.from_zarr(zg)
 
 
 def test_arrayspec_with_methods() -> None:

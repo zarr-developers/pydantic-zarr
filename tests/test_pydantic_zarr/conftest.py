@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
-from importlib.metadata import PackageNotFoundError, version
+from importlib.metadata import version
+from importlib.util import find_spec
 
 from packaging.version import Version
 
-try:
+ZARR_AVAILABLE = find_spec("zarr") is not None
+
+if ZARR_AVAILABLE:
     ZARR_PYTHON_VERSION = Version(version("zarr"))
-except PackageNotFoundError:
+else:
     ZARR_PYTHON_VERSION = Version("0.0.0")
 
 DTYPE_EXAMPLES_V2: tuple[DTypeExample, ...]
