@@ -448,6 +448,150 @@ class ArraySpec(StrictBase):
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
+    def with_attributes(self, attributes: BaseAttributes) -> Self:
+        """
+        Return a copy of this model with a new `attributes` field.
+
+        Parameters
+        ----------
+        attributes : BaseAttributes
+            The new `attributes` field for the copy of this model.
+
+        Returns
+        -------
+        ArraySpec
+            A copy of this model with a new `attributes` field.
+        """
+        return type(self)(**{**self.model_dump(), "attributes": attributes})
+
+    def with_shape(self, shape: tuple[int, ...]) -> Self:
+        """
+        Return a copy of this model with a new `shape` field.
+
+        Parameters
+        ----------
+        shape : tuple[int, ...]
+            The new `shape` field for the copy of this model.
+
+        Returns
+        -------
+        ArraySpec
+            A copy of this model with a new `shape` field.
+        """
+        return type(self)(**{**self.model_dump(), "shape": shape})
+
+    def with_chunks(self, chunks: tuple[int, ...]) -> Self:
+        """
+        Return a copy of this model with a new `chunks` field.
+
+        Parameters
+        ----------
+        chunks : tuple[int, ...]
+            The new `chunks` field for the copy of this model.
+
+        Returns
+        -------
+        ArraySpec
+            A copy of this model with a new `chunks` field.
+        """
+        return type(self)(**{**self.model_dump(), "chunks": chunks})
+
+    def with_dtype(self, dtype: DtypeStr | list[tuple[Any, ...]]) -> Self:
+        """
+        Return a copy of this model with a new `dtype` field.
+
+        Parameters
+        ----------
+        dtype : DtypeStr | list[tuple[Any, ...]]
+            The new `dtype` field for the copy of this model.
+
+        Returns
+        -------
+        ArraySpec
+            A copy of this model with a new `dtype` field.
+        """
+        return type(self)(**{**self.model_dump(), "dtype": dtype})
+
+    def with_fill_value(self, fill_value: FillValue) -> Self:
+        """
+        Return a copy of this model with a new `fill_value` field.
+
+        Parameters
+        ----------
+        fill_value : FillValue
+            The new `fill_value` field for the copy of this model.
+
+        Returns
+        -------
+        ArraySpec
+            A copy of this model with a new `fill_value` field.
+        """
+        return type(self)(**{**self.model_dump(), "fill_value": fill_value})
+
+    def with_order(self, order: MemoryOrder) -> Self:
+        """
+        Return a copy of this model with a new `order` field.
+
+        Parameters
+        ----------
+        order : MemoryOrder
+            The new `order` field for the copy of this model.
+
+        Returns
+        -------
+        ArraySpec
+            A copy of this model with a new `order` field.
+        """
+        return type(self)(**{**self.model_dump(), "order": order})
+
+    def with_filters(self, filters: tuple[CodecDict, ...] | None) -> Self:
+        """
+        Return a copy of this model with a new `filters` field.
+
+        Parameters
+        ----------
+        filters : tuple[CodecDict, ...] | None
+            The new `filters` field for the copy of this model.
+
+        Returns
+        -------
+        ArraySpec
+            A copy of this model with a new `filters` field.
+        """
+        return type(self)(**{**self.model_dump(), "filters": filters})
+
+    def with_dimension_separator(self, dimension_separator: DimensionSeparator) -> Self:
+        """
+        Return a copy of this model with a new `dimension_separator` field.
+
+        Parameters
+        ----------
+        dimension_separator : DimensionSeparator
+            The new `dimension_separator` field for the copy of this model.
+
+        Returns
+        -------
+        ArraySpec
+            A copy of this model with a new `dimension_separator` field.
+        """
+        return type(self)(**{**self.model_dump(), "dimension_separator": dimension_separator})
+
+    def with_compressor(self, compressor: CodecDict | None) -> Self:
+        """
+        Return a copy of this model with a new `compressor` field.
+
+        Parameters
+        ----------
+        compressor : CodecDict | None
+            The new `compressor` field for the copy of this model.
+
+        Returns
+        -------
+        ArraySpec
+            A copy of this model with a new `compressor` field.
+        """
+        return type(self)(**{**self.model_dump(), "compressor": compressor})
+
 
 class BaseGroupSpec(StrictBase):
     """
@@ -456,6 +600,24 @@ class BaseGroupSpec(StrictBase):
 
     zarr_format: Literal[2] = 2
     attributes: BaseAttributes
+
+    def with_attributes(self, attributes: BaseAttributes) -> Self:
+        """
+        Return a copy of this model with a new `attributes` field.
+
+        The new model will be validated.
+
+        Parameters
+        ----------
+        attributes : BaseAttributes
+            The new `attributes` field for the copy of this model.
+
+        Returns
+        -------
+        BaseGroupSpec
+            A copy of this model with a new `attributes` field.
+        """
+        return type(self)(**{**self.model_dump(), "attributes": attributes})
 
 
 class GroupSpec(BaseGroupSpec):
@@ -481,6 +643,24 @@ class GroupSpec(BaseGroupSpec):
     @classmethod
     def validate_members(cls, v: BaseMember) -> BaseMember:
         return ensure_key_no_path(v)
+
+    def with_members(self, members: BaseMember) -> Self:
+        """
+        Return a copy of this model with a new `members` field.
+
+        The new model will be validated.
+
+        Parameters
+        ----------
+        members : Mapping[str, ArraySpec | GroupSpec]
+            The new `members` field for the copy of this model.
+
+        Returns
+        -------
+        GroupSpec
+            A copy of this model with a new `members` field.
+        """
+        return type(self)(**{**self.model_dump(), "members": members})
 
     @classmethod
     def from_zarr(cls, group: zarr.Group, *, depth: int = -1) -> Self:

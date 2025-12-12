@@ -637,3 +637,99 @@ def test_typed_members() -> None:
 
     zg = GroupSpec.from_flat(flat).to_zarr({}, path="")
     ExpectedGroup.from_zarr(zg)
+
+
+def test_arrayspec_with_methods() -> None:
+    """
+    Test that ArraySpec with_* methods create new validated copies
+    """
+    original = ArraySpec.from_array(np.arange(10), attributes={"foo": "bar"})
+
+    # Test with_attributes
+    new_attrs = original.with_attributes({"baz": "qux"})
+    assert new_attrs.attributes == {"baz": "qux"}
+    assert original.attributes == {"foo": "bar"}  # Original unchanged
+    assert new_attrs is not original
+
+    # Test with_shape
+    new_shape = original.with_shape((20,))
+    assert new_shape.shape == (20,)
+    assert original.shape == (10,)
+
+    # Test with_chunks
+    new_chunks = original.with_chunks((5,))
+    assert new_chunks.chunks == (5,)
+    assert original.chunks == (10,)
+
+    # Test with_dtype
+    new_dtype = original.with_dtype("float32")
+    assert new_dtype.dtype == "<f4"
+    assert original.dtype == "<i8"
+
+    # Test with_fill_value
+    new_fill = original.with_fill_value(999)
+    assert new_fill.fill_value == 999
+    assert original.fill_value == 0
+
+    # Test with_order
+    new_order = original.with_order("F")
+    assert new_order.order == "F"
+    assert original.order == "C"
+
+    # Test with_filters
+    new_filters = original.with_filters(({"id": "delta", "dtype": "uint8"},))
+    assert new_filters.filters == ({"id": "delta", "dtype": "uint8"},)
+    assert original.filters is None
+
+    # Test with_dimension_separator
+    new_sep = original.with_dimension_separator(".")
+    assert new_sep.dimension_separator == "."
+    assert original.dimension_separator == "/"
+
+    # Test with_compressor
+    new_comp = original.with_compressor({"id": "gzip", "level": 1})
+    assert new_comp.compressor == {"id": "gzip", "level": 1}
+    assert original.compressor is None
+
+
+def test_arrayspec_with_methods_validation() -> None:
+    """
+    Test that ArraySpec with_* methods trigger validation
+    """
+    spec = ArraySpec(shape=(10,), chunks=(5,), dtype="uint8", attributes={})
+
+    # Test that validation fails when shape and chunks have mismatched lengths
+    with pytest.raises(ValidationError):
+        spec.with_shape((10, 10))  # Shape has 2 dims but chunks still has 1
+
+
+def test_groupspec_with_methods() -> None:
+    """
+    Test that GroupSpec with_* methods create new validated copies
+    """
+    array_spec = ArraySpec.from_array(np.arange(10), attributes={})
+    original = GroupSpec(attributes={"group": "attr"}, members={"arr": array_spec})
+
+    # Test with_attributes
+    new_attrs = original.with_attributes({"new": "attr"})
+    assert new_attrs.attributes == {"new": "attr"}
+    assert original.attributes == {"group": "attr"}  # Original unchanged
+    assert new_attrs is not original
+
+    # Test with_members
+    new_array = ArraySpec.from_array(np.arange(5), attributes={})
+    new_members = original.with_members({"new_arr": new_array})
+    assert "new_arr" in new_members.members
+    assert "arr" not in new_members.members  # Replacement, not merge
+    assert "arr" in original.members  # Original unchanged
+
+
+def test_groupspec_with_members_validation() -> None:
+    """
+    Test that GroupSpec with_members triggers validation
+    """
+    spec = GroupSpec(attributes={}, members={})
+
+    # Test that validation fails with invalid member names
+    with pytest.raises(ValidationError, match='Strings containing "/" are invalid'):
+        spec.with_members({"a/b": ArraySpec.from_array(np.arange(10), attributes={})})
