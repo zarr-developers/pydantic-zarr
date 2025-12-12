@@ -515,7 +515,7 @@ class GroupSpec(BaseGroupSpec):
 
         result: GroupSpec
         attributes = group.attrs.asdict()
-        members: dict[str, object] = {}
+        members: dict[str, dict[str, object]] = {}
 
         if depth < -1:
             msg = (

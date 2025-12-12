@@ -20,7 +20,7 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
-from pydantic import BeforeValidator, Field, field_validator, model_validator
+from pydantic import BeforeValidator, field_validator, model_validator
 from typing_extensions import TypedDict
 
 from pydantic_zarr.experimental.core import (
@@ -189,7 +189,7 @@ class ArraySpec(NodeSpec):
     """
 
     node_type: Literal["array"] = "array"
-    attributes: BaseAttributes = Field(default_factory=dict)  # type: ignore[arg-type]
+    attributes: BaseAttributes
     shape: tuple[int, ...]
     data_type: DTypeLike
     chunk_grid: RegularChunking  # todo: validate this against shape
@@ -619,7 +619,7 @@ class GroupSpec(BaseGroupSpec):
 
         result: GroupSpec
         attributes = group.attrs.asdict()
-        members: dict[str, ArraySpec | GroupSpec] = {}
+        members: dict[str, dict[str, object]] = {}
 
         if depth < -1:
             msg = (
@@ -632,9 +632,9 @@ class GroupSpec(BaseGroupSpec):
         new_depth = max(depth - 1, -1)
         for name, item in group.members():
             if isinstance(item, zarr.Array):
-                members[name] = ArraySpec.from_zarr(item)
+                members[name] = ArraySpec.from_zarr(item).model_dump()
             elif isinstance(item, zarr.Group):
-                members[name] = GroupSpec.from_zarr(item, depth=new_depth)
+                members[name] = GroupSpec.from_zarr(item, depth=new_depth).model_dump()
             else:
                 msg = (  # type: ignore[unreachable]
                     f"Unparsable object encountered: {type(item)}. Expected zarr.Array"
