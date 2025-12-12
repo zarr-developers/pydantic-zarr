@@ -13,7 +13,8 @@
 ### Bugfixes
 
 - Make V3 `ArraySpec` validation reject dimension names that don't match the dimensionality of the array. ([#136](https://github.com/zarr-developers/pydantic-zarr/issues/136))
-- Fix a bug that prevented creation of `experimental.v3.GroupSpec` instances with typed members. ([#138](https://github.com/zarr-developers/pydantic-zarr/issues/138))
+- Fix a bug that prevented creation of `experimental.v3.GroupSpec` instances with typed members. ([#138](https://github.com/zarr-developers/pydantic-zarr/issues/138)).
+- Fix a bug where `experimental.v3.ArraySpec` instances took a default parameter for attributes. ([#138](https://github.com/zarr-developers/pydantic-zarr/issues/138))
 
 
 ## pydantic-zarr 0.9.0 (2025-12-08)
