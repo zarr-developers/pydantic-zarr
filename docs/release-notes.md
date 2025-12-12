@@ -6,14 +6,14 @@
 
 ### Features
 
-- Add `with_*` methods the the experimental `ArraySpec` and `GroupSpec` classes.
+- Add `with_*` methods to the experimental `ArraySpec` and `GroupSpec` classes.
   These methods make it easier to create copies of existing `ArraySpec` and `GroupSpec` objects with
   new properties. ([#137](https://github.com/zarr-developers/pydantic-zarr/issues/137))
 
 ### Bugfixes
 
 - Make V3 `ArraySpec` validation reject dimension names that don't match the dimensionality of the array. ([#136](https://github.com/zarr-developers/pydantic-zarr/issues/136))
-- Fix a bug that prevented creation of `experimental.v3.GroupSpec` instances with typed members. ([#138](https://github.com/zarr-developers/pydantic-zarr/issues/138)).
+- Fix a bug that prevented creation of `experimental.v3.GroupSpec` instances with typed members. ([#138](https://github.com/zarr-developers/pydantic-zarr/issues/138))
 - Fix a bug where `experimental.v3.ArraySpec` instances took a default parameter for attributes. ([#138](https://github.com/zarr-developers/pydantic-zarr/issues/138))
 
 
