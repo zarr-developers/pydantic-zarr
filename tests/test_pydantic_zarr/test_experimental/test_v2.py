@@ -598,7 +598,7 @@ def test_mix_v3_v2_fails() -> None:
         GroupSpec.from_flat(members_flat)  # type: ignore[arg-type]
 
 
-@pytest.mark.skipif(not ZARR_AVAILABLE)
+@pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr-python is not installed")
 def test_typed_members() -> None:
     """
     Test GroupSpec creation with typed members

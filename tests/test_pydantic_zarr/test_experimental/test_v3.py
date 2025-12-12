@@ -301,7 +301,7 @@ def test_dim_names_from_zarr_array(
     assert spec.dimension_names == expected_names
 
 
-@pytest.mark.skipif(not ZARR_AVAILABLE)
+@pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr-python is not installed")
 def test_typed_members() -> None:
     """
     Test GroupSpec creation with typed members
