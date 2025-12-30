@@ -482,5 +482,5 @@ def test_disallowed_extra() -> None:
         "zarr_format": 3,
         "consolidated_metadata": extra_field,
     }
-    with pytest.raises(ValidationError, match="consolidated_metadata.must_understand"):
+    with pytest.raises(ValidationError, match="'must_understand' set to True"):
         GroupSpec(**meta_dict, members={})

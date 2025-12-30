@@ -24,7 +24,6 @@ from pydantic import (
     BaseModel,
     BeforeValidator,
     ConfigDict,
-    Field,
     field_validator,
     model_validator,
 )
@@ -130,8 +129,27 @@ class NodeSpec(StrictBase):
         The Zarr version represented by this node. Must be 3.
     """
 
-    __pydantic_extra__: dict[str, AllowedExtraField] = Field(init=False)
     zarr_format: Literal[3] = 3
+
+    @model_validator(mode="after")
+    def validate_extra_fields(self) -> Self:
+        """
+        Validate that extra fields conform to the Zarr V3 spec.
+
+        Extra fields must be dicts with a 'must_understand' key set to False.
+        """
+        if hasattr(self, "__pydantic_extra__") and self.__pydantic_extra__:
+            for key, value in self.__pydantic_extra__.items():
+                if not isinstance(value, dict):
+                    msg = f"Extra field '{key}' must be a dictionary, got {type(value).__name__}"
+                    raise TypeError(msg)
+                if "must_understand" not in value:
+                    msg = f"Extra field '{key}' must have a 'must_understand' key"
+                    raise ValueError(msg)
+                if value["must_understand"] is not False:
+                    msg = f"Extra field '{key}' has 'must_understand' set to {value['must_understand']}, but only False is allowed"
+                    raise ValueError(msg)
+        return self
 
 
 def parse_dtype_v3(dtype: npt.DTypeLike | Mapping[str, object]) -> Mapping[str, object] | str:
