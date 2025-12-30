@@ -21,13 +21,12 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
 
 from pydantic_zarr.experimental.core import (
     BaseAttributes,
     IncEx,
-    StrictBase,
     ensure_key_no_path,
     maybe_node,
     model_like,
@@ -110,6 +109,10 @@ def parse_dimension_separator(data: Any) -> DimensionSeparator:
 
 
 CodecDict = Annotated[dict[str, Any], BeforeValidator(dictify_codec)]
+
+
+class StrictBase(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
 
 class ArraySpec(StrictBase):

@@ -20,13 +20,19 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
-from pydantic import BeforeValidator, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 from typing_extensions import TypedDict
 
 from pydantic_zarr.experimental.core import (
     BaseAttributes,
     IncEx,
-    StrictBase,
     ensure_key_no_path,
     ensure_multiple,
     maybe_node,
@@ -101,6 +107,18 @@ class DefaultChunkKeyEncodingConfig(TypedDict):
 DefaultChunkKeyEncoding = NamedConfig[Literal["default"], DefaultChunkKeyEncodingConfig]
 
 
+class AllowedExtraField(AnyNamedConfig):
+    """
+    The type of additional fields that may be added to Zarr V3 Array or Group metadata documents.
+    """
+
+    must_understand: Literal[False]
+
+
+class StrictBase(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="allow")
+
+
 class NodeSpec(StrictBase):
     """
     The base class for V3 ArraySpec and GroupSpec.
@@ -112,6 +130,7 @@ class NodeSpec(StrictBase):
         The Zarr version represented by this node. Must be 3.
     """
 
+    __pydantic_extra__: dict[str, AllowedExtraField] = Field(init=False)
     zarr_format: Literal[3] = 3
 
 
@@ -612,12 +631,11 @@ class ArraySpec(NodeSpec):
         return type(self)(**{**self.model_dump(), "dimension_names": dimension_names})
 
 
-class BaseGroupSpec(StrictBase):
+class BaseGroupSpec(NodeSpec):
     """
     A base GroupSpec class that only has core Zarr V3 group attributes
     """
 
-    zarr_format: Literal[3] = 3
     attributes: BaseAttributes
 
     def with_attributes(self, attributes: BaseAttributes) -> Self:

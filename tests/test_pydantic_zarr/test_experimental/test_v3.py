@@ -445,3 +445,42 @@ def test_groupspec_with_members_validation() -> None:
     # Test that validation fails with invalid member names
     with pytest.raises(ValidationError, match='Strings containing "/" are invalid'):
         spec.with_members({"a/b": ArraySpec.from_array(np.arange(10), attributes={})})
+
+
+def test_allowed_extra() -> None:
+    """
+    Test that an extra field which is a dict with must_understand=False is allowed
+    """
+
+    extra_field = {
+        "name": "consolidated_metadata",
+        "must_understand": False,
+        "configuration": {"type": "inline", "metadata": {}},
+    }
+
+    meta_dict: dict[str, object] = {
+        "node_type": "group",
+        "attributes": {},
+        "zarr_format": 3,
+        "consolidated_metadata": extra_field,
+    }
+    assert GroupSpec(**meta_dict, members={}).consolidated_metadata == extra_field
+
+
+def test_disallowed_extra() -> None:
+    """
+    Test that an extra field that is not a dict with must_understand=False causes a validation error.
+    """
+    extra_field = {
+        "name": "consolidated_metadata",
+        "configuration": {"type": "inline", "metadata": {}},
+        "must_understand": True,
+    }
+    meta_dict: dict[str, object] = {
+        "node_type": "group",
+        "attributes": {},
+        "zarr_format": 3,
+        "consolidated_metadata": extra_field,
+    }
+    with pytest.raises(ValidationError, match="consolidated_metadata.must_understand"):
+        GroupSpec(**meta_dict, members={})
