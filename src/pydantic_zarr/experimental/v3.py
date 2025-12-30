@@ -24,6 +24,7 @@ from pydantic import (
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    TypeAdapter,
     field_validator,
     model_validator,
 )
@@ -114,6 +115,11 @@ class AllowedExtraField(AnyNamedConfig):
     must_understand: Literal[False]
 
 
+extra_checker: TypeAdapter[dict[str, AllowedExtraField] | None] = TypeAdapter(
+    dict[str, AllowedExtraField] | None
+)
+
+
 class StrictBase(BaseModel):
     model_config = ConfigDict(frozen=True, extra="allow")
 
@@ -138,17 +144,7 @@ class NodeSpec(StrictBase):
 
         Extra fields must be dicts with a 'must_understand' key set to False.
         """
-        if hasattr(self, "__pydantic_extra__") and self.__pydantic_extra__:
-            for key, value in self.__pydantic_extra__.items():
-                if not isinstance(value, dict):
-                    msg = f"Extra field '{key}' must be a dictionary, got {type(value).__name__}"
-                    raise TypeError(msg)
-                if "must_understand" not in value:
-                    msg = f"Extra field '{key}' must have a 'must_understand' key"
-                    raise ValueError(msg)
-                if value["must_understand"] is not False:
-                    msg = f"Extra field '{key}' has 'must_understand' set to {value['must_understand']}, but only False is allowed"
-                    raise ValueError(msg)
+        extra_checker.validate_python(self.__pydantic_extra__)
         return self
 
 
