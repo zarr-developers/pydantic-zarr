@@ -107,7 +107,7 @@ class DefaultChunkKeyEncodingConfig(TypedDict):
 DefaultChunkKeyEncoding = NamedConfig[Literal["default"], DefaultChunkKeyEncodingConfig]
 
 
-class AllowedExtraField(AnyNamedConfig):
+class AllowedExtraField(TypedDict):
     """
     The type of additional fields that may be added to Zarr V3 Array or Group metadata documents.
     """
@@ -840,7 +840,13 @@ class GroupSpec(BaseGroupSpec):
             )
             raise ValueError(msg)
         if depth == 0:
-            return cls(attributes=attributes, members={})
+            extra_fields = {}
+            if group.metadata.consolidated_metadata is not None:
+                extra_fields["consolidated_metadata"] = (
+                    group.metadata.consolidated_metadata.to_dict()
+                )
+
+            return cls(attributes=attributes, members={}, **extra_fields)
         new_depth = max(depth - 1, -1)
         for name, item in group.members():
             if isinstance(item, zarr.Array):
@@ -855,7 +861,11 @@ class GroupSpec(BaseGroupSpec):
 
                 raise ValueError(msg)  # noqa: TRY004
 
-        result = cls(attributes=attributes, members=members)
+        extra_fields = {}
+        if group.metadata.consolidated_metadata is not None:
+            extra_fields["consolidated_metadata"] = group.metadata.consolidated_metadata.to_dict()
+
+        result = cls(attributes=attributes, members=members, **extra_fields)
         return result
 
     def to_zarr(

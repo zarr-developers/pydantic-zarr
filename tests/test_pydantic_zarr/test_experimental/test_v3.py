@@ -453,18 +453,17 @@ def test_allowed_extra() -> None:
     """
 
     extra_field = {
-        "name": "consolidated_metadata",
+        "name": "foo",
         "must_understand": False,
-        "configuration": {"type": "inline", "metadata": {}},
     }
 
     meta_dict: dict[str, object] = {
         "node_type": "group",
         "attributes": {},
         "zarr_format": 3,
-        "consolidated_metadata": extra_field,
+        "foo": extra_field,
     }
-    assert GroupSpec(**meta_dict, members={}).consolidated_metadata == extra_field
+    assert GroupSpec(**meta_dict, members={}).foo == extra_field
 
 
 def test_disallowed_extra() -> None:
@@ -472,15 +471,32 @@ def test_disallowed_extra() -> None:
     Test that an extra field that is not a dict with must_understand=False causes a validation error.
     """
     extra_field = {
-        "name": "consolidated_metadata",
-        "configuration": {"type": "inline", "metadata": {}},
+        "name": "foo",
         "must_understand": True,
     }
     meta_dict: dict[str, object] = {
         "node_type": "group",
         "attributes": {},
         "zarr_format": 3,
-        "consolidated_metadata": extra_field,
+        "foo": extra_field,
     }
-    with pytest.raises(ValidationError, match="consolidated_metadata.must_understand"):
+    with pytest.raises(ValidationError, match=r"foo.must_understand"):
         GroupSpec(**meta_dict, members={})
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+def test_consolidated_metadata_from_zarr() -> None:
+    """
+    Test that GroupSpec.from_zarr picks up consolidated metadata.
+    """
+    zarr = pytest.importorskip("zarr")
+    store: dict[str, object] = {}
+    zarr.create_group(store)
+    zg = zarr.consolidate_metadata(store)
+    assert GroupSpec.from_zarr(zg).model_dump() == {
+        "node_type": "group",
+        "zarr_format": 3,
+        "attributes": {},
+        "members": {},
+        "consolidated_metadata": {"kind": "inline", "metadata": {}, "must_understand": False},
+    }
