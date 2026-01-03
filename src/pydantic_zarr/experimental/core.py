@@ -12,7 +12,7 @@ from typing import (
 
 import numpy as np
 import numpy.typing as npt
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     import zarr
@@ -45,10 +45,6 @@ def tuplify_json(obj: object) -> object:
         return {k: tuplify_json(v) for k, v in obj.items()}
     else:
         return obj
-
-
-class StrictBase(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
 
 def parse_dtype_v2(value: npt.DTypeLike) -> str | list[tuple[Any, ...]]:

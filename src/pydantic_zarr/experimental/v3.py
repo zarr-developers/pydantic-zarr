@@ -20,13 +20,19 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
-from pydantic import BeforeValidator, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
 from typing_extensions import TypedDict
 
 from pydantic_zarr.experimental.core import (
     BaseAttributes,
     IncEx,
-    StrictBase,
     ensure_key_no_path,
     ensure_multiple,
     maybe_node,
@@ -101,6 +107,23 @@ class DefaultChunkKeyEncodingConfig(TypedDict):
 DefaultChunkKeyEncoding = NamedConfig[Literal["default"], DefaultChunkKeyEncodingConfig]
 
 
+class AllowedExtraField(TypedDict):
+    """
+    The type of additional fields that may be added to Zarr V3 Array or Group metadata documents.
+    """
+
+    must_understand: Literal[False]
+
+
+extra_checker: TypeAdapter[dict[str, AllowedExtraField] | None] = TypeAdapter(
+    dict[str, AllowedExtraField] | None
+)
+
+
+class StrictBase(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="allow")
+
+
 class NodeSpec(StrictBase):
     """
     The base class for V3 ArraySpec and GroupSpec.
@@ -113,6 +136,16 @@ class NodeSpec(StrictBase):
     """
 
     zarr_format: Literal[3] = 3
+
+    @model_validator(mode="after")
+    def validate_extra_fields(self) -> Self:
+        """
+        Validate that extra fields conform to the Zarr V3 spec.
+
+        Extra fields must be dicts with a 'must_understand' key set to False.
+        """
+        extra_checker.validate_python(self.__pydantic_extra__)
+        return self
 
 
 def parse_dtype_v3(dtype: npt.DTypeLike | Mapping[str, object]) -> Mapping[str, object] | str:
@@ -612,12 +645,11 @@ class ArraySpec(NodeSpec):
         return type(self)(**{**self.model_dump(), "dimension_names": dimension_names})
 
 
-class BaseGroupSpec(StrictBase):
+class BaseGroupSpec(NodeSpec):
     """
     A base GroupSpec class that only has core Zarr V3 group attributes
     """
 
-    zarr_format: Literal[3] = 3
     attributes: BaseAttributes
 
     def with_attributes(self, attributes: BaseAttributes) -> Self:
@@ -808,7 +840,13 @@ class GroupSpec(BaseGroupSpec):
             )
             raise ValueError(msg)
         if depth == 0:
-            return cls(attributes=attributes, members={})
+            extra_fields = {}
+            if group.metadata.consolidated_metadata is not None:
+                extra_fields["consolidated_metadata"] = (
+                    group.metadata.consolidated_metadata.to_dict()
+                )
+
+            return cls(attributes=attributes, members={}, **extra_fields)
         new_depth = max(depth - 1, -1)
         for name, item in group.members():
             if isinstance(item, zarr.Array):
@@ -823,7 +861,11 @@ class GroupSpec(BaseGroupSpec):
 
                 raise ValueError(msg)  # noqa: TRY004
 
-        result = cls(attributes=attributes, members=members)
+        extra_fields = {}
+        if group.metadata.consolidated_metadata is not None:
+            extra_fields["consolidated_metadata"] = group.metadata.consolidated_metadata.to_dict()
+
+        result = cls(attributes=attributes, members=members, **extra_fields)
         return result
 
     def to_zarr(
