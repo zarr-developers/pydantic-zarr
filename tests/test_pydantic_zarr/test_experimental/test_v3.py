@@ -16,7 +16,6 @@ from pydantic_zarr.experimental.v3 import (
     DefaultChunkKeyEncoding,
     DefaultChunkKeyEncodingConfig,
     GroupSpec,
-    NamedConfig,
     RegularChunking,
     RegularChunkingConfig,
     auto_codecs,
@@ -65,6 +64,38 @@ def arrayspec(request: pytest.FixtureRequest) -> ArraySpec:
     )
 
 
+@pytest.fixture
+def flat_example(arrayspec: ArraySpec) -> tuple[dict[str, ArraySpec | GroupSpec], GroupSpec]:
+    """
+    Get example data for testing to_flat and from_flat.
+
+    The returned value is a tuple with two elements: a flattened dict representation of a hierarchy,
+    and the root group, with all of its members (i.e., the non-flat version of that hierarchy).
+    """
+    named_nodes: tuple[ArraySpec | BaseGroupSpec, ...] = (
+        BaseGroupSpec(attributes={"name": ""}),
+        arrayspec.with_attributes({"name": "/a1"}),
+        BaseGroupSpec(attributes={"name": "/g1"}),
+        arrayspec.with_attributes({"name": "/g1/a2"}),
+        BaseGroupSpec(attributes={"name": "/g1/g2"}),
+        arrayspec.with_attributes({"name": "/g1/g2/a3"}),
+    )
+
+    members_flat: dict[str, ArraySpec | BaseGroupSpec] = {
+        a.attributes["name"]: a for a in named_nodes
+    }
+    g2 = GroupSpec(
+        attributes=members_flat["/g1/g2"].attributes, members={"a3": members_flat["/g1/g2/a3"]}
+    )
+    g1 = GroupSpec(
+        attributes=members_flat["/g1"].attributes, members={"a2": members_flat["/g1/a2"], "g2": g2}
+    )
+    root = GroupSpec(
+        attributes=members_flat[""].attributes, members={"g1": g1, "a1": members_flat["/a1"]}
+    )
+    return members_flat, root
+
+
 @pytest.mark.parametrize("invalid_dimension_names", [[], "hi", ["1", 2, None]], ids=str)
 def test_dimension_names_validation(arrayspec: ArraySpec, invalid_dimension_names: object) -> None:
     """
@@ -75,26 +106,6 @@ def test_dimension_names_validation(arrayspec: ArraySpec, invalid_dimension_name
     """
     with pytest.raises(ValidationError):
         ArraySpec(**(arrayspec.model_dump() | {"dimension_names": invalid_dimension_names}))
-
-
-def test_serialize_deserialize() -> None:
-    array_attributes = {"foo": 42, "bar": "apples", "baz": [1, 2, 3, 4]}
-
-    group_attributes = {"group": True}
-
-    array_spec = ArraySpec(
-        attributes=array_attributes,
-        shape=(1000, 1000),
-        dimension_names=("rows", "columns"),
-        data_type="float64",
-        chunk_grid=NamedConfig(name="regular", configuration={"chunk_shape": (1000, 100)}),
-        chunk_key_encoding=NamedConfig(name="default", configuration={"separator": "/"}),
-        codecs=(NamedConfig(name="GZip", configuration={"level": 1}),),
-        fill_value="NaN",
-        storage_transformers=(),
-    )
-
-    GroupSpec(attributes=group_attributes, members={"array": array_spec})
 
 
 def test_from_array() -> None:
@@ -201,38 +212,6 @@ def test_arrayspec_to_zarr(
     assert arr._async_array.metadata == arr._async_array.metadata
     for key, value in config.items():
         assert asdict(arr._async_array._config)[key] == value
-
-
-@pytest.fixture
-def flat_example(arrayspec: ArraySpec) -> tuple[dict[str, ArraySpec | GroupSpec], GroupSpec]:
-    """
-    Get example data for testing to_flat and from_flat.
-
-    The returned value is a tuple with two elements: a flattened dict representation of a hierarchy,
-    and the root group, with all of its members (i.e., the non-flat version of that hierarchy).
-    """
-    named_nodes: tuple[ArraySpec | BaseGroupSpec, ...] = (
-        BaseGroupSpec(attributes={"name": ""}),
-        arrayspec.with_attributes({"name": "/a1"}),
-        BaseGroupSpec(attributes={"name": "/g1"}),
-        arrayspec.with_attributes({"name": "/g1/a2"}),
-        BaseGroupSpec(attributes={"name": "/g1/g2"}),
-        arrayspec.with_attributes({"name": "/g1/g2/a3"}),
-    )
-
-    members_flat: dict[str, ArraySpec | BaseGroupSpec] = {
-        a.attributes["name"]: a for a in named_nodes
-    }
-    g2 = GroupSpec(
-        attributes=members_flat["/g1/g2"].attributes, members={"a3": members_flat["/g1/g2/a3"]}
-    )
-    g1 = GroupSpec(
-        attributes=members_flat["/g1"].attributes, members={"a2": members_flat["/g1/a2"], "g2": g2}
-    )
-    root = GroupSpec(
-        attributes=members_flat[""].attributes, members={"g1": g1, "a1": members_flat["/a1"]}
-    )
-    return members_flat, root
 
 
 class TestGroupSpec:
