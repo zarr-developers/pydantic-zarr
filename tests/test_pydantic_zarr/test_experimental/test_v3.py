@@ -25,25 +25,56 @@ from pydantic_zarr.experimental.v3 import (
 from ..conftest import DTYPE_EXAMPLES_V3, ZARR_AVAILABLE, DTypeExample
 
 
+@pytest.fixture
+def groupspec(request: pytest.FixtureRequest) -> GroupSpec:
+    """
+    Fixture that returns a basic GroupSpec with default attributes and no members.
+    """
+    meta_request = getattr(request, "param", {})
+    attributes = meta_request.get("attributes", {})
+    members = meta_request.get("members", {})
+    return GroupSpec(attributes=attributes, members=members)
+
+
+@pytest.fixture
+def arrayspec(request: pytest.FixtureRequest) -> ArraySpec:
+    """
+    Fixture that returns an ArraySpec. This fixture is parametrized by a dict with keys
+    matching the fields of the ArraySpec. Any missing fields are filled with default values.
+    """
+    meta_request = getattr(request, "param", {})
+    shape = meta_request.get("shape", (1,))
+    data_type = meta_request.get("data_type", "uint8")
+    chunk_grid = meta_request.get(
+        "chunk_grid", {"name": "regular", "configuration": {"chunk_shape": shape}}
+    )
+    chunk_key_encoding = meta_request.get(
+        "chunk_key_encoding", {"name": "default", "configuration": {"separator": "/"}}
+    )
+    fill_value = meta_request.get("fill_value", 0)
+    codecs = meta_request.get("codecs", ({"name": "bytes"},))
+    attributes = meta_request.get("attributes", {})
+    return ArraySpec(
+        shape=shape,
+        data_type=data_type,  # type: ignore[arg-type]
+        chunk_grid=chunk_grid,  # type: ignore[arg-type]
+        chunk_key_encoding=chunk_key_encoding,  # type: ignore[arg-type]
+        fill_value=fill_value,
+        codecs=codecs,
+        attributes=attributes,
+    )
+
+
 @pytest.mark.parametrize("invalid_dimension_names", [[], "hi", ["1", 2, None]], ids=str)
-def test_dimension_names_validation(invalid_dimension_names: object) -> None:
+def test_dimension_names_validation(arrayspec: ArraySpec, invalid_dimension_names: object) -> None:
     """
     Test that the `dimension_names` attribute is rejected if any of the following are true:
     - it is a sequence with length different from the number of dimensions of the array
     - it is a sequence containing values other than strings or `None`.
     - it is neither a valid sequence nor the value `None`.
     """
-    base_array = ArraySpec(
-        shape=(1, 2, 3),
-        data_type="int8",
-        codecs=({"name": "bytes"},),
-        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (1, 2, 3)}},
-        chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
-        fill_value=0,
-        attributes={},
-    )
     with pytest.raises(ValidationError):
-        ArraySpec(**(base_array.model_dump() | {"dimension_names": invalid_dimension_names}))
+        ArraySpec(**(arrayspec.model_dump() | {"dimension_names": invalid_dimension_names}))
 
 
 def test_serialize_deserialize() -> None:
@@ -72,9 +103,8 @@ def test_from_array() -> None:
 
     assert array_spec == ArraySpec(
         zarr_format=3,
-        node_type="array",
         attributes={},
-        shape=(10,),
+        shape=array.shape,
         data_type="int64",
         chunk_grid=RegularChunking(
             name="regular", configuration=RegularChunkingConfig(chunk_shape=(10,))
@@ -91,10 +121,12 @@ def test_from_array() -> None:
     # TODO: fix type of the store argument in to_zarr
     if not ZARR_AVAILABLE:
         return
-    array_spec.to_zarr(store={}, path="")  # type: ignore[arg-type]
+    arr_out = array_spec.to_zarr(store={}, path="")  # type: ignore[arg-type]
+    arr_out[:] = array
+    assert np.array_equal(arr_out[:], array)
 
 
-def test_arrayspec_no_empty_codecs() -> None:
+def test_arrayspec_no_empty_codecs(arrayspec: ArraySpec) -> None:
     """
     Ensure that it is not possible to create an ArraySpec with no codecs
     """
@@ -102,15 +134,7 @@ def test_arrayspec_no_empty_codecs() -> None:
     with pytest.raises(
         ValidationError, match="Value error, Invalid length. Expected 1 or more, got 0."
     ):
-        ArraySpec(
-            shape=(1,),
-            data_type="uint8",
-            codecs=[],
-            attributes={},
-            fill_value=0,
-            chunk_grid={"name": "regular", "configuration": {"chunk_shape": (1,)}},
-            chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
-        )
+        ArraySpec(**(arrayspec.model_dump() | {"codecs": ()}))  # type: ignore[arg-type]
 
 
 @pytest.mark.filterwarnings("ignore:The dtype:UserWarning")
@@ -145,7 +169,11 @@ def test_arrayspec_from_zarr(dtype_example: DTypeExample) -> None:
 @pytest.mark.filterwarnings("ignore:The codec `vlen-bytes`:UserWarning")
 @pytest.mark.filterwarnings("ignore:The data type :FutureWarning")
 def test_arrayspec_to_zarr(
-    path: str, overwrite: bool, config: dict[str, object], dtype_example: DTypeExample
+    arrayspec: ArraySpec,
+    path: str,
+    overwrite: bool,
+    config: dict[str, object],
+    dtype_example: DTypeExample,
 ) -> None:
     """
     Test that serializing an ArraySpec to a zarr python store works as expected.
@@ -162,25 +190,21 @@ def test_arrayspec_to_zarr(
 
     store = {}
 
-    arr_spec = ArraySpec(
-        attributes={},
-        shape=(10,),
-        data_type=data_type,
-        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (10,)}},
-        chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
-        codecs=codecs,
-        fill_value=fill_value,
-        dimension_names=("x",),
+    arr_spec = arrayspec.model_copy(
+        update={"data_type": data_type, "fill_value": fill_value, "codecs": codecs}
     )
+
     if not ZARR_AVAILABLE:
         return
+
     arr = arr_spec.to_zarr(store=store, path=path, overwrite=overwrite, config=config)
     assert arr._async_array.metadata == arr._async_array.metadata
     for key, value in config.items():
         assert asdict(arr._async_array._config)[key] == value
 
 
-def get_flat_example() -> tuple[dict[str, ArraySpec | GroupSpec], GroupSpec]:
+@pytest.fixture
+def flat_example(arrayspec: ArraySpec) -> tuple[dict[str, ArraySpec | GroupSpec], GroupSpec]:
     """
     Get example data for testing to_flat and from_flat.
 
@@ -189,11 +213,11 @@ def get_flat_example() -> tuple[dict[str, ArraySpec | GroupSpec], GroupSpec]:
     """
     named_nodes: tuple[ArraySpec | BaseGroupSpec, ...] = (
         BaseGroupSpec(attributes={"name": ""}),
-        ArraySpec.from_array(np.arange(10), attributes={"name": "/a1"}),
+        arrayspec.with_attributes({"name": "/a1"}),
         BaseGroupSpec(attributes={"name": "/g1"}),
-        ArraySpec.from_array(np.arange(10), attributes={"name": "/g1/a2"}),
+        arrayspec.with_attributes({"name": "/g1/a2"}),
         BaseGroupSpec(attributes={"name": "/g1/g2"}),
-        ArraySpec.from_array(np.arange(10), attributes={"name": "/g1/g2/a3"}),
+        arrayspec.with_attributes({"name": "/g1/g2/a3"}),
     )
 
     members_flat: dict[str, ArraySpec | BaseGroupSpec] = {
@@ -213,36 +237,35 @@ def get_flat_example() -> tuple[dict[str, ArraySpec | GroupSpec], GroupSpec]:
 
 class TestGroupSpec:
     @staticmethod
-    def test_to_flat() -> None:
+    def test_to_flat(flat_example: tuple[dict[str, ArraySpec | BaseGroupSpec], GroupSpec]) -> None:
         """
         Test that the to_flat method generates a flat representation of the hierarchy
         """
 
-        members_flat, root = get_flat_example()
+        members_flat, root = flat_example
         observed = root.to_flat()
         assert observed == members_flat
 
     @staticmethod
-    def test_from_flat() -> None:
+    def test_from_flat(
+        flat_example: tuple[dict[str, ArraySpec | BaseGroupSpec], GroupSpec],
+    ) -> None:
         """
         Test that the from_flat method generates a `GroupSpec` from a flat representation of the
         hierarchy
         """
-        members_flat, root = get_flat_example()
+        members_flat, root = flat_example
         assert GroupSpec.from_flat(members_flat).attributes == root.attributes
 
     @staticmethod
-    def test_from_zarr_depth() -> None:
+    def test_from_zarr_depth(arrayspec) -> None:
         zarr = pytest.importorskip("zarr")
-        codecs = ({"name": "bytes", "configuration": {}},)
         tree: dict[str, BaseGroupSpec | ArraySpec] = {
             "": BaseGroupSpec(attributes={"level": 0, "type": "group"}),
             "/1": BaseGroupSpec(attributes={"level": 1, "type": "group"}),
             "/1/2": BaseGroupSpec(attributes={"level": 2, "type": "group"}),
             "/1/2/1": BaseGroupSpec(attributes={"level": 3, "type": "group"}),
-            "/1/2/2": ArraySpec.from_array(
-                np.arange(20), attributes={"level": 3, "type": "array"}, codecs=codecs
-            ),
+            "/1/2/2": arrayspec.with_attributes({"level": 3, "type": "array"}),
         }
         store = zarr.storage.MemoryStore()
         group_out = GroupSpec.from_flat(tree).to_zarr(store, path="test")
@@ -302,20 +325,10 @@ def test_dim_names_from_zarr_array(
 
 
 @pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr-python is not installed")
-def test_typed_members() -> None:
+def test_typed_members(arrayspec) -> None:
     """
     Test GroupSpec creation with typed members
     """
-
-    array1d = ArraySpec(
-        shape=(1,),
-        data_type="uint8",
-        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (1,)}},
-        chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
-        fill_value=0,
-        codecs=({"name": "bytes"},),
-        attributes={},
-    )
 
     class DatasetMembers(TypedDict):
         x: ArraySpec
@@ -335,119 +348,105 @@ def test_typed_members() -> None:
         "": BaseGroupSpec(attributes={}),
         "/r10m": BaseGroupSpec(attributes={}),
         "/r20m": BaseGroupSpec(attributes={}),
-        "/r10m/x": array1d,
-        "/r10m/y": array1d,
-        "/r20m/x": array1d,
-        "/r20m/y": array1d,
+        "/r10m/x": arrayspec,
+        "/r10m/y": arrayspec,
+        "/r20m/x": arrayspec,
+        "/r20m/y": arrayspec,
     }
 
     zg = GroupSpec.from_flat(flat).to_zarr({}, path="")
     ExpectedGroup.from_zarr(zg)
 
 
-def test_arrayspec_with_methods() -> None:
+def test_arrayspec_with_methods(arrayspec) -> None:
     """
     Test that ArraySpec with_* methods create new validated copies
     """
-    original = ArraySpec.from_array(np.arange(10), attributes={"foo": "bar"})
+    original = arrayspec
 
     # Test with_attributes
     new_attrs = original.with_attributes({"baz": "qux"})
     assert new_attrs.attributes == {"baz": "qux"}
-    assert original.attributes == {"foo": "bar"}  # Original unchanged
-    assert new_attrs is not original
 
     # Test with_shape
     new_shape = original.with_shape((20,))
     assert new_shape.shape == (20,)
-    assert original.shape == (10,)
 
     # Test with_data_type
     new_dtype = original.with_data_type("float32")
     assert new_dtype.data_type == "float32"
-    assert original.data_type == "int64"
 
     # Test with_chunk_grid
     new_grid = original.with_chunk_grid({"name": "regular", "configuration": {"chunk_shape": (5,)}})
     assert new_grid.chunk_grid["configuration"]["chunk_shape"] == (5,)  # type: ignore[index]
-    assert original.chunk_grid["configuration"]["chunk_shape"] == (10,)  # type: ignore[index]
 
     # Test with_chunk_key_encoding
     new_encoding = original.with_chunk_key_encoding(
         {"name": "default", "configuration": {"separator": "."}}
     )
     assert new_encoding.chunk_key_encoding["configuration"]["separator"] == "."  # type: ignore[index]
-    assert original.chunk_key_encoding["configuration"]["separator"] == "/"  # type: ignore[index]
 
     # Test with_fill_value
     new_fill = original.with_fill_value(999)
     assert new_fill.fill_value == 999
-    assert original.fill_value == 0
 
     # Test with_codecs
-    new_codecs = original.with_codecs(({"name": "gzip", "configuration": {"level": 1}},))
-    assert len(new_codecs.codecs) == 1
-    assert new_codecs.codecs[0]["name"] == "gzip"  # type: ignore[index]
+    new_codecs = ({"name": "gzip", "configuration": {"level": 1}},)
+    new_codecs_arr = original.with_codecs(new_codecs)
+    assert new_codecs_arr.codecs == new_codecs
 
     # Test with_storage_transformers
-    new_transformers = original.with_storage_transformers(({"name": "test", "configuration": {}},))
-    assert len(new_transformers.storage_transformers) == 1
-    assert original.storage_transformers == ()
+    new_storage_transformers = ({"name": "foo", "configuration": {}},)
+    new_transformers_arr = original.with_storage_transformers(new_storage_transformers)
+    assert new_transformers_arr.storage_transformers == new_storage_transformers
 
     # Test with_dimension_names
     new_dims = original.with_dimension_names(("x",))
     assert new_dims.dimension_names == ("x",)
-    assert original.dimension_names is None
 
 
-def test_arrayspec_with_methods_validation() -> None:
+def test_arrayspec_with_methods_validation(arrayspec) -> None:
     """
     Test that ArraySpec with_* methods trigger validation
     """
-    spec = ArraySpec.from_array(np.arange(10), attributes={})
 
     # Test that validation fails when dimension_names length doesn't match shape
     with pytest.raises(ValidationError, match="Invalid `dimension names` attribute"):
-        spec.with_dimension_names(("x", "y"))  # 2 names for 1D array
+        arrayspec.with_dimension_names(("x", "y"))  # 2 names for 1D array
 
     # Test that validation fails with empty codecs
     with pytest.raises(ValidationError, match="Invalid length. Expected 1 or more, got 0"):
-        spec.with_codecs(())
+        arrayspec.with_codecs(())
 
 
-def test_groupspec_with_methods() -> None:
+def test_groupspec_with_methods(arrayspec) -> None:
     """
     Test that GroupSpec with_* methods create new validated copies
     """
-    array_spec = ArraySpec.from_array(np.arange(10), attributes={})
+    array_spec = arrayspec
     original = GroupSpec(attributes={"group": "attr"}, members={"arr": array_spec})
 
     # Test with_attributes
     new_attrs = original.with_attributes({"new": "attr"})
     assert new_attrs.attributes == {"new": "attr"}
-    assert original.attributes == {"group": "attr"}  # Original unchanged
-    assert new_attrs is not original
 
     # Test with_members
-    new_array = ArraySpec.from_array(np.arange(5), attributes={})
+    new_array = arrayspec.with_attributes({"another": "array"})
     new_members = original.with_members({"new_arr": new_array})
-    assert "new_arr" in new_members.members
-    assert "arr" not in new_members.members  # Replacement, not merge
-    assert "arr" in original.members  # Original unchanged
+    assert new_members.members == {"new_arr": new_array}
 
 
-def test_groupspec_with_members_validation() -> None:
+def test_groupspec_with_members_validation(groupspec: GroupSpec) -> None:
     """
     Test that GroupSpec with_members triggers validation
     """
-    spec = GroupSpec(attributes={}, members={})
 
     # Test that validation fails with invalid member names
     with pytest.raises(ValidationError, match='Strings containing "/" are invalid'):
-        spec.with_members({"a/b": ArraySpec.from_array(np.arange(10), attributes={})})
+        groupspec.with_members({"a/b": ArraySpec.from_array(np.arange(10), attributes={})})
 
 
-def test_allowed_extra() -> None:
+def test_allowed_extra(arrayspec: ArraySpec, groupspec: GroupSpec) -> None:
     """
     Test that an extra field which is a dict with must_understand=False is allowed
     """
@@ -457,16 +456,11 @@ def test_allowed_extra() -> None:
         "must_understand": False,
     }
 
-    meta_dict: dict[str, object] = {
-        "node_type": "group",
-        "attributes": {},
-        "zarr_format": 3,
-        "foo": extra_field,
-    }
-    assert GroupSpec(**meta_dict, members={}).foo == extra_field
+    assert GroupSpec(**groupspec.model_dump(), foo=extra_field).foo == extra_field  # type: ignore[attr-defined]
+    assert ArraySpec(**arrayspec.model_dump(), foo=extra_field).foo == extra_field  # type: ignore[attr-defined]
 
 
-def test_disallowed_extra() -> None:
+def test_disallowed_extra(arrayspec: ArraySpec, groupspec: GroupSpec) -> None:
     """
     Test that an extra field that is not a dict with must_understand=False causes a validation error.
     """
@@ -474,18 +468,16 @@ def test_disallowed_extra() -> None:
         "name": "foo",
         "must_understand": True,
     }
-    meta_dict: dict[str, object] = {
-        "node_type": "group",
-        "attributes": {},
-        "zarr_format": 3,
-        "foo": extra_field,
-    }
+
     with pytest.raises(ValidationError, match=r"foo.must_understand"):
-        GroupSpec(**meta_dict, members={})
+        assert GroupSpec(**groupspec.model_dump(), foo=extra_field).foo == extra_field  # type: ignore[attr-defined]
+
+    with pytest.raises(ValidationError, match=r"foo.must_understand"):
+        assert ArraySpec(**arrayspec.model_dump(), foo=extra_field).foo == extra_field  # type: ignore[attr-defined]
 
 
 @pytest.mark.filterwarnings("ignore::UserWarning")
-def test_consolidated_metadata_from_zarr() -> None:
+def test_consolidated_metadata_to_from_zarr() -> None:
     """
     Test that GroupSpec.from_zarr picks up consolidated metadata.
     """
@@ -493,10 +485,15 @@ def test_consolidated_metadata_from_zarr() -> None:
     store: dict[str, object] = {}
     zarr.create_group(store)
     zg = zarr.consolidate_metadata(store)
-    assert GroupSpec.from_zarr(zg).model_dump() == {
+
+    gspec = GroupSpec.from_zarr(zg)
+    assert gspec.model_dump() == {
         "node_type": "group",
         "zarr_format": 3,
         "attributes": {},
         "members": {},
         "consolidated_metadata": {"kind": "inline", "metadata": {}, "must_understand": False},
     }
+    store2: dict[str, object] = {}
+    gspec.to_zarr(store2, path="")
+    assert json.loads(store["zarr.json"].to_bytes()) == json.loads(store2["zarr.json"].to_bytes())

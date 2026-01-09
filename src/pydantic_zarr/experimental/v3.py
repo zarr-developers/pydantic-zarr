@@ -58,7 +58,7 @@ FloatFillValue = Literal["Infinity", "-Infinity", "NaN"] | float
 ComplexFillValue = tuple[FloatFillValue, FloatFillValue]
 RawFillValue = tuple[int, ...]
 
-FillValue = BoolFillValue | IntFillValue | FloatFillValue | ComplexFillValue | RawFillValue | str
+FillValue = object
 
 TName = TypeVar("TName", bound=str)
 TConfig = TypeVar("TConfig", bound=Mapping[str, object])
@@ -892,12 +892,14 @@ class GroupSpec(BaseGroupSpec):
         """
         try:
             import zarr
+            from zarr.core.group import GroupMetadata
+            from zarr.core.sync import sync
             from zarr.errors import ContainsArrayError, ContainsGroupError
+            from zarr.storage._common import make_store_path
         except ImportError as e:
             raise ImportError("zarr must be installed to use to_zarr") from e
 
         spec_dict = self.model_dump(exclude={"members": True})
-        attrs = spec_dict.pop("attributes")
         extant_node = maybe_node(store, path, zarr_format=3)
         if isinstance(extant_node, zarr.Group):
             if not self.like(extant_node):
@@ -927,18 +929,28 @@ class GroupSpec(BaseGroupSpec):
             """
             # TODO: use the above message when we fix the ContainsArrayError in zarr python
             raise ContainsArrayError(store, path)
-        else:
-            zarr.create_group(store=store, overwrite=overwrite, path=path, zarr_format=3)
 
-        result = zarr.group(store=store, path=path, overwrite=overwrite, zarr_format=3)
-        result.attrs.put(attrs)
+        # This indirect routine for creating a group is required because zarr python does
+        # not have a convenient way to simply create a group from a metadata dict.
+        # we need to create a group directly from the metadata dict to support consolidated metadata
+        # or any other extra metadata fields.
+
+        spath = sync(make_store_path(store, path=path))
+        result_dict = dict(
+            zarr.create_hierarchy(
+                store=spath.store,
+                nodes={path: GroupMetadata.from_dict(spec_dict)},
+                overwrite=overwrite,
+            )
+        )
+        result = result_dict[path.removeprefix("/")]
         # consider raising an exception if a partial GroupSpec is provided
         if self.members is not None:
             for name, member in self.members.items():
                 subpath = f"{path.rstrip('/')}/{name.lstrip('/')}"
                 member.to_zarr(store, subpath, overwrite=overwrite, **kwargs)
 
-        return result
+        return result  # type: ignore[return-value]
 
     def like(
         self,
