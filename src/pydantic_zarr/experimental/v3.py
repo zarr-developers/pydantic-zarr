@@ -20,13 +20,19 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
-from pydantic import BeforeValidator, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
 from typing_extensions import TypedDict
 
 from pydantic_zarr.experimental.core import (
     BaseAttributes,
     IncEx,
-    StrictBase,
     ensure_key_no_path,
     ensure_multiple,
     maybe_node,
@@ -52,7 +58,7 @@ FloatFillValue = Literal["Infinity", "-Infinity", "NaN"] | float
 ComplexFillValue = tuple[FloatFillValue, FloatFillValue]
 RawFillValue = tuple[int, ...]
 
-FillValue = BoolFillValue | IntFillValue | FloatFillValue | ComplexFillValue | RawFillValue | str
+FillValue = object
 
 TName = TypeVar("TName", bound=str)
 TConfig = TypeVar("TConfig", bound=Mapping[str, object])
@@ -101,6 +107,23 @@ class DefaultChunkKeyEncodingConfig(TypedDict):
 DefaultChunkKeyEncoding = NamedConfig[Literal["default"], DefaultChunkKeyEncodingConfig]
 
 
+class AllowedExtraField(TypedDict):
+    """
+    The type of additional fields that may be added to Zarr V3 Array or Group metadata documents.
+    """
+
+    must_understand: Literal[False]
+
+
+extra_checker: TypeAdapter[dict[str, AllowedExtraField] | None] = TypeAdapter(
+    dict[str, AllowedExtraField] | None
+)
+
+
+class StrictBase(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="allow")
+
+
 class NodeSpec(StrictBase):
     """
     The base class for V3 ArraySpec and GroupSpec.
@@ -113,6 +136,16 @@ class NodeSpec(StrictBase):
     """
 
     zarr_format: Literal[3] = 3
+
+    @model_validator(mode="after")
+    def validate_extra_fields(self) -> Self:
+        """
+        Validate that extra fields conform to the Zarr V3 spec.
+
+        Extra fields must be dicts with a 'must_understand' key set to False.
+        """
+        extra_checker.validate_python(self.__pydantic_extra__)
+        return self
 
 
 def parse_dtype_v3(dtype: npt.DTypeLike | Mapping[str, object]) -> Mapping[str, object] | str:
@@ -612,12 +645,11 @@ class ArraySpec(NodeSpec):
         return type(self)(**{**self.model_dump(), "dimension_names": dimension_names})
 
 
-class BaseGroupSpec(StrictBase):
+class BaseGroupSpec(NodeSpec):
     """
     A base GroupSpec class that only has core Zarr V3 group attributes
     """
 
-    zarr_format: Literal[3] = 3
     attributes: BaseAttributes
 
     def with_attributes(self, attributes: BaseAttributes) -> Self:
@@ -808,7 +840,13 @@ class GroupSpec(BaseGroupSpec):
             )
             raise ValueError(msg)
         if depth == 0:
-            return cls(attributes=attributes, members={})
+            extra_fields = {}
+            if group.metadata.consolidated_metadata is not None:
+                extra_fields["consolidated_metadata"] = (
+                    group.metadata.consolidated_metadata.to_dict()
+                )
+
+            return cls(attributes=attributes, members={}, **extra_fields)
         new_depth = max(depth - 1, -1)
         for name, item in group.members():
             if isinstance(item, zarr.Array):
@@ -823,7 +861,11 @@ class GroupSpec(BaseGroupSpec):
 
                 raise ValueError(msg)  # noqa: TRY004
 
-        result = cls(attributes=attributes, members=members)
+        extra_fields = {}
+        if group.metadata.consolidated_metadata is not None:
+            extra_fields["consolidated_metadata"] = group.metadata.consolidated_metadata.to_dict()
+
+        result = cls(attributes=attributes, members=members, **extra_fields)
         return result
 
     def to_zarr(
@@ -850,12 +892,14 @@ class GroupSpec(BaseGroupSpec):
         """
         try:
             import zarr
+            from zarr.core.group import GroupMetadata
+            from zarr.core.sync import sync
             from zarr.errors import ContainsArrayError, ContainsGroupError
+            from zarr.storage._common import make_store_path
         except ImportError as e:
             raise ImportError("zarr must be installed to use to_zarr") from e
 
         spec_dict = self.model_dump(exclude={"members": True})
-        attrs = spec_dict.pop("attributes")
         extant_node = maybe_node(store, path, zarr_format=3)
         if isinstance(extant_node, zarr.Group):
             if not self.like(extant_node):
@@ -885,18 +929,28 @@ class GroupSpec(BaseGroupSpec):
             """
             # TODO: use the above message when we fix the ContainsArrayError in zarr python
             raise ContainsArrayError(store, path)
-        else:
-            zarr.create_group(store=store, overwrite=overwrite, path=path, zarr_format=3)
 
-        result = zarr.group(store=store, path=path, overwrite=overwrite, zarr_format=3)
-        result.attrs.put(attrs)
+        # This indirect routine for creating a group is required because zarr python does
+        # not have a convenient way to simply create a group from a metadata dict.
+        # we need to create a group directly from the metadata dict to support consolidated metadata
+        # or any other extra metadata fields.
+
+        spath = sync(make_store_path(store, path=path))
+        result_dict = dict(
+            zarr.create_hierarchy(
+                store=spath.store,
+                nodes={path: GroupMetadata.from_dict(spec_dict)},
+                overwrite=overwrite,
+            )
+        )
+        result = result_dict[path.removeprefix("/")]
         # consider raising an exception if a partial GroupSpec is provided
         if self.members is not None:
             for name, member in self.members.items():
                 subpath = f"{path.rstrip('/')}/{name.lstrip('/')}"
                 member.to_zarr(store, subpath, overwrite=overwrite, **kwargs)
 
-        return result
+        return result  # type: ignore[return-value]
 
     def like(
         self,
