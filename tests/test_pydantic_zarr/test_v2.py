@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import re
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 import pytest
 from pydantic import ValidationError
@@ -33,6 +33,7 @@ from packaging.version import Version
 from pydantic_zarr.v2 import (
     ArraySpec,
     GroupSpec,
+    TBaseItem,
     auto_attributes,
     auto_chunks,
     auto_compresser,
@@ -689,3 +690,15 @@ def test_mix_v3_v2_fails() -> None:
         ),
     ):
         GroupSpec.from_flat(members_flat)  # type: ignore[arg-type]
+
+
+def test_314_failure() -> None:
+    # Tests a delayed annotation issue on Python 3.14
+    # See https://github.com/ome-zarr-models/ome-zarr-models-py/issues/400 for downstream issue
+
+    class Image(GroupSpec[Any, TBaseItem]):
+        @classmethod
+        def new(cls) -> Self:
+            return cls(attributes={}, members={})
+
+    Image.new()
