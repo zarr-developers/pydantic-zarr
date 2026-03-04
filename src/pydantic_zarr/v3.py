@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 
 if sys.version_info >= (3, 12):
     type TBaseAttr = Mapping[str, object] | BaseModel  # type: ignore[syntax]
-    type TBaseItem = "GroupSpec" | "ArraySpec"
+    type TBaseItem = Union["GroupSpec", "ArraySpec"]
 
     # These types are for convenience when dealing with unknown ArraySpecs and GroupSpecs
     # because type variables don't have default values
