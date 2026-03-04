@@ -692,7 +692,6 @@ def test_mix_v3_v2_fails() -> None:
         GroupSpec.from_flat(members_flat)  # type: ignore[arg-type]
 
 
-@pytest.mark.xfail(sys.version_info[1] >= 14, reason="Issue with pydantic and Python 3.14")
 def test_314_failure() -> None:
     # Tests a delayed annotation issue on Python 3.14
     # See https://github.com/ome-zarr-models/ome-zarr-models-py/issues/400 for downstream issue
