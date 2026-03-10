@@ -13,6 +13,7 @@ from typing import (
     Literal,
     Self,
     TypeVar,
+    Union,
     cast,
     get_args,
     overload,
@@ -40,7 +41,7 @@ if TYPE_CHECKING:
     from zarr.core.array_spec import ArrayConfigParams
 
 type TBaseAttr = Mapping[str, object] | BaseModel
-type TBaseItem = "GroupSpec" | "ArraySpec"
+type TBaseItem = Union["GroupSpec", "ArraySpec"]
 
 type AnyArraySpec = "ArraySpec[Any]"
 type AnyGroupSpec = "GroupSpec[Any, Any]"

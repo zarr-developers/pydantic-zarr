@@ -13,6 +13,7 @@ from typing import (
     NotRequired,
     Self,
     TypeVar,
+    Union,
     cast,
     overload,
 )
@@ -43,7 +44,7 @@ if TYPE_CHECKING:
 
 
 type TBaseAttr = Mapping[str, object] | BaseModel
-type TBaseItem = "GroupSpec" | "ArraySpec"
+type TBaseItem = Union["GroupSpec", "ArraySpec"]
 
 # These types are for convenience when dealing with unknown ArraySpecs and GroupSpecs
 # because type variables don't have default values
