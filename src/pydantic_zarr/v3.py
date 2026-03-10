@@ -12,9 +12,7 @@ from typing import (
     Literal,
     NotRequired,
     Self,
-    TypeAlias,
     TypeVar,
-    Union,
     cast,
     overload,
 )
@@ -44,13 +42,13 @@ if TYPE_CHECKING:
     from zarr.core.array_spec import ArrayConfigParams
 
 
-TBaseAttr: TypeAlias = Mapping[str, object] | BaseModel
-TBaseItem: TypeAlias = Union["GroupSpec", "ArraySpec"]
+type TBaseAttr = Mapping[str, object] | BaseModel
+type TBaseItem = "GroupSpec" | "ArraySpec"
 
 # These types are for convenience when dealing with unknown ArraySpecs and GroupSpecs
 # because type variables don't have default values
-AnyArraySpec: TypeAlias = "ArraySpec[TBaseAttr]"
-AnyGroupSpec: TypeAlias = "GroupSpec[TBaseAttr, TBaseItem]"
+type AnyArraySpec = "ArraySpec[TBaseAttr]"
+type AnyGroupSpec = "GroupSpec[TBaseAttr, TBaseItem]"
 
 TAttr = TypeVar("TAttr", bound=TBaseAttr)
 TItem = TypeVar("TItem", bound=TBaseItem)

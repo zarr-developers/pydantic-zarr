@@ -5,7 +5,6 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Literal,
-    TypeAlias,
     TypeVar,
     overload,
 )
@@ -20,9 +19,9 @@ if TYPE_CHECKING:
 
 BaseAttributes = Mapping[str, object] | BaseModel
 
-IncEx: TypeAlias = set[int] | set[str] | dict[int, Any] | dict[str, Any] | None
+type IncEx = set[int] | set[str] | dict[int, Any] | dict[str, Any] | None
 
-AccessMode: TypeAlias = Literal["w", "w+", "r", "a"]
+type AccessMode = Literal["w", "w+", "r", "a"]
 
 T = TypeVar("T")
 

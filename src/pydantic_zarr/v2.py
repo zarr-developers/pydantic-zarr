@@ -12,9 +12,7 @@ from typing import (
     Generic,
     Literal,
     Self,
-    TypeAlias,
     TypeVar,
-    Union,
     cast,
     get_args,
     overload,
@@ -41,11 +39,11 @@ if TYPE_CHECKING:
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
 
-TBaseAttr: TypeAlias = Mapping[str, object] | BaseModel
-TBaseItem: TypeAlias = Union["GroupSpec", "ArraySpec"]
+type TBaseAttr = Mapping[str, object] | BaseModel
+type TBaseItem = "GroupSpec" | "ArraySpec"
 
-AnyArraySpec: TypeAlias = "ArraySpec[Any]"
-AnyGroupSpec: TypeAlias = "GroupSpec[Any, Any]"
+type AnyArraySpec = "ArraySpec[Any]"
+type AnyGroupSpec = "GroupSpec[Any, Any]"
 
 TAttr = TypeVar("TAttr", bound=TBaseAttr)
 TItem = TypeVar("TItem", bound=TBaseItem)

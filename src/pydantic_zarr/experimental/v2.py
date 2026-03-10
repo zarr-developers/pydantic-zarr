@@ -12,7 +12,6 @@ from typing import (
     Final,
     Literal,
     Self,
-    TypeAlias,
     cast,
     get_args,
     overload,
@@ -39,7 +38,7 @@ if TYPE_CHECKING:
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
 
-BaseMember: TypeAlias = Mapping[str, "ArraySpec | GroupSpec"]
+type BaseMember = Mapping[str, "ArraySpec | GroupSpec"]
 
 DtypeStr = Annotated[str, BeforeValidator(parse_dtype_v2)]
 
