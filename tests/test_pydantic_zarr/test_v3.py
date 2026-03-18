@@ -298,3 +298,18 @@ def test_dim_names_from_zarr_array(
     arr = zarr.zeros(*args, **kwargs)
     spec: AnyArraySpec = ArraySpec.from_zarr(arr)
     assert spec.dimension_names == expected_names
+
+
+def test_v2_chunk_key_encoding() -> None:
+    # Simple smoke test to make sure v2 chunk key encoding is allowed
+    ArraySpec(
+        attributes={},
+        shape=[1000, 1000],
+        dimension_names=["rows", "columns"],
+        data_type="float64",
+        chunk_grid=NamedConfig(name="regular", configuration={"chunk_shape": [1000, 100]}),
+        chunk_key_encoding=NamedConfig(name="v2", configuration={"separator": "."}),
+        codecs=[NamedConfig(name="GZip", configuration={"level": 1})],
+        fill_value="NaN",
+        storage_transformers=[],
+    )
