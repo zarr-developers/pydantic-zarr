@@ -256,6 +256,8 @@ checks = [
 
 [tool.towncrier]
 directory = 'changes'
+package = 'pydantic_zarr'
+package_dir = 'src'
 filename = "docs/release-notes.md"
 title_format = "## {name} {version} ({project_date})"
 issue_format = "[#{issue}](https://github.com/zarr-developers/pydantic-zarr/issues/{issue})"
