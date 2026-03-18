@@ -103,7 +103,7 @@ except ValueError as e:
     1 validation error for MyGroup
     members.b
       Field required [type=missing, input_value={'a': ArraySpec(zarr_form..., dimension_names=None)}, input_type=dict]
-        For further information visit https://errors.pydantic.dev/2.12v/missing
+        For further information visit https://errors.pydantic.dev/2.12/v/missing
     """
 
 # validation fails: extra array named "c"
