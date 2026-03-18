@@ -19,7 +19,7 @@ jobs:
             python-version: "3.x"
         - name: Install Hatch
           run: |
-            pip install hatch==1.14.1
+            pip install hatch==1.16.5
         - name: Build package
           run: |
             hatch build
