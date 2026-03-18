@@ -11,7 +11,7 @@
 
 ### Bugfixes
 
-- Added support for the 'v2' chunk encoding in Zarr v3 metdata. ([#148](https://github.com/zarr-developers/pydantic-zarr/issues/148))
+- Added support for the 'v2' chunk encoding in Zarr v3 metadata. ([#148](https://github.com/zarr-developers/pydantic-zarr/issues/148))
 
 ### Improved Documentation
 
