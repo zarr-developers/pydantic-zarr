@@ -7,7 +7,7 @@ name = "pydantic-zarr"
 dynamic = ["version"]
 description = 'Pydantic models for the Zarr file format'
 readme = { file = "README.md", content-type = "text/markdown" }
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = "MIT"
 keywords = ["zarr", "pydantic"]
 authors = [{ name = "Davis Bennett", email = "davis.v.bennett@gmail.com" }]
@@ -16,13 +16,12 @@ maintainers = [{ name = "David Stansby" }]
 
 classifiers = [
     "Programming Language :: Python",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: Implementation :: CPython",
 ]
-dependencies = ["pydantic>2.0.0", "numpy>=1.24.0", "packaging>=21.0"]
+dependencies = ["pydantic>2.0.0", "numpy>=2.0.0", "packaging>=21.0"]
 
 [project.urls]
 Documentation = "https://pydantic-zarr.readthedocs.io/"
@@ -90,7 +89,7 @@ test-cov = "pytest --cov-config=pyproject.toml --cov=pkg --cov-report html --cov
 list-env = "pip list"
 
 [[tool.hatch.envs.test.matrix]]
-python = ["3.11", "3.12", "3.13", "3.14"]
+python = ["3.12", "3.13", "3.14"]
 zarr = ["3.0.10", "3.1.0"]
 
 [tool.hatch.envs.test-base]
@@ -102,7 +101,7 @@ test-cov = "pytest --cov-config=pyproject.toml --cov=pkg --cov-report html --cov
 list-env = "pip list"
 
 [[tool.hatch.envs.test-base.matrix]]
-python = ["3.11", "3.12", "3.13", "3.14"]
+python = ["3.12", "3.13", "3.14"]
 
 [tool.hatch.envs.docs]
 features = ['docs']
@@ -204,13 +203,14 @@ ignore = [
     "Q003",
     "COM812",
     "COM819",
+    "UP007"
 ]
 
 [tool.ruff.lint.extend-per-file-ignores]
 "tests/**" = ["ANN001", "ANN201", "RUF029", "SIM117", "SIM300"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 ignore_missing_imports = true
 namespace_packages = false
 warn_unreachable = true
