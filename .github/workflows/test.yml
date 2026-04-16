@@ -47,7 +47,7 @@ jobs:
         hatch run test-base.py${{ matrix.python-version }}:list-env
         hatch run test-base.py${{ matrix.python-version }}:test-cov
     - name: Upload coverage
-      uses: codecov/codecov-action@v5
+      uses: codecov/codecov-action@v6
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         verbose: true # optional (default = false)
