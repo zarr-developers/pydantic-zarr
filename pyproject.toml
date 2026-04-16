@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling>=1.28.0", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
@@ -62,7 +62,7 @@ version.source = "vcs"
 build.hooks.vcs.version-file = "src/pydantic_zarr/_version.py"
 
 [tool.hatch.envs.test]
-features = ["test"]
+dependency-groups = ["test"]
 dependencies = [
     "zarr~={matrix:zarr}",
 ]
@@ -77,7 +77,7 @@ python = ["3.12", "3.13", "3.14"]
 zarr = ["3.0.10", "3.1.0"]
 
 [tool.hatch.envs.test-base]
-features = ["test-base"]
+dependency-groups = ["test-base"]
 
 [tool.hatch.envs.test-base.scripts]
 test = "pytest tests/test_pydantic_zarr/"
@@ -88,7 +88,7 @@ list-env = "pip list"
 python = ["3.12", "3.13", "3.14"]
 
 [tool.hatch.envs.docs]
-features = ['docs']
+dependency-groups = ['docs']
 
 [tool.hatch.envs.docs.scripts]
 build = "mkdocs build --clean --strict"
