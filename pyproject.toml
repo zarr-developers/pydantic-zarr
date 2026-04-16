@@ -67,6 +67,9 @@ test = [
 docs = [
     "pydantic_zarr[docs]"
 ]
+dev = [
+    "pydantic-zarr[test]",
+]
 
 [tool.hatch]
 version.source = "vcs"
