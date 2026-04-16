@@ -226,6 +226,7 @@ filterwarnings = [
     "error",
     # https://github.com/zarr-developers/zarr-python/issues/2948
     "ignore:The `order` keyword argument has no effect for Zarr format 3 arrays:RuntimeWarning",
+    "ignore:Use AsyncArray.config instead"
 ]
 
 [tool.repo-review]
