@@ -12,7 +12,6 @@ from typing import (
     Literal,
     NotRequired,
     Self,
-    TypeAlias,
     TypeVar,
     Union,
     cast,
@@ -44,13 +43,13 @@ if TYPE_CHECKING:
     from zarr.core.array_spec import ArrayConfigParams
 
 
-TBaseAttr: TypeAlias = Mapping[str, object] | BaseModel
-TBaseItem: TypeAlias = Union["GroupSpec", "ArraySpec"]
+type TBaseAttr = Mapping[str, object] | BaseModel
+type TBaseItem = Union["GroupSpec", "ArraySpec"]
 
 # These types are for convenience when dealing with unknown ArraySpecs and GroupSpecs
 # because type variables don't have default values
-AnyArraySpec: TypeAlias = "ArraySpec[TBaseAttr]"
-AnyGroupSpec: TypeAlias = "GroupSpec[TBaseAttr, TBaseItem]"
+type AnyArraySpec = "ArraySpec[TBaseAttr]"
+type AnyGroupSpec = "GroupSpec[TBaseAttr, TBaseItem]"
 
 TAttr = TypeVar("TAttr", bound=TBaseAttr)
 TItem = TypeVar("TItem", bound=TBaseItem)
@@ -111,6 +110,13 @@ class DefaultChunkKeyEncodingConfig(TypedDict):
 
 
 DefaultChunkKeyEncoding = NamedConfig[Literal["default"], DefaultChunkKeyEncodingConfig]
+
+
+class V2ChunkKeyEncodingConfig(TypedDict):
+    separator: Literal[".", "/"]
+
+
+V2ChunkKeyEncoding = NamedConfig[Literal["v2"], DefaultChunkKeyEncodingConfig]
 
 
 class NodeSpec(StrictBase):
@@ -205,7 +211,9 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     shape: tuple[int, ...]
     data_type: DTypeLike
     chunk_grid: RegularChunking  # todo: validate this against shape
-    chunk_key_encoding: DefaultChunkKeyEncoding  # todo: validate this against shape
+    chunk_key_encoding: (
+        DefaultChunkKeyEncoding | V2ChunkKeyEncoding
+    )  # todo: validate this against shape
     fill_value: FillValue  # todo: validate this against the data type
     codecs: CodecTuple
     storage_transformers: tuple[AnyNamedConfig, ...] = ()

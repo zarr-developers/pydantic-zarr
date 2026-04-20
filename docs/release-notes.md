@@ -2,6 +2,29 @@
 
 <!-- towncrier release notes start -->
 
+## pydantic-zarr 0.10.0 (2026-04-16)
+
+### Features
+
+- The minimum supported Python is now 3.12 and the minimum supported NumPy is now 2.0. ([#145](https://github.com/zarr-developers/pydantic-zarr/issues/145))
+- Use `type ...` instead of `...: TypeAlias` to declare type aliases. ([#145](https://github.com/zarr-developers/pydantic-zarr/issues/145))
+
+## pydantic-zarr 0.9.2 (2026-03-18)
+
+### Features
+
+- In order to support consolidated metadata, the experimental V3 GroupSpec classes now accept arbitrary extra fields, provided they are dicts with a `must_understand: False` key: value pair. ([#141](https://github.com/zarr-developers/pydantic-zarr/issues/141))
+- Explicitly added support and testing with Python 3.14. ([#142](https://github.com/zarr-developers/pydantic-zarr/issues/142))
+
+### Bugfixes
+
+- Added support for the 'v2' chunk encoding in Zarr v3 metadata. ([#148](https://github.com/zarr-developers/pydantic-zarr/issues/148))
+
+### Improved Documentation
+
+- Added search to the docs. ([#146](https://github.com/zarr-developers/pydantic-zarr/issues/146))
+
+
 ## pydantic-zarr 0.9.1 (2025-12-12)
 
 ### Features

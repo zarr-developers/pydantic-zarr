@@ -558,7 +558,7 @@ Define strict schemas for group members using `TypedDict` to enable runtime vali
         1 validation error for TimeseriesGroup
         members.values
           Field required [type=missing, input_value={'timestamps': ArraySpec(...r='/', compressor=None)}, input_type=dict]
-            For further information visit https://errors.pydantic.dev/2.11/v/missing
+            For further information visit https://errors.pydantic.dev/2.12/v/missing
         """
     ```
 
@@ -622,6 +622,6 @@ Define strict schemas for group members using `TypedDict` to enable runtime vali
         1 validation error for TimeseriesGroup
         members.values
           Field required [type=missing, input_value={'timestamps': ArraySpec(..., dimension_names=None)}, input_type=dict]
-            For further information visit https://errors.pydantic.dev/2.11/v/missing
+            For further information visit https://errors.pydantic.dev/2.12/v/missing
         """
     ```
