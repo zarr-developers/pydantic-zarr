@@ -21,7 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: Implementation :: CPython",
 ]
-dependencies = ["pydantic>2.0.0", "numpy>=2.0.0", "packaging>=21.0"]
+dependencies = ["pydantic>=2.10", "numpy>=2.0.0", "packaging>=21.0"]
 
 [project.urls]
 Documentation = "https://pydantic-zarr.readthedocs.io/"
