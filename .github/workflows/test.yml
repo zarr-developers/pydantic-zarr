@@ -25,7 +25,7 @@ jobs:
 
     strategy:
       matrix:
-        python-version: ['3.11', '3.12', '3.13', '3.14']
+        python-version: ['3.12', '3.13', '3.14']
         zarr-version: ['3.0.10', '3.1.0', 'none']
         os: ["ubuntu-latest"]
     runs-on: ${{ matrix.os }}
@@ -54,7 +54,7 @@ jobs:
         hatch run test-base.py${{ matrix.python-version }}:list-env
         hatch run test-base.py${{ matrix.python-version }}:test-cov
     - name: Upload coverage
-      uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+      uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6.0.2
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         verbose: true # optional (default = false)
@@ -72,7 +72,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
       with:
-        python-version: '3.11'
+        python-version: '3.12'
         cache: 'pip'
     - name: Install Hatch
       run: |
@@ -93,7 +93,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
       with:
-        python-version: '3.11'
+        python-version: '3.12'
     - name: Install minimum requirements
       run: |
         pip install .

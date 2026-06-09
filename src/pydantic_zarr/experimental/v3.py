@@ -12,7 +12,6 @@ from typing import (
     Literal,
     NotRequired,
     Self,
-    TypeAlias,
     TypeVar,
     overload,
 )
@@ -47,7 +46,7 @@ if TYPE_CHECKING:
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
 
-BaseMember: TypeAlias = Mapping[str, "ArraySpec | GroupSpec"]
+type BaseMember = Mapping[str, "ArraySpec | GroupSpec"]
 
 NodeType = Literal["group", "array"]
 
