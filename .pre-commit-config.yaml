@@ -45,3 +45,7 @@ repos:
     rev: v1.8.0
     hooks:
       - id: numpydoc-validation
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: v1.25.2
+    hooks:
+      - id: zizmor
