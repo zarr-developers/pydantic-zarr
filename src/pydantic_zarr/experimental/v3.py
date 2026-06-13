@@ -107,6 +107,13 @@ class DefaultChunkKeyEncodingConfig(TypedDict):
 DefaultChunkKeyEncoding = NamedConfig[Literal["default"], DefaultChunkKeyEncodingConfig]
 
 
+class V2ChunkKeyEncodingConfig(TypedDict):
+    separator: Literal[".", "/"]
+
+
+V2ChunkKeyEncoding = NamedConfig[Literal["v2"], V2ChunkKeyEncodingConfig]
+
+
 class AllowedExtraField(TypedDict):
     """
     The type of additional fields that may be added to Zarr V3 Array or Group metadata documents.
@@ -226,7 +233,9 @@ class ArraySpec(NodeSpec):
     shape: tuple[int, ...]
     data_type: DTypeLike
     chunk_grid: RegularChunking  # todo: validate this against shape
-    chunk_key_encoding: DefaultChunkKeyEncoding  # todo: validate this against shape
+    chunk_key_encoding: (
+        DefaultChunkKeyEncoding | V2ChunkKeyEncoding
+    )  # todo: validate this against shape
     fill_value: FillValue  # todo: validate this against the data type
     codecs: CodecTuple
     storage_transformers: tuple[AnyNamedConfig, ...] = ()
