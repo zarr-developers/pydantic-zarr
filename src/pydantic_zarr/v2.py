@@ -417,7 +417,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         exclude: IncEx = None,
     ) -> bool:
         """
-        Compare am `ArraySpec` to another `ArraySpec` or a `zarr.Array`, parameterized over the
+        Compare an `ArraySpec` to another `ArraySpec` or a `zarr.Array`, parameterized over the
         fields to exclude or include in the comparison. Models are first converted to `dict` via the
         `model_dump` method of `pydantic.BaseModel`, then compared with the `==` operator.
 
@@ -714,14 +714,14 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         Examples
         --------
 
-        >>> from pydantic_zarr.v2 import to_flat, GroupSpec
+        >>> from pydantic_zarr.v2 import GroupSpec
         >>> g1 = GroupSpec(members=None, attributes={'foo': 'bar'})
-        >>> to_flat(g1)
+        >>> g1.to_flat()
         {'': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None)}
-        >>> to_flat(g1 root_path='baz')
+        >>> g1.to_flat(root_path='baz')
         {'baz': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None)}
-        >>> to_flat(GroupSpec(members={'g1': g1}, attributes={'foo': 'bar'}))
-        {'/g1': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None), '': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None)}
+        >>> GroupSpec(members={'g1': g1}, attributes={'foo': 'bar'}).to_flat()
+        {'': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None), '/g1': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None)}
         """
         return to_flat(self, root_path=root_path)
 
@@ -839,7 +839,7 @@ def to_zarr(
     overwrite : bool, default = False
         Whether to overwrite existing objects in storage to create the Zarr group or array.
     **kwargs
-        Additional keyword arguments will be
+        Additional keyword arguments will be passed to member `to_zarr` calls and `zarr.create`.
 
     Returns
     -------
@@ -884,14 +884,14 @@ def to_flat(
     Examples
     --------
 
-    >>> from pydantic_zarr.v2 import flatten, GroupSpec
+    >>> from pydantic_zarr.v2 import to_flat, GroupSpec
     >>> g1 = GroupSpec(members=None, attributes={'foo': 'bar'})
     >>> to_flat(g1)
     {'': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None)}
-    >>> to_flat(g1 root_path='baz')
+    >>> to_flat(g1, root_path='baz')
     {'baz': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None)}
     >>> to_flat(GroupSpec(members={'g1': g1}, attributes={'foo': 'bar'}))
-    {'/g1': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None), '': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None)}
+    {'': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None), '/g1': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None)}
     """
     result = {}
     model_copy: AnyArraySpec | AnyGroupSpec
@@ -984,7 +984,7 @@ def from_flat_group(data: Mapping[str, AnyArraySpec | AnyGroupSpec]) -> AnyGroup
     # populates member_groups
     submember_by_parent_name: dict[str, dict[str, AnyArraySpec | AnyGroupSpec]] = {}
     # copy the input to ensure that mutations are contained inside this function
-    data_copy = dict(data).copy()
+    data_copy = dict(data)
     # Get the root node
     try:
         # The root node is a GroupSpec with the key ""

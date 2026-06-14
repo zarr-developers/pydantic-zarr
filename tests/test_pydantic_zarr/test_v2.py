@@ -528,7 +528,7 @@ def test_from_array(shape: tuple[int, ...], dtype: str | None) -> None:
 
 @pytest.mark.parametrize("data", ["/", "a/b/c"])
 def test_member_name(data: str) -> None:
-    with pytest.raises(ValidationError, match='Strings containing "/" are invalid.'):
+    with pytest.raises(ValidationError, match=r'Strings containing "/" are invalid\.'):
         GroupSpec(attributes={}, members={data: GroupSpec(attributes={}, members={})})
 
 

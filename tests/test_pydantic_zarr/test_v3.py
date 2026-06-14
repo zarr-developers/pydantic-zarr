@@ -104,7 +104,7 @@ def test_arrayspec_no_empty_codecs() -> None:
     """
 
     with pytest.raises(
-        ValidationError, match="Value error, Invalid length. Expected 1 or more, got 0."
+        ValidationError, match=r"Value error, Invalid length\. Expected 1 or more, got 0\."
     ):
         ArraySpec(
             shape=(1,),

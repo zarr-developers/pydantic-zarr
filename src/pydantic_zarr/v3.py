@@ -117,7 +117,7 @@ class V2ChunkKeyEncodingConfig(TypedDict):
     separator: Literal[".", "/"]
 
 
-V2ChunkKeyEncoding = NamedConfig[Literal["v2"], DefaultChunkKeyEncodingConfig]
+V2ChunkKeyEncoding = NamedConfig[Literal["v2"], V2ChunkKeyEncodingConfig]
 
 
 class NodeSpec(StrictBase):
@@ -199,7 +199,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     fill_value: FillValue
         The fill value for this array.
     codecs: Sequence[NamedConfig]
-        The sequence of codices for this array.
+        The sequence of codecs for this array.
     storage_transformers: Optional[Sequence[NamedConfig]]
         An optional sequence of `NamedConfig` objects that define the storage
         transformers for this array.
@@ -342,10 +342,12 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         Examples
         --------
         >>> import zarr
+        >>> import zarr.storage
         >>> from pydantic_zarr.v3 import ArraySpec
-        >>> x = zarr.create((10,10))
+        >>> store = zarr.storage.MemoryStore()
+        >>> x = zarr.create(store=store, shape=(10, 10), zarr_format=3)
         >>> ArraySpec.from_zarr(x)
-        ArraySpec(zarr_format=2, attributes={}, shape=(10, 10), chunks=(10, 10), dtype='<f8', fill_value=0.0, order='C', filters=None, dimension_separator='.', compressor={'id': 'blosc', 'cname': 'lz4', 'clevel': 5, 'shuffle': 1, 'blocksize': 0})
+        ArraySpec(zarr_format=3, node_type='array', attributes={}, shape=(10, 10), data_type='float64', chunk_grid={'name': 'regular', 'configuration': {'chunk_shape': (10, 10)}}, chunk_key_encoding={'name': 'default', 'configuration': {'separator': '/'}}, fill_value=0.0, codecs=({'name': 'bytes', 'configuration': {'endian': 'little'}}, {'name': 'zstd', 'configuration': {'level': 0, 'checksum': False}}), storage_transformers=(), dimension_names=None)
 
         """
         try:
@@ -443,7 +445,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         exclude: IncEx = None,
     ) -> bool:
         """
-        Compare am `ArraySpec` to another `ArraySpec` or a `zarr.Array`, parameterized over the
+        Compare an `ArraySpec` to another `ArraySpec` or a `zarr.Array`, parameterized over the
         fields to exclude or include in the comparison. Models are first converted to `dict` via the
         `model_dump` method of `pydantic.BaseModel`, then compared with the `==` operator.
 
@@ -593,14 +595,14 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         Examples
         --------
 
-        >>> from pydantic_zarr.v3 import to_flat, GroupSpec
+        >>> from pydantic_zarr.v3 import GroupSpec
         >>> g1 = GroupSpec(members=None, attributes={'foo': 'bar'})
-        >>> to_flat(g1)
-        {'': GroupSpec(zarr_format=3, attributes={'foo': 'bar'}, members=None)}
-        >>> to_flat(g1 root_path='baz')
-        {'baz': GroupSpec(zarr_format=3, attributes={'foo': 'bar'}, members=None)}
-        >>> to_flat(GroupSpec(members={'g1': g1}, attributes={'foo': 'bar'}))
-        {'/g1': GroupSpec(zarr_format=3, attributes={'foo': 'bar'}, members=None), '': GroupSpec(zarr_format=3, attributes={'foo': 'bar'}, members=None)}
+        >>> g1.to_flat()
+        {'': GroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'}, members=None)}
+        >>> g1.to_flat(root_path='baz')
+        {'baz': GroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'}, members=None)}
+        >>> GroupSpec(members={'g1': g1}, attributes={'foo': 'bar'}).to_flat()
+        {'': GroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'}, members=None), '/g1': GroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'}, members=None)}
         """
         return to_flat(self, root_path=root_path)
 
@@ -960,7 +962,7 @@ def from_flat_group(
     # populates member_groups
     submember_by_parent_name: dict[str, dict[str, ArraySpec[Any] | GroupSpec[Any, Any]]] = {}
     # copy the input to ensure that mutations are contained inside this function
-    data_copy = dict(data).copy()
+    data_copy = dict(data)
     # Get the root node
     try:
         # The root node is a GroupSpec with the key ""
@@ -1033,9 +1035,9 @@ def auto_fill_value(data: object) -> FillValue:
             return False
         elif kind in ["i", "u"]:
             return 0
-        elif kind in ["f"]:
+        elif kind == "f":
             return "NaN"
-        elif kind in ["c"]:
+        elif kind == "c":
             return ("NaN", "NaN")
         else:
             raise ValueError(f"Cannot determine default fill value for data type {kind}")
@@ -1097,14 +1099,14 @@ def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, Array
     Examples
     --------
 
-    >>> from pydantic_zarr.v3 import flatten, GroupSpec
+    >>> from pydantic_zarr.v3 import to_flat, GroupSpec
     >>> g1 = GroupSpec(members=None, attributes={'foo': 'bar'})
     >>> to_flat(g1)
-    {'': GroupSpec(zarr_format=3, attributes={'foo': 'bar'}, members=None)}
-    >>> to_flat(g1 root_path='baz')
-    {'baz': GroupSpec(zarr_format=3, attributes={'foo': 'bar'}, members=None)}
+    {'': GroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'}, members=None)}
+    >>> to_flat(g1, root_path='baz')
+    {'baz': GroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'}, members=None)}
     >>> to_flat(GroupSpec(members={'g1': g1}, attributes={'foo': 'bar'}))
-    {'/g1': GroupSpec(zarr_format=3, attributes={'foo': 'bar'}, members=None), '': GroupSpec(zarr_format=2, attributes={'foo': 'bar'}, members=None)}
+    {'': GroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'}, members=None), '/g1': GroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'}, members=None)}
     """
     result = {}
     model_copy: AnyArraySpec | AnyGroupSpec
