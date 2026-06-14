@@ -205,7 +205,7 @@ ignore = [
 "tests/**" = ["ANN001", "ANN201", "RUF029", "SIM117", "SIM300"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 ignore_missing_imports = true
 namespace_packages = false
 warn_unreachable = true

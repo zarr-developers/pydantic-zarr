@@ -66,6 +66,8 @@ if ZARR_PYTHON_VERSION < Version("3.1.0"):
         DTypeExample("str", "hi"),
     )
 else:
+    import importlib
+
     from zarr.core.dtype import (
         DateTime64,
         FixedLengthUTF32,
@@ -73,9 +75,20 @@ else:
         Int32,
         NullTerminatedBytes,
         RawBytes,
-        Structured,
         TimeDelta64,
         data_type_registry,
+    )
+
+    # Structured was renamed to Struct in zarr 3.2; support both.
+    _zarr_dtype_mod = importlib.import_module("zarr.core.dtype")
+    _StructuredLike: tuple[type, ...] = tuple(
+        filter(
+            None,
+            [
+                getattr(_zarr_dtype_mod, "Structured", None),
+                getattr(_zarr_dtype_mod, "Struct", None),
+            ],
+        )
     )
 
     v2_examples: list[DTypeExample] = []
@@ -85,8 +98,8 @@ else:
             dt = dtype_cls(unit="s", scale_factor=10)
         elif dtype_cls in (FixedLengthUTF32, RawBytes, NullTerminatedBytes):
             dt = dtype_cls(length=10)
-        elif dtype_cls == Structured:
-            dt = dtype_cls(fields=[("a", Int32()), ("b", Float16())])
+        elif dtype_cls in _StructuredLike:
+            dt = dtype_cls(fields=(("a", Int32()), ("b", Float16())))
         else:
             dt = dtype_cls()
 
