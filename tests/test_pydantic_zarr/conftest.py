@@ -85,7 +85,7 @@ else:
             dt = dtype_cls(unit="s", scale_factor=10)
         elif dtype_cls in (FixedLengthUTF32, RawBytes, NullTerminatedBytes):
             dt = dtype_cls(length=10)
-        elif dtype_cls == Structured:
+        elif issubclass(dtype_cls, Structured):
             dt = dtype_cls(fields=[("a", Int32()), ("b", Float16())])
         else:
             dt = dtype_cls()
