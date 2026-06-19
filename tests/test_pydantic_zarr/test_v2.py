@@ -697,3 +697,21 @@ def test_mix_v3_v2_fails() -> None:
         ),
     ):
         GroupSpec.from_flat(members_flat)  # type: ignore[arg-type]
+
+
+def test_v2_to_json_roundtrips() -> None:
+    from pydantic import TypeAdapter
+    from zarr_metadata import ArrayMetadataV2
+
+    spec = ArraySpec.from_array(np.zeros((4, 4), dtype="<f8"), attributes={"x": 1})
+    doc = spec.to_json()
+    TypeAdapter(ArrayMetadataV2).validate_python(doc)
+    assert doc["attributes"] == {"x": 1}
+
+
+def test_v2_to_store_json_splits_zarray_zattrs() -> None:
+    spec = ArraySpec.from_array(np.zeros((4, 4), dtype="<f8"), attributes={"x": 1})
+    store = spec.to_store_json()
+    assert set(store) == {".zarray", ".zattrs"}
+    assert "attributes" not in store[".zarray"]
+    assert store[".zattrs"] == {"x": 1}

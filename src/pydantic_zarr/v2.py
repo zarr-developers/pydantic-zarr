@@ -26,10 +26,15 @@ from pydantic import AfterValidator, BaseModel, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
 from zarr_metadata import (
     ArrayDimensionSeparatorV2,
+    ArrayMetadataV2,
     ArrayOrderV2,
     CodecMetadataV2,
     DataTypeMetadataV2,
+    GroupMetadataV2,
     JSONValue,
+    ZArrayMetadata,
+    ZAttrsMetadata,
+    ZGroupMetadata,
 )
 
 from pydantic_zarr.core import (
@@ -461,6 +466,19 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
+    def to_json(self) -> ArrayMetadataV2:
+        """Serialize to the inline v2 array metadata form (attributes folded in)."""
+        return cast("ArrayMetadataV2", self.model_dump(mode="json"))
+
+    def to_store_json(self) -> Mapping[str, ZArrayMetadata | ZAttrsMetadata]:
+        """Serialize to the on-disk `.zarray` + `.zattrs` document pair."""
+        full = self.model_dump(mode="json")
+        attributes = full.pop("attributes", {})
+        return {
+            ".zarray": cast("ZArrayMetadata", full),
+            ".zattrs": cast("ZAttrsMetadata", attributes),
+        }
+
 
 class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
     """
@@ -681,6 +699,19 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
             other_parsed = other  # type: ignore[assignment]
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
+
+    def to_json(self) -> GroupMetadataV2:
+        """Serialize to the inline v2 group metadata form (members excluded)."""
+        return cast("GroupMetadataV2", self.model_dump(mode="json", exclude={"members"}))
+
+    def to_store_json(self) -> Mapping[str, ZGroupMetadata | ZAttrsMetadata]:
+        """Serialize to the on-disk `.zgroup` + `.zattrs` document pair."""
+        full = self.model_dump(mode="json", exclude={"members"})
+        attributes = full.pop("attributes", {})
+        return {
+            ".zgroup": cast("ZGroupMetadata", full),
+            ".zattrs": cast("ZAttrsMetadata", attributes),
+        }
 
     def to_flat(self, root_path: str = "") -> dict[str, AnyArraySpec | AnyGroupSpec]:
         """
