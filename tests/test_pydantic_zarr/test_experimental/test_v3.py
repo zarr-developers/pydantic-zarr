@@ -20,6 +20,7 @@ from pydantic_zarr.experimental.v3 import (
     RegularChunking,
     RegularChunkingConfig,
     auto_codecs,
+    parse_dtype_v3,
 )
 
 from ..conftest import DTYPE_EXAMPLES_V3, ZARR_AVAILABLE, DTypeExample
@@ -477,6 +478,35 @@ def test_consolidated_metadata_to_from_zarr() -> None:
     store2: dict[str, object] = {}
     gspec.to_zarr(store2, path="")
     assert json.loads(store["zarr.json"].to_bytes()) == json.loads(store2["zarr.json"].to_bytes())
+
+
+@pytest.mark.parametrize(
+    ("dtype", "expected"),
+    [
+        (np.dtype("int8"), "int8"),
+        (np.dtype("int16"), "int16"),
+        (np.dtype("int32"), "int32"),
+        (np.dtype("int64"), "int64"),
+        (np.dtype("uint8"), "uint8"),
+        (np.dtype("uint16"), "uint16"),
+        (np.dtype("uint32"), "uint32"),
+        (np.dtype("uint64"), "uint64"),
+        (np.dtype("float16"), "float16"),
+        (np.dtype("float32"), "float32"),
+        (np.dtype("float64"), "float64"),
+        (np.dtype("complex64"), "complex64"),
+        (np.dtype("complex128"), "complex128"),
+    ],
+    ids=str,
+)
+def test_parse_dtype_v3_numpy(dtype: np.dtype, expected: str) -> None:
+    """
+    Regression test: parse_dtype_v3 must correctly handle all supported numpy dtypes.
+    Previously, the float64 and complex64 match arms were copy-paste errors (using
+    Float16DType and Float32DType respectively), making those dtypes unreachable and
+    causing ValueError to be raised for float64 and complex64 inputs.
+    """
+    assert parse_dtype_v3(dtype) == expected
 
 
 def test_v2_chunk_key_encoding() -> None:
