@@ -378,7 +378,7 @@ class ArraySpec(_BaseArraySpec[TAttr], Generic[TAttr]):
 
     def like(
         self,
-        other: _BaseArraySpec[Any] | zarr.Array,
+        other: AnyArraySpec | zarr.Array,
         *,
         include: IncEx = None,
         exclude: IncEx = None,
@@ -427,7 +427,7 @@ class ArraySpec(_BaseArraySpec[TAttr], Generic[TAttr]):
         True
         """
 
-        other_parsed: _BaseArraySpec[Any]
+        other_parsed: AnyArraySpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Array):
             other_parsed = ArraySpec.from_zarr(other)
         else:
