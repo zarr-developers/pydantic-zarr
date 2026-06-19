@@ -104,6 +104,46 @@ alias for the discriminated union of the per-dtype members.
   clean under `mypy --strict` (binding the param to its bound and adding a default is legal, not
   a narrowing error). Loose `ArraySpec[TAttr]` / `GroupSpec[TAttr, TItem]` keep their generics.
 
+### Strict↔loose relationship: discriminated union, not inheritance (considered & rejected alternatives)
+
+The design question "every strict array is also a loose array — how do we express that?" was
+examined in depth (2026-06-19) and resolved as follows:
+
+- **The strict correlation fact is already expressed.** "If `data_type == "float64"` then
+  `fill_value` is a float or one of the special strings" is exactly what the per-dtype
+  discriminated union encodes (`_Float64ArraySpec` couples `Float64DataTypeName` with
+  `Float64FillValue`). Narrowing on `data_type` gives mypy/IDEs static knowledge of the
+  `fill_value` type. This static precision is the chosen, primary value of strict mode.
+
+- **Substitutability holds at the value level, not nominally.** Every strict per-dtype
+  `fill_value` type was *verified* to be a subtype of `JSONValue` under `mypy --strict`
+  (`Float64FillValue`, `Int64FillValue`, `Complex64FillValue`, … all assign to `JSONValue`;
+  `HexFloat64` is a `NewType(str)` ⊆ `str` ⊆ `JSONValue`). So a strict instance's fields already
+  flow into any consumer typed on the loose field types. A nominal `StrictArraySpec(ArraySpec)`
+  is-a relationship is therefore unnecessary for substitution.
+
+- **Rejected: making strict inherit from loose** (`StrictArraySpec(ArraySpec)` re-typing
+  `fill_value` to the per-dtype type). This is a field-narrowing override → `mypy --strict`
+  `[assignment]` error. The whole sibling design exists to avoid it.
+
+- **Rejected: nominal is-a with runtime-only enforcement** (inherit `fill_value: JSONValue`
+  unnarrowed, enforce the dtype correlation in a `model_validator`). This buys nominal
+  substitutability but *loses* the static `fill_value` precision — the opposite of the chosen
+  priority.
+
+- **Rejected: `Protocol` (`ArraySpecLike`) + dropping `_BaseArraySpec`.** Prototyped: a
+  read-only-`@property` Protocol does type-check for frozen models, but (a) Protocols can't be
+  pydantic validators (concrete models stay regardless), and (b) dropping the base forces the 5
+  shared fields to be redeclared across all 16 concrete models plus either re-introduced
+  `# type: ignore` (mixin) or lost `spec.to_json()` method ergonomics (free functions). The base
+  is not the source of inheritance pain (narrowing was, already solved), so it stays.
+
+**Conclusion:** keep the current design — per-dtype discriminated `StrictArraySpec`, strict/loose
+as siblings over `_BaseArraySpec`. The consumer functions (`like`, `to_flat`, `from_flat`,
+`flatten`, `from_flatten`) remain typed on the loose `AnyArraySpec`/`AnyGroupSpec`; widening a
+specific call site to also accept a strict instance is a one-line change to make if and when a
+concrete need arises, not pre-solved here.
+
 ### Strict spec = discriminated union over per-dtype models
 
 Strict mode's defining feature is that `data_type` and `fill_value` are **coupled**: e.g. a
