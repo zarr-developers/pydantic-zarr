@@ -10,7 +10,6 @@ from typing import (
     Any,
     Generic,
     Literal,
-    NotRequired,
     Self,
     TypeVar,
     Union,
@@ -22,7 +21,7 @@ import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
 from pydantic import AfterValidator, BaseModel, BeforeValidator, model_validator
-from typing_extensions import TypedDict
+from zarr_metadata import JSONValue, MetadataV3, NamedConfigV3
 
 from pydantic_zarr.core import (
     IncEx,
@@ -56,76 +55,7 @@ TItem = TypeVar("TItem", bound=TBaseItem)
 
 NodeType = Literal["group", "array"]
 
-BoolFillValue = bool
-IntFillValue = int
-# todo: introduce a type that represents hexadecimal representations of floats
-FloatFillValue = Literal["Infinity", "-Infinity", "NaN"] | float
-ComplexFillValue = tuple[FloatFillValue, FloatFillValue]
-RawFillValue = tuple[int, ...]
-StructFillValue = Mapping[str, object]
-
-FillValue = (
-    BoolFillValue
-    | IntFillValue
-    | FloatFillValue
-    | ComplexFillValue
-    | RawFillValue
-    | str
-    | StructFillValue
-)
-
-TName = TypeVar("TName", bound=str)
-TConfig = TypeVar("TConfig", bound=Mapping[str, object])
-
-
-class NamedConfig(TypedDict, Generic[TName, TConfig]):
-    """
-    A Zarr V3 metadata object.
-
-    This class is parametrized by two type parameters: `TName` and `TConfig`.
-
-    Attributes
-    ----------
-    name: TName
-        The name of the metadata object.
-    configuration: NotRequired[TConfig]
-        The configuration of the metadata object.
-    """
-
-    name: TName
-    configuration: NotRequired[TConfig]
-
-
-class AnyNamedConfig(NamedConfig[str, Mapping[str, object]]):
-    """
-    This class models any Zarr metadata object that takes the form of a
-    {"name": ..., "configuration": ...} dict, where the "configuration" key is not required.
-    """
-
-
-CodecLike = str | AnyNamedConfig
-"""A type modelling the permissible declarations for codecs"""
-
-
-class RegularChunkingConfig(TypedDict):
-    chunk_shape: tuple[int, ...]
-
-
-RegularChunking = NamedConfig[Literal["regular"], RegularChunkingConfig]
-
-
-class DefaultChunkKeyEncodingConfig(TypedDict):
-    separator: Literal[".", "/"]
-
-
-DefaultChunkKeyEncoding = NamedConfig[Literal["default"], DefaultChunkKeyEncodingConfig]
-
-
-class V2ChunkKeyEncodingConfig(TypedDict):
-    separator: Literal[".", "/"]
-
-
-V2ChunkKeyEncoding = NamedConfig[Literal["v2"], V2ChunkKeyEncodingConfig]
+type CodecLike = str | NamedConfigV3
 
 
 class NodeSpec(StrictBase):
@@ -181,8 +111,8 @@ def parse_dtype_v3(dtype: npt.DTypeLike | Mapping[str, object]) -> Mapping[str, 
 
 
 DTypeStr = Annotated[str, BeforeValidator(parse_dtype_v3)]
-DTypeLike = DTypeStr | AnyNamedConfig
-CodecTuple = Annotated[tuple[CodecLike, ...], BeforeValidator(ensure_multiple)]
+type DTypeLike = DTypeStr | NamedConfigV3
+CodecTuple = Annotated[tuple[str | NamedConfigV3, ...], BeforeValidator(ensure_multiple)]
 
 
 class ArraySpec(NodeSpec, Generic[TAttr]):
@@ -204,7 +134,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         A `NamedConfig` object defining the chunk shape of this array.
     chunk_key_encoding: NamedConfig
         A `NamedConfig` object defining the chunk_key_encoding for the array.
-    fill_value: FillValue
+    fill_value: JSONValue
         The fill value for this array.
     codecs: Sequence[NamedConfig]
         The sequence of codecs for this array.
@@ -219,13 +149,11 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     attributes: TAttr
     shape: tuple[int, ...]
     data_type: DTypeLike
-    chunk_grid: RegularChunking  # todo: validate this against shape
-    chunk_key_encoding: (
-        DefaultChunkKeyEncoding | V2ChunkKeyEncoding
-    )  # todo: validate this against shape
-    fill_value: FillValue  # todo: validate this against the data type
+    chunk_grid: MetadataV3  # todo: validate this against shape
+    chunk_key_encoding: MetadataV3  # todo: validate this against shape
+    fill_value: JSONValue  # syntax only; strict mode validates against the data type
     codecs: CodecTuple
-    storage_transformers: tuple[AnyNamedConfig, ...] = ()
+    storage_transformers: tuple[NamedConfigV3, ...] = ()
     dimension_names: tuple[str | None, ...] | None = None  # todo: validate this against shape
 
     @model_validator(mode="after")
@@ -260,11 +188,11 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         array: npt.NDArray[Any] | zarr.Array,
         *,
         attributes: Literal["auto"] | TAttr = "auto",
-        chunk_grid: Literal["auto"] | AnyNamedConfig = "auto",
-        chunk_key_encoding: Literal["auto"] | AnyNamedConfig = "auto",
-        fill_value: Literal["auto"] | FillValue = "auto",
+        chunk_grid: Literal["auto"] | NamedConfigV3 = "auto",
+        chunk_key_encoding: Literal["auto"] | NamedConfigV3 = "auto",
+        fill_value: Literal["auto"] | JSONValue = "auto",
         codecs: Literal["auto"] | Sequence[CodecLike] = "auto",
-        storage_transformers: Literal["auto"] | Sequence[AnyNamedConfig] = "auto",
+        storage_transformers: Literal["auto"] | Sequence[NamedConfigV3] = "auto",
         dimension_names: Literal["auto"] | Sequence[str | None] = "auto",
     ) -> Self:
         """
@@ -293,7 +221,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         else:
             chunk_grid_actual = chunk_grid
 
-        chunk_key_actual: AnyNamedConfig
+        chunk_key_actual: NamedConfigV3
         if chunk_key_encoding == "auto":
             chunk_key_actual = {"name": "default", "configuration": {"separator": "/"}}
         else:
@@ -309,7 +237,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             codecs_actual = auto_codecs(array)
         else:
             codecs_actual = tuple(codecs)
-        storage_transformers_actual: Sequence[AnyNamedConfig]
+        storage_transformers_actual: Sequence[NamedConfigV3]
         if storage_transformers == "auto":
             storage_transformers_actual = auto_storage_transformers(array)
         else:
@@ -1022,7 +950,7 @@ def auto_attributes(data: object) -> Mapping[str, object]:
     return {}
 
 
-def auto_chunk_grid(data: object) -> AnyNamedConfig:
+def auto_chunk_grid(data: object) -> NamedConfigV3:
     if hasattr(data, "chunk_shape"):
         return {"name": "regular", "configuration": {"chunk_shape": tuple(data.chunk_shape)}}
     elif hasattr(data, "shape"):
@@ -1030,13 +958,13 @@ def auto_chunk_grid(data: object) -> AnyNamedConfig:
     raise ValueError("Cannot get chunk grid from object without .shape or .chunk_shape attribute")
 
 
-def auto_chunk_key_encoding(data: object) -> AnyNamedConfig:
+def auto_chunk_key_encoding(data: object) -> NamedConfigV3:
     if hasattr(data, "metadata") and hasattr(data.metadata, "chunk_key_encoding"):
         return data.metadata.to_dict()["chunk_key_encoding"]
     return {"name": "default", "configuration": {"separator": "/"}}
 
 
-def auto_fill_value(data: object) -> FillValue:
+def auto_fill_value(data: object) -> JSONValue:
     if hasattr(data, "fill_value"):
         return data.fill_value
     elif hasattr(data, "dtype"):
@@ -1064,7 +992,7 @@ def auto_codecs(data: object) -> tuple[CodecLike, ...]:
     return ({"name": "bytes"},)
 
 
-def auto_storage_transformers(data: object) -> tuple[AnyNamedConfig, ...]:
+def auto_storage_transformers(data: object) -> tuple[NamedConfigV3, ...]:
     if hasattr(data, "storage_transformers"):
         return tuple(data.storage_transformers)
     return ()

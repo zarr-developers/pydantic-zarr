@@ -15,12 +15,7 @@ from pydantic_zarr.v3 import (
     AnyArraySpec,
     AnyGroupSpec,
     ArraySpec,
-    DefaultChunkKeyEncoding,
-    DefaultChunkKeyEncodingConfig,
     GroupSpec,
-    NamedConfig,
-    RegularChunking,
-    RegularChunkingConfig,
     auto_codecs,
     parse_dtype_v3,
 )
@@ -61,9 +56,9 @@ def test_serialize_deserialize() -> None:
         shape=[1000, 1000],
         dimension_names=["rows", "columns"],
         data_type="float64",
-        chunk_grid=NamedConfig(name="regular", configuration={"chunk_shape": [1000, 100]}),
-        chunk_key_encoding=NamedConfig(name="default", configuration={"separator": "/"}),
-        codecs=[NamedConfig(name="GZip", configuration={"level": 1})],
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": [1000, 100]}},
+        chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
+        codecs=[{"name": "GZip", "configuration": {"level": 1}}],
         fill_value="NaN",
         storage_transformers=[],
     )
@@ -81,12 +76,8 @@ def test_from_array() -> None:
         attributes={},
         shape=(10,),
         data_type="int64",
-        chunk_grid=RegularChunking(
-            name="regular", configuration=RegularChunkingConfig(chunk_shape=(10,))
-        ),
-        chunk_key_encoding=DefaultChunkKeyEncoding(
-            name="default", configuration=DefaultChunkKeyEncodingConfig(separator="/")
-        ),
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (10,)}},
+        chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
         fill_value=0,
         codecs=auto_codecs(array),
         storage_transformers=(),
@@ -308,9 +299,9 @@ def test_v2_chunk_key_encoding() -> None:
         shape=[1000, 1000],
         dimension_names=["rows", "columns"],
         data_type="float64",
-        chunk_grid=NamedConfig(name="regular", configuration={"chunk_shape": [1000, 100]}),
-        chunk_key_encoding=NamedConfig(name="v2", configuration={"separator": "."}),
-        codecs=[NamedConfig(name="GZip", configuration={"level": 1})],
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": [1000, 100]}},
+        chunk_key_encoding={"name": "v2", "configuration": {"separator": "."}},
+        codecs=[{"name": "GZip", "configuration": {"level": 1}}],
         fill_value="NaN",
         storage_transformers=[],
     )
@@ -411,3 +402,31 @@ def test_parse_dtype_v3_numpy(dtype: np.dtype, expected: str) -> None:
     causing ValueError to be raised for float64 and complex64 inputs.
     """
     assert parse_dtype_v3(dtype) == expected
+
+
+def test_loose_fill_value_accepts_hex_float() -> None:
+    """Loose ArraySpec.fill_value is JSONValue: hex-float strings are accepted (was rejected before)."""
+    spec = ArraySpec(
+        attributes={},
+        shape=(4,),
+        data_type="float64",
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (4,)}},
+        chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
+        fill_value="0x7ff8000000000000",
+        codecs=({"name": "bytes", "configuration": {"endian": "little"}},),
+    )
+    assert spec.fill_value == "0x7ff8000000000000"
+
+
+def test_loose_codecs_accept_any_envelope() -> None:
+    """Loose codecs accept any {name, configuration} without per-codec validation."""
+    spec = ArraySpec(
+        attributes={},
+        shape=(4,),
+        data_type="int32",
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (4,)}},
+        chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
+        fill_value=0,
+        codecs=({"name": "made_up_codec", "configuration": {"whatever": 1}},),
+    )
+    assert spec.codecs[0]["name"] == "made_up_codec"
