@@ -37,7 +37,7 @@ rather than `object`.
 | Strict semantics | dtype- and codec-aware — per-dtype `fill_value`, per-codec configs |
 | Class structure | Sibling classes over a behavior-only base (Approach B) |
 | Dtype coverage (strict) | Core numeric first: bool, int/uint 8–64, float16/32/64, complex64/128, raw `r<N>`. Defer string/datetime64/timedelta64/struct. |
-| Group strictness | `GroupSpec` stays a single class (no `StrictGroupSpec`) |
+| Group strictness | `StrictGroupSpec` added: members must recursively be `StrictArraySpec`/`StrictGroupSpec`. The group's own fields are unchanged. (Revised 2026-06-19: originally single-class.) |
 
 ## Why Approach B (siblings over a mixin), not a strict subclass
 
@@ -90,7 +90,10 @@ alias for the discriminated union of the per-dtype members.
 
 - `ArraySpec` keeps its name and **loose** semantics → backward compatible.
 - `StrictArraySpec` is new and opt-in.
-- `GroupSpec` keeps its single-class form; gains `to_json` (+ v2 `to_store_json`).
+- `GroupSpec` keeps its loose form and gains `to_json` (+ v2 `to_store_json`).
+- `StrictGroupSpec` is added (v3): same group fields as `GroupSpec`, but its `members` must
+  recursively be `StrictArraySpec` / `StrictGroupSpec`. The group document itself is otherwise
+  identical; strictness propagates only through membership.
 
 ### Strict spec = discriminated union over per-dtype models
 
@@ -232,5 +235,4 @@ migration guide rather than softened with shims.
 
 - `experimental.v2` / `experimental.v3` adoption.
 - Strict coverage for string / datetime64 / timedelta64 / struct dtypes.
-- A `StrictGroupSpec` enforcing strict array members within a group.
 - Adopting zarr-metadata's strict per-codec/chunk-grid configs as the loose field validators.

@@ -623,7 +623,130 @@ git commit -m "feat(v3): add StrictArraySpec coupling data_type with per-dtype f
 
 ---
 
-## Task 8: Field-drift guard test
+## Task 8: v3 — `StrictGroupSpec` (recursive strict members)
+
+Add a `StrictGroupSpec` whose `members` must recursively be `StrictArraySpec` or `StrictGroupSpec`. The group's own fields (`zarr_format`, `node_type`, `attributes`) are unchanged from `GroupSpec`. Strictness propagates only through membership. Verified mechanism: a self-referential `members: Mapping[str, StrictArraySpec | "StrictGroupSpec"] | None` validates nested trees and rejects a deep `int32`+`"NaN"` member.
+
+**Files:**
+- Modify: `src/pydantic_zarr/_strict_v3.py` (add `StrictGroupSpec`)
+- Modify: `src/pydantic_zarr/v3.py` (re-export `StrictGroupSpec`)
+- Test: `tests/test_pydantic_zarr/test_strict_v3.py`
+
+**Interfaces:**
+- Consumes: `StrictArraySpec` (Task 7); the loose `GroupSpec` for shared group-field shape.
+- Produces: `class StrictGroupSpec(NodeSpec)` with `attributes: Mapping[str, object] = {}` and `members: Annotated[Mapping[str, StrictArraySpec | "StrictGroupSpec"] | None, AfterValidator(ensure_key_no_path)] = {}`; re-exported from `v3.py`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `tests/test_pydantic_zarr/test_strict_v3.py`:
+
+```python
+def test_strict_group_accepts_nested_strict_members() -> None:
+    from pydantic import TypeAdapter
+    from pydantic_zarr.v3 import StrictGroupSpec
+    ta = TypeAdapter(StrictGroupSpec)
+    doc = {
+        "zarr_format": 3, "node_type": "group", "attributes": {},
+        "members": {
+            "sub": {
+                "zarr_format": 3, "node_type": "group", "attributes": {},
+                "members": {
+                    "arr": {
+                        "zarr_format": 3, "node_type": "array", "data_type": "int32",
+                        "shape": (4,),
+                        "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (4,)}},
+                        "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
+                        "fill_value": 0,
+                        "codecs": ({"name": "bytes", "configuration": {"endian": "little"}},),
+                    },
+                },
+            },
+        },
+    }
+    ta.validate_python(doc)
+
+
+def test_strict_group_rejects_nonstrict_member() -> None:
+    import pytest
+    from pydantic import TypeAdapter, ValidationError
+    from pydantic_zarr.v3 import StrictGroupSpec
+    ta = TypeAdapter(StrictGroupSpec)
+    doc = {
+        "zarr_format": 3, "node_type": "group", "attributes": {},
+        "members": {
+            "arr": {
+                "zarr_format": 3, "node_type": "array", "data_type": "int32",
+                "shape": (4,),
+                "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (4,)}},
+                "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
+                "fill_value": "NaN",  # invalid for int32 -> must propagate to a rejection
+                "codecs": ({"name": "bytes", "configuration": {"endian": "little"}},),
+            },
+        },
+    }
+    with pytest.raises(ValidationError):
+        ta.validate_python(doc)
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `/home/d-v-b/dev/pydantic-zarr/.venv/bin/python -m pytest tests/test_pydantic_zarr/test_strict_v3.py -k strict_group -v`
+Expected: FAIL with ImportError (`StrictGroupSpec` not defined).
+
+- [ ] **Step 3: Add `StrictGroupSpec` to `_strict_v3.py`**
+
+Append to `src/pydantic_zarr/_strict_v3.py`:
+
+```python
+from collections.abc import Mapping
+from typing import Annotated, Union
+
+from pydantic import AfterValidator
+
+from pydantic_zarr.core import ensure_key_no_path
+from pydantic_zarr.v3 import NodeSpec
+
+
+class StrictGroupSpec(NodeSpec):
+    """A Zarr v3 group whose members are recursively strict (StrictArraySpec/StrictGroupSpec)."""
+
+    node_type: Literal["group"] = "group"
+    attributes: Mapping[str, object] = {}
+    members: Annotated[
+        Mapping[str, Union[StrictArraySpec, "StrictGroupSpec"]] | None,
+        AfterValidator(ensure_key_no_path),
+    ] = {}
+
+
+StrictGroupSpec.model_rebuild()
+```
+
+(`Literal` is already imported in this module from Task 7; add it to the import if not. `NodeSpec` carries `zarr_format: Literal[3] = 3`.)
+
+- [ ] **Step 4: Re-export from v3**
+
+In `src/pydantic_zarr/v3.py`, extend the bottom-of-file strict import:
+
+```python
+from pydantic_zarr._strict_v3 import StrictArraySpec as StrictArraySpec  # noqa: E402
+from pydantic_zarr._strict_v3 import StrictGroupSpec as StrictGroupSpec  # noqa: E402
+```
+
+- [ ] **Step 5: Run strict tests + mypy**
+
+Run: `/home/d-v-b/dev/pydantic-zarr/.venv/bin/python -m pytest tests/test_pydantic_zarr/test_strict_v3.py -v` then `pre-commit run mypy --files src/pydantic_zarr/_strict_v3.py src/pydantic_zarr/v3.py`
+Expected: all PASS; mypy clean.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/pydantic_zarr/_strict_v3.py src/pydantic_zarr/v3.py tests/test_pydantic_zarr/test_strict_v3.py
+git commit -m "feat(v3): add StrictGroupSpec with recursive strict members"
+```
+
+---
+
+## Task 9: Field-drift guard test
 
 **Files:**
 - Test: `tests/test_pydantic_zarr/test_strict_v3.py`
@@ -658,7 +781,7 @@ git commit -m "test(v3): guard loose/strict shared-field drift"
 
 ---
 
-## Task 9: Docs + migration guide + release note
+## Task 10: Docs + migration guide + release note
 
 **Files:**
 - Modify: `docs/usage_zarr_v3.md`, `docs/usage_zarr_v2.md`, `docs/release-notes.md`
@@ -693,7 +816,7 @@ This release adopts the `zarr-metadata` package. Removed symbols and replacement
 | `DimensionSeparator` | `zarr_metadata.ArrayDimensionSeparatorV2` |
 | `CodecDict` (as a public type) | `zarr_metadata.CodecMetadataV2` |
 
-New: `StrictArraySpec`, `ArraySpec.to_json()`, v2 `ArraySpec.to_store_json()`.
+New: `StrictArraySpec`, `StrictGroupSpec`, `ArraySpec.to_json()`, v2 `ArraySpec.to_store_json()`.
 ```
 
 - [ ] **Step 3: Add a release note**
@@ -714,7 +837,7 @@ git commit -m "docs: strict/loose usage, serialization, and migration guide"
 
 ---
 
-## Task 10: Full suite + lint gate
+## Task 11: Full suite + lint gate
 
 **Files:** none (verification only)
 
@@ -744,6 +867,6 @@ git commit -m "chore: lint and type-check fixups for zarr-metadata integration"
 
 ## Self-Review notes
 
-- **Spec coverage:** dependency (T1), v3 type replacement (T2), v3 to_json (T3), v2 type replacement (T4), v2 to_json/to_store_json (T5), base extraction (T6), strict union incl. raw hybrid (T7), drift guard (T8), docs+migration (T9), full gate (T10). All spec sections mapped.
+- **Spec coverage:** dependency (T1), v3 type replacement (T2), v3 to_json (T3), v2 type replacement (T4), v2 to_json/to_store_json (T5), base extraction (T6), strict union incl. raw hybrid (T7), StrictGroupSpec recursive members (T8), drift guard (T9), docs+migration (T10), full gate (T11). All spec sections mapped.
 - **Pre-verified mechanics (empirically, during planning):** (1) loose json dumps validate against `ArrayMetadataV3`; (2) sibling-over-base classes type-check clean under `mypy --strict` + pydantic plugin (no field narrowing); (3) the hybrid discriminated+raw union routes all dtypes incl. `r8` and rejects mismatched fills; (4) a base classmethod constructing subclass-only fields returns the concrete subclass under mypy strict with no override error.
 - **Type-consistency check:** `to_json`/`to_store_json` signatures, `_BaseArraySpec`, `StrictArraySpec`, `_StrictCodec`, and the per-dtype class names are used consistently across T3/T5/T6/T7/T8. v2 store-return is `Mapping[str, ...]` (TypedDict can't express `.zarray` keys) — noted in T5 Step 3.
