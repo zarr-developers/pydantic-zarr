@@ -12,7 +12,6 @@ from typing import (
     Literal,
     NotRequired,
     Self,
-    TypeAlias,
     TypeVar,
     overload,
 )
@@ -47,7 +46,7 @@ if TYPE_CHECKING:
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
 
-BaseMember: TypeAlias = Mapping[str, "ArraySpec | GroupSpec"]
+type BaseMember = Mapping[str, "ArraySpec | GroupSpec"]
 
 NodeType = Literal["group", "array"]
 
@@ -105,6 +104,13 @@ class DefaultChunkKeyEncodingConfig(TypedDict):
 
 
 DefaultChunkKeyEncoding = NamedConfig[Literal["default"], DefaultChunkKeyEncodingConfig]
+
+
+class V2ChunkKeyEncodingConfig(TypedDict):
+    separator: Literal[".", "/"]
+
+
+V2ChunkKeyEncoding = NamedConfig[Literal["v2"], V2ChunkKeyEncodingConfig]
 
 
 class AllowedExtraField(TypedDict):
@@ -176,9 +182,9 @@ def parse_dtype_v3(dtype: npt.DTypeLike | Mapping[str, object]) -> Mapping[str, 
                 return "float16"
             case np.dtypes.Float32DType():
                 return "float32"
-            case np.dtypes.Float16DType():
+            case np.dtypes.Float64DType():
                 return "float64"
-            case np.dtypes.Float32DType():
+            case np.dtypes.Complex64DType():
                 return "complex64"
             case np.dtypes.Complex128DType():
                 return "complex128"
@@ -226,7 +232,9 @@ class ArraySpec(NodeSpec):
     shape: tuple[int, ...]
     data_type: DTypeLike
     chunk_grid: RegularChunking  # todo: validate this against shape
-    chunk_key_encoding: DefaultChunkKeyEncoding  # todo: validate this against shape
+    chunk_key_encoding: (
+        DefaultChunkKeyEncoding | V2ChunkKeyEncoding
+    )  # todo: validate this against shape
     fill_value: FillValue  # todo: validate this against the data type
     codecs: CodecTuple
     storage_transformers: tuple[AnyNamedConfig, ...] = ()

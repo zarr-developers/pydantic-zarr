@@ -19,12 +19,13 @@ from .conftest import DTYPE_EXAMPLES_V2, ZARR_PYTHON_VERSION, DTypeExample
 if TYPE_CHECKING:
     from typing import Literal
 
-import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from numcodecs.abc import Codec
+
+from typing import TypedDict
 
 import numpy as np
 import numpy.typing as npt
@@ -45,11 +46,6 @@ from pydantic_zarr.v2 import (
     to_flat,
     to_zarr,
 )
-
-if sys.version_info < (3, 12):
-    from typing_extensions import TypedDict
-else:
-    from typing import TypedDict
 
 try:
     import numcodecs
