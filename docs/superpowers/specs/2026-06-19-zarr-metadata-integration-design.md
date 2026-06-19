@@ -103,6 +103,12 @@ alias for the discriminated union of the per-dtype members.
   base's parameter: `_StrictBase(_BaseArraySpec[Mapping[str, object]])`. Verified to type-check
   clean under `mypy --strict` (binding the param to its bound and adding a default is legal, not
   a narrowing error). Loose `ArraySpec[TAttr]` / `GroupSpec[TAttr, TItem]` keep their generics.
+  - *Re-examined 2026-06-19 and confirmed:* making strict generic over `TAttr` was rejected on
+    mechanical evidence — mypy rejects an unparametrized `Union` of generic members
+    (`Missing type arguments for generic type`), which would force `StrictArraySpec[TAttr]` to be
+    a generic union alias parametrized across all 15 members, pushing that complexity onto every
+    caller. Users who need typed attributes use the loose `ArraySpec[MyAttrs]`; strict is a
+    validation gate where `attributes: Mapping[str, object]` is sufficient.
 
 ### Strict↔loose relationship: discriminated union, not inheritance (considered & rejected alternatives)
 
