@@ -12,7 +12,6 @@ from typing import (
     Final,
     Literal,
     Self,
-    TypeAlias,
     cast,
     get_args,
     overload,
@@ -39,7 +38,7 @@ if TYPE_CHECKING:
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
 
-BaseMember: TypeAlias = Mapping[str, "ArraySpec | GroupSpec"]
+type BaseMember = Mapping[str, "ArraySpec | GroupSpec"]
 
 DtypeStr = Annotated[str, BeforeValidator(parse_dtype_v2)]
 
@@ -400,7 +399,7 @@ class ArraySpec(StrictBase):
         exclude: IncEx = None,
     ) -> bool:
         """
-        Compare am `ArraySpec` to another `ArraySpec` or a `zarr.Array`, parameterized over the
+        Compare an `ArraySpec` to another `ArraySpec` or a `zarr.Array`, parameterized over the
         fields to exclude or include in the comparison. Models are first converted to `dict` via the
         `model_dump` method of `pydantic.BaseModel`, then compared with the `==` operator.
 
@@ -1153,7 +1152,7 @@ def from_flat_group(data: Mapping[str, ArraySpec | BaseGroupSpec]) -> GroupSpec:
     # populates member_groups
     submember_by_parent_name: dict[str, dict[str, ArraySpec | BaseGroupSpec]] = {}
     # copy the input to ensure that mutations are contained inside this function
-    data_copy = dict(data).copy()
+    data_copy = dict(data)
     # Get the root node
     try:
         # The root node is a GroupSpec with the key ""

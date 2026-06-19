@@ -9,7 +9,7 @@ from pydantic_zarr.v3 import GroupSpec as GroupSpecV3
 
 @pytest.mark.parametrize("data", ["/", "///", "a/b/", "a/b/vc"])
 def test_parse_str_no_path(data: str) -> None:
-    with pytest.raises(ValueError, match='Strings containing "/" are invalid.'):
+    with pytest.raises(ValueError, match=r'Strings containing "/" are invalid\.'):
         ensure_member_name(data)
 
 
