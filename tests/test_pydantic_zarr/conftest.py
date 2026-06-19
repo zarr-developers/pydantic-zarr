@@ -6,7 +6,6 @@ from importlib.metadata import version
 from importlib.util import find_spec
 
 from packaging.version import Version
-from zarr.dtype import Struct
 
 ZARR_AVAILABLE = find_spec("zarr") is not None
 
@@ -74,6 +73,7 @@ else:
         Int32,
         NullTerminatedBytes,
         RawBytes,
+        Struct,
         Structured,
         TimeDelta64,
         data_type_registry,
