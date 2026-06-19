@@ -21,7 +21,7 @@ import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
 from pydantic import AfterValidator, BaseModel, BeforeValidator, model_validator
-from zarr_metadata import JSONValue, MetadataV3, NamedConfigV3
+from zarr_metadata import ArrayMetadataV3, GroupMetadataV3, JSONValue, MetadataV3, NamedConfigV3
 
 from pydantic_zarr.core import (
     IncEx,
@@ -181,6 +181,10 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         if d.get("dimension_names") is None:
             d.pop("dimension_names", None)
         return d
+
+    def to_json(self) -> ArrayMetadataV3:
+        """Serialize to a spec-defined Zarr v3 array metadata document (`zarr.json`)."""
+        return cast("ArrayMetadataV3", self.model_dump(mode="json"))
 
     @classmethod
     def from_array(
@@ -452,6 +456,10 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
     node_type: Literal["group"] = "group"
     attributes: TAttr
     members: Annotated[Mapping[str, TItem] | None, AfterValidator(ensure_key_no_path)] = {}
+
+    def to_json(self) -> GroupMetadataV3:
+        """Serialize to a spec-defined Zarr v3 group metadata document (`zarr.json`)."""
+        return cast("GroupMetadataV3", self.model_dump(mode="json", exclude={"members"}))
 
     @classmethod
     def from_flat(cls, data: Mapping[str, AnyArraySpec | AnyGroupSpec]) -> Self:

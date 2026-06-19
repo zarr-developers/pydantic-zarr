@@ -430,3 +430,16 @@ def test_loose_codecs_accept_any_envelope() -> None:
         codecs=({"name": "made_up_codec", "configuration": {"whatever": 1}},),
     )
     assert spec.codecs[0]["name"] == "made_up_codec"
+
+
+def test_v3_to_json_roundtrips_through_zarr_metadata() -> None:
+    from pydantic import TypeAdapter
+    from zarr_metadata import ArrayMetadataV3
+
+    spec = ArraySpec.from_array(np.zeros((4, 4), dtype="int32"), attributes={"x": 1})
+    doc = spec.to_json()
+    # to_json output must validate as a spec-defined ArrayMetadataV3
+    TypeAdapter(ArrayMetadataV3).validate_python(doc)
+    assert doc["zarr_format"] == 3
+    assert doc["node_type"] == "array"
+    assert "dimension_names" not in doc  # omitted when None
