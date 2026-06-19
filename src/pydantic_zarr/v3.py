@@ -115,9 +115,13 @@ type DTypeLike = DTypeStr | NamedConfigV3
 CodecTuple = Annotated[tuple[str | NamedConfigV3, ...], BeforeValidator(ensure_multiple)]
 
 
-class ArraySpec(NodeSpec, Generic[TAttr]):
+class _BaseArraySpec(NodeSpec, Generic[TAttr]):
     """
-    A model of a Zarr Version 3 Array.
+    Behavior-only base class shared by all Zarr v3 array spec variants.
+
+    Holds all shared fields and methods. The variant fields (data_type,
+    chunk_grid, chunk_key_encoding, fill_value, codecs) are declared by
+    concrete subclasses (e.g. ArraySpec).
 
     Attributes
     ----------
@@ -128,16 +132,6 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         User-defined metadata associated with this array.
     shape: Sequence[int]
         The shape of this array.
-    data_type: str
-        The data type of this array.
-    chunk_grid: MetadataV3
-        A `MetadataV3` value (a name string or `{name, configuration}` mapping) defining the chunk shape of this array.
-    chunk_key_encoding: MetadataV3
-        A `MetadataV3` value (a name string or `{name, configuration}` mapping) defining the chunk_key_encoding for the array.
-    fill_value: JSONValue
-        The fill value for this array.
-    codecs: Sequence[MetadataV3]
-        The sequence of `MetadataV3` values (name strings or `{name, configuration}` mappings) for this array.
     storage_transformers: Optional[Sequence[MetadataV3]]
         An optional sequence of `MetadataV3` values (name strings or `{name, configuration}` mappings) that define the storage
         transformers for this array.
@@ -148,11 +142,6 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     node_type: Literal["array"] = "array"
     attributes: TAttr
     shape: tuple[int, ...]
-    data_type: DTypeLike
-    chunk_grid: MetadataV3  # todo: validate this against shape
-    chunk_key_encoding: MetadataV3  # todo: validate this against shape
-    fill_value: JSONValue  # syntax only; strict mode validates against the data type
-    codecs: CodecTuple
     storage_transformers: tuple[NamedConfigV3, ...] = ()
     dimension_names: tuple[str | None, ...] | None = None  # todo: validate this against shape
 
@@ -253,16 +242,16 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         else:
             dimension_names_actual = dimension_names
 
-        return cls(
+        return cls(  # type: ignore[call-arg]
             shape=array.shape,
+            attributes=attributes_actual,
+            storage_transformers=tuple(storage_transformers_actual),
+            dimension_names=dimension_names_actual,
             data_type=str(array.dtype),
             chunk_grid=chunk_grid_actual,
-            attributes=attributes_actual,
             chunk_key_encoding=chunk_key_actual,
             fill_value=fill_value_actual,
             codecs=tuple(codecs_actual),
-            storage_transformers=tuple(storage_transformers_actual),
-            dimension_names=dimension_names_actual,
         )
 
     @classmethod
@@ -308,16 +297,16 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             )
         else:
             meta_json = tuplify_json(array.metadata.to_dict())
-        return cls(
+        return cls(  # type: ignore[call-arg]
             attributes=meta_json["attributes"],
             shape=array.shape,
+            storage_transformers=meta_json["storage_transformers"],
+            dimension_names=meta_json.get("dimension_names", None),
             data_type=meta_json["data_type"],
             chunk_grid=meta_json["chunk_grid"],
             chunk_key_encoding=meta_json["chunk_key_encoding"],
             fill_value=meta_json["fill_value"],
             codecs=meta_json["codecs"],
-            storage_transformers=meta_json["storage_transformers"],
-            dimension_names=meta_json.get("dimension_names", None),
         )
 
     def to_zarr(
@@ -379,7 +368,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
     def like(
         self,
-        other: ArraySpec | zarr.Array,
+        other: _BaseArraySpec[Any] | zarr.Array,
         *,
         include: IncEx = None,
         exclude: IncEx = None,
@@ -428,13 +417,23 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         True
         """
 
-        other_parsed: ArraySpec
+        other_parsed: _BaseArraySpec[Any]
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Array):
             other_parsed = ArraySpec.from_zarr(other)
         else:
             other_parsed = other  # type: ignore[assignment]
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
+
+
+class ArraySpec(_BaseArraySpec[TAttr], Generic[TAttr]):
+    """Loose Zarr v3 array spec: codecs/dtype validated as syntax only."""
+
+    data_type: DTypeLike
+    chunk_grid: MetadataV3  # todo: validate this against shape
+    chunk_key_encoding: MetadataV3  # todo: validate this against shape
+    fill_value: JSONValue  # syntax only; strict mode validates against the data type
+    codecs: CodecTuple
 
 
 class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
