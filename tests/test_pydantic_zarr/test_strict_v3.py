@@ -71,6 +71,7 @@ def test_strict_group_accepts_nested_strict_members() -> None:
                         },
                         "fill_value": 0,
                         "codecs": ({"name": "bytes", "configuration": {"endian": "little"}},),
+                        "attributes": {},
                     },
                 },
             },
@@ -100,6 +101,7 @@ def test_strict_group_rejects_nonstrict_member() -> None:
                 "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
                 "fill_value": "NaN",  # invalid for int32 -> must propagate to a rejection
                 "codecs": ({"name": "bytes", "configuration": {"endian": "little"}},),
+                "attributes": {},
             },
         },
     }

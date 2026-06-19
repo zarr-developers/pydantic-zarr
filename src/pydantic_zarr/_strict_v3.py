@@ -66,7 +66,6 @@ _StrictChunkKeyEncoding = DefaultChunkKeyEncodingMetadata | V2ChunkKeyEncodingMe
 
 
 class _StrictBase(_BaseArraySpec[TAttr], Generic[TAttr]):
-    attributes: Mapping[str, object] = {}  # type: ignore[assignment]
     chunk_grid: RegularChunkGridMetadata
     chunk_key_encoding: _StrictChunkKeyEncoding
     codecs: tuple[_StrictCodec, ...]
