@@ -16,9 +16,11 @@ from pydantic_zarr.experimental.v3 import (
     DefaultChunkKeyEncoding,
     DefaultChunkKeyEncodingConfig,
     GroupSpec,
+    NamedConfig,
     RegularChunking,
     RegularChunkingConfig,
     auto_codecs,
+    parse_dtype_v3,
 )
 
 from ..conftest import DTYPE_EXAMPLES_V3, ZARR_AVAILABLE, DTypeExample
@@ -143,7 +145,7 @@ def test_arrayspec_no_empty_codecs(arrayspec: ArraySpec) -> None:
     """
 
     with pytest.raises(
-        ValidationError, match="Value error, Invalid length. Expected 1 or more, got 0."
+        ValidationError, match=r"Value error, Invalid length\. Expected 1 or more, got 0\."
     ):
         ArraySpec(**(arrayspec.model_dump() | {"codecs": ()}))  # type: ignore[arg-type]
 
@@ -394,7 +396,7 @@ def test_arrayspec_with_methods_validation(arrayspec) -> None:
         arrayspec.with_dimension_names(("x", "y"))  # 2 names for 1D array
 
     # Test that validation fails with empty codecs
-    with pytest.raises(ValidationError, match="Invalid length. Expected 1 or more, got 0"):
+    with pytest.raises(ValidationError, match=r"Invalid length\. Expected 1 or more, got 0"):
         arrayspec.with_codecs(())
 
 
@@ -476,3 +478,141 @@ def test_consolidated_metadata_to_from_zarr() -> None:
     store2: dict[str, object] = {}
     gspec.to_zarr(store2, path="")
     assert json.loads(store["zarr.json"].to_bytes()) == json.loads(store2["zarr.json"].to_bytes())
+
+
+def _make_array_spec_exp() -> ArraySpec:
+    """Return a minimal ArraySpec (experimental) with dimension_names=None."""
+    return ArraySpec(
+        attributes={},
+        shape=(4,),
+        data_type="uint8",
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (4,)}},
+        chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
+        codecs=({"name": "bytes"},),
+        fill_value=0,
+    )
+
+
+def test_exp_arrayspec_like_spec_vs_spec() -> None:
+    """
+    Regression test: experimental ArraySpec.like(other_spec) must not raise NameError.
+    """
+    spec = _make_array_spec_exp()
+    assert spec.like(spec)
+
+
+def test_exp_arrayspec_like_spec_vs_zarr_array() -> None:
+    """
+    Regression test: experimental ArraySpec.like(zarr_array) must not raise NameError.
+    Previously zarr was only imported under TYPE_CHECKING so isinstance check crashed.
+    """
+    zarr = pytest.importorskip("zarr")
+    arr = zarr.create_array(store={}, shape=(4,), dtype="uint8", zarr_format=3)
+    spec = ArraySpec.from_zarr(arr)
+    assert spec.like(arr)
+
+
+def test_exp_from_zarr_array() -> None:
+    """
+    Regression test: experimental module-level from_zarr on a zarr array must not raise NameError.
+    """
+    zarr = pytest.importorskip("zarr")
+    from pydantic_zarr.experimental.v3 import from_zarr
+
+    arr = zarr.create_array(store={}, shape=(4,), dtype="uint8", zarr_format=3)
+    result = from_zarr(arr)
+    assert isinstance(result, ArraySpec)
+
+
+def test_exp_from_zarr_group() -> None:
+    """
+    Regression test: experimental module-level from_zarr on a zarr group must not raise NameError.
+    """
+    zarr = pytest.importorskip("zarr")
+    from pydantic_zarr.experimental.v3 import from_zarr
+
+    grp = zarr.open_group(store={}, mode="w", zarr_format=3)
+    result = from_zarr(grp)
+    assert isinstance(result, GroupSpec)
+
+
+def test_exp_model_dump_exclude_dimension_names() -> None:
+    """
+    Regression test: experimental model_dump(exclude={'dimension_names'}) must not raise KeyError.
+    """
+    spec = _make_array_spec_exp()
+    d = spec.model_dump(exclude={"dimension_names"})
+    assert "dimension_names" not in d
+
+
+@pytest.mark.parametrize(
+    ("dtype", "expected"),
+    [
+        (np.dtype("int8"), "int8"),
+        (np.dtype("int16"), "int16"),
+        (np.dtype("int32"), "int32"),
+        (np.dtype("int64"), "int64"),
+        (np.dtype("uint8"), "uint8"),
+        (np.dtype("uint16"), "uint16"),
+        (np.dtype("uint32"), "uint32"),
+        (np.dtype("uint64"), "uint64"),
+        (np.dtype("float16"), "float16"),
+        (np.dtype("float32"), "float32"),
+        (np.dtype("float64"), "float64"),
+        (np.dtype("complex64"), "complex64"),
+        (np.dtype("complex128"), "complex128"),
+    ],
+    ids=str,
+)
+def test_parse_dtype_v3_numpy(dtype: np.dtype, expected: str) -> None:
+    """
+    Regression test: parse_dtype_v3 must correctly handle all supported numpy dtypes.
+    Previously, the float64 and complex64 match arms were copy-paste errors (using
+    Float16DType and Float32DType respectively), making those dtypes unreachable and
+    causing ValueError to be raised for float64 and complex64 inputs.
+    """
+    assert parse_dtype_v3(dtype) == expected
+
+
+def test_v2_chunk_key_encoding() -> None:
+    # Simple smoke test to make sure v2 chunk key encoding is allowed
+    ArraySpec(
+        attributes={},
+        shape=[1000, 1000],
+        dimension_names=["rows", "columns"],
+        data_type="float64",
+        chunk_grid=NamedConfig(name="regular", configuration={"chunk_shape": [1000, 100]}),
+        chunk_key_encoding=NamedConfig(name="v2", configuration={"separator": "."}),
+        codecs=[NamedConfig(name="GZip", configuration={"level": 1})],
+        fill_value="NaN",
+        storage_transformers=[],
+    )
+
+
+@pytest.mark.parametrize("separator", [".", "/"])
+def test_v2_chunk_key_encoding_round_trip(separator: str) -> None:
+    """
+    Test that a zarr v3 array with a v2 chunk key encoding can be round-tripped through
+    ArraySpec: from_zarr then to_zarr should yield structurally identical metadata.
+    """
+    zarr = pytest.importorskip("zarr")
+    store: dict[str, object] = {}
+    arr = zarr.create_array(
+        store=store,
+        shape=(10,),
+        dtype="float64",
+        zarr_format=3,
+        chunk_key_encoding={"name": "v2", "configuration": {"separator": separator}},
+    )
+
+    spec = ArraySpec.from_zarr(arr)
+    assert spec.chunk_key_encoding == {
+        "name": "v2",
+        "configuration": {"separator": separator},
+    }
+
+    store_out: dict[str, object] = {}
+    spec.to_zarr(store_out, path="")
+    assert json.loads(store["zarr.json"].to_bytes()) == json.loads(
+        store_out["zarr.json"].to_bytes()
+    )
