@@ -144,7 +144,7 @@ def test_array_spec(
     # this is a sign that nullability is being misused in zarr-python
     # the correct approach would be to use an empty list to express "no filters".
     if len(array.filters):
-        assert spec.filters == [f.get_config() for f in array.filters]
+        assert spec.filters == tuple(f.get_config() for f in array.filters)
     else:
         assert spec.filters is None
 
@@ -168,7 +168,7 @@ def test_array_spec(
         assert spec.compressor is None
 
     if len(array2.filters):
-        assert spec.filters == [f.get_config() for f in array2.filters]
+        assert spec.filters == tuple(f.get_config() for f in array2.filters)
     else:
         assert spec.filters is None
 
@@ -665,13 +665,25 @@ def test_arrayspec_from_zarr(dtype_example: DTypeExample) -> None:
         store[".zarray"].to_bytes(), object_hook=tuplify_json
     )
     if observed["filters"] is not None:
-        observed["filters"] = list(observed["filters"])
-    # this covers the case of the structured data type, which would otherwise be deserialized as a
-    # tuple of tuples, but is stored on the arrayspec as a list of tuples.
-    if isinstance(observed["dtype"], tuple):
-        observed["dtype"] = list(observed["dtype"])
+        observed["filters"] = tuple(observed["filters"])
+    # DataTypeMetadataV2 for structured dtypes is tuple[...]; tuplify_json already
+    # converts the nested lists from JSON into tuples, so no further conversion needed.
 
     assert arr_spec.model_dump() == observed
+
+
+def test_v2_loose_fill_value_accepts_hex_float() -> None:
+    spec = ArraySpec(
+        attributes={},
+        shape=(4,),
+        chunks=(4,),
+        dtype="<f8",
+        fill_value="0x7ff8000000000000",
+        order="C",
+        filters=None,
+        compressor=None,
+    )
+    assert spec.fill_value == "0x7ff8000000000000"
 
 
 def test_mix_v3_v2_fails() -> None:
