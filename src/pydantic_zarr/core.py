@@ -5,7 +5,6 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Literal,
-    TypeAlias,
     TypeVar,
     overload,
 )
@@ -18,9 +17,9 @@ if TYPE_CHECKING:
     import zarr
     from zarr.storage._common import StoreLike
 
-IncEx: TypeAlias = set[int] | set[str] | dict[int, Any] | dict[str, Any] | None
+type IncEx = set[int] | set[str] | dict[int, Any] | dict[str, Any] | None
 
-AccessMode: TypeAlias = Literal["w", "w+", "r", "a"]
+type AccessMode = Literal["w", "w+", "r", "a"]
 
 T = TypeVar("T")
 
@@ -101,7 +100,8 @@ def ensure_member_name(data: Any) -> str:
 
 def ensure_key_no_path(data: Any) -> Any:
     if isinstance(data, Mapping):
-        [ensure_member_name(key) for key in data]
+        for key in data:
+            ensure_member_name(key)
     return data
 
 

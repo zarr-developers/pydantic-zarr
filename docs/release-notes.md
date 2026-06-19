@@ -2,6 +2,13 @@
 
 <!-- towncrier release notes start -->
 
+## pydantic-zarr 0.10.0 (2026-04-16)
+
+### Features
+
+- The minimum supported Python is now 3.12 and the minimum supported NumPy is now 2.0. ([#145](https://github.com/zarr-developers/pydantic-zarr/issues/145))
+- Use `type ...` instead of `...: TypeAlias` to declare type aliases. ([#145](https://github.com/zarr-developers/pydantic-zarr/issues/145))
+
 ## pydantic-zarr 0.9.2 (2026-03-18)
 
 ### Features

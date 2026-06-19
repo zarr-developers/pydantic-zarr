@@ -12,7 +12,6 @@ from typing import (
     Literal,
     NotRequired,
     Self,
-    TypeAlias,
     TypeVar,
     overload,
 )
@@ -47,7 +46,7 @@ if TYPE_CHECKING:
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
 
-BaseMember: TypeAlias = Mapping[str, "ArraySpec | GroupSpec"]
+type BaseMember = Mapping[str, "ArraySpec | GroupSpec"]
 
 NodeType = Literal["group", "array"]
 
@@ -105,6 +104,13 @@ class DefaultChunkKeyEncodingConfig(TypedDict):
 
 
 DefaultChunkKeyEncoding = NamedConfig[Literal["default"], DefaultChunkKeyEncodingConfig]
+
+
+class V2ChunkKeyEncodingConfig(TypedDict):
+    separator: Literal[".", "/"]
+
+
+V2ChunkKeyEncoding = NamedConfig[Literal["v2"], V2ChunkKeyEncodingConfig]
 
 
 class AllowedExtraField(TypedDict):
@@ -176,9 +182,9 @@ def parse_dtype_v3(dtype: npt.DTypeLike | Mapping[str, object]) -> Mapping[str, 
                 return "float16"
             case np.dtypes.Float32DType():
                 return "float32"
-            case np.dtypes.Float16DType():
+            case np.dtypes.Float64DType():
                 return "float64"
-            case np.dtypes.Float32DType():
+            case np.dtypes.Complex64DType():
                 return "complex64"
             case np.dtypes.Complex128DType():
                 return "complex128"
@@ -213,7 +219,7 @@ class ArraySpec(NodeSpec):
     fill_value: FillValue
         The fill value for this array.
     codecs: Sequence[NamedConfig]
-        The sequence of codices for this array.
+        The sequence of codecs for this array.
     storage_transformers: Optional[Sequence[NamedConfig]]
         An optional sequence of `NamedConfig` objects that define the storage
         transformers for this array.
@@ -226,7 +232,9 @@ class ArraySpec(NodeSpec):
     shape: tuple[int, ...]
     data_type: DTypeLike
     chunk_grid: RegularChunking  # todo: validate this against shape
-    chunk_key_encoding: DefaultChunkKeyEncoding  # todo: validate this against shape
+    chunk_key_encoding: (
+        DefaultChunkKeyEncoding | V2ChunkKeyEncoding
+    )  # todo: validate this against shape
     fill_value: FillValue  # todo: validate this against the data type
     codecs: CodecTuple
     storage_transformers: tuple[AnyNamedConfig, ...] = ()
@@ -449,7 +457,7 @@ class ArraySpec(NodeSpec):
         exclude: IncEx = None,
     ) -> bool:
         """
-        Compare am `ArraySpec` to another `ArraySpec` or a `zarr.Array`, parameterized over the
+        Compare an `ArraySpec` to another `ArraySpec` or a `zarr.Array`, parameterized over the
         fields to exclude or include in the comparison. Models are first converted to `dict` via the
         `model_dump` method of `pydantic.BaseModel`, then compared with the `==` operator.
 
@@ -1180,7 +1188,7 @@ def from_flat_group(
     # populates member_groups
     submember_by_parent_name: dict[str, dict[str, ArraySpec | BaseGroupSpec]] = {}
     # copy the input to ensure that mutations are contained inside this function
-    data_copy = dict(data).copy()
+    data_copy = dict(data)
     # Get the root node
     try:
         # The root node is a GroupSpec with the key ""
@@ -1256,9 +1264,9 @@ def auto_fill_value(data: object) -> FillValue:
             return False
         elif kind in ["i", "u"]:
             return 0
-        elif kind in ["f"]:
+        elif kind == "f":
             return "NaN"
-        elif kind in ["c"]:
+        elif kind == "c":
             return ("NaN", "NaN")
         else:
             raise ValueError(f"Cannot determine default fill value for data type {kind}")

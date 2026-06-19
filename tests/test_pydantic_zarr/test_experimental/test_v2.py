@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from collections.abc import Mapping  # noqa: TC003
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
@@ -23,6 +22,8 @@ from ..conftest import DTYPE_EXAMPLES_V2, ZARR_AVAILABLE, ZARR_PYTHON_VERSION, D
 
 if TYPE_CHECKING:
     from numcodecs.abc import Codec
+
+from typing import TypedDict
 
 import numpy as np
 import numpy.typing as npt
@@ -49,11 +50,6 @@ from pydantic_zarr.experimental.v2 import (
     to_flat,
     to_zarr,
 )
-
-if sys.version_info < (3, 12):
-    from typing_extensions import TypedDict
-else:
-    from typing import TypedDict
 
 try:
     import numcodecs
@@ -434,7 +430,7 @@ def test_validation() -> None:
 
 @pytest.mark.parametrize("data", ["/", "a/b/c"])
 def test_member_name(data: str) -> None:
-    with pytest.raises(ValidationError, match='Strings containing "/" are invalid.'):
+    with pytest.raises(ValidationError, match=r'Strings containing "/" are invalid\.'):
         GroupSpec(attributes={}, members={data: GroupSpec(attributes={}, members={})})
 
 
