@@ -38,6 +38,7 @@ rather than `object`.
 | Class structure | Sibling classes over a behavior-only base (Approach B) |
 | Dtype coverage (strict) | Core numeric first: bool, int/uint 8–64, float16/32/64, complex64/128, raw `r<N>`. Defer string/datetime64/timedelta64/struct. |
 | Group strictness | `StrictGroupSpec` added: members must recursively be `StrictArraySpec`/`StrictGroupSpec`. The group's own fields are unchanged. (Revised 2026-06-19: originally single-class.) |
+| Strict generics | **Strict specs are NON-generic** (loose specs stay generic). `StrictArraySpec` members and `StrictGroupSpec` fix `attributes: Mapping[str, object] = {}` and members to the strict union — no `TAttr`/`TItem` params. Loose `ArraySpec[TAttr]` / `GroupSpec[TAttr, TItem]` keep their generics. Rationale: strict specs are validation targets where attribute typing adds friction without value; loose specs remain the ergonomic, typed build-and-manipulate classes. (Decided 2026-06-19.) |
 
 ## Why Approach B (siblings over a mixin), not a strict subclass
 
@@ -94,6 +95,14 @@ alias for the discriminated union of the per-dtype members.
 - `StrictGroupSpec` is added (v3): same group fields as `GroupSpec`, but its `members` must
   recursively be `StrictArraySpec` / `StrictGroupSpec`. The group document itself is otherwise
   identical; strictness propagates only through membership.
+- **Strict specs are non-generic.** The strict per-dtype array members and `StrictGroupSpec` do
+  not take `TAttr`/`TItem` parameters: `attributes: Mapping[str, object] = {}` (default `{}`,
+  matching the existing loose `GroupSpec.members = {}` convention — pydantic copies the default
+  per instance, so there is no shared-mutable-default bug), and strict group members are fixed
+  to the `StrictArraySpec | StrictGroupSpec` union. The strict array base binds the generic
+  base's parameter: `_StrictBase(_BaseArraySpec[Mapping[str, object]])`. Verified to type-check
+  clean under `mypy --strict` (binding the param to its bound and adding a default is legal, not
+  a narrowing error). Loose `ArraySpec[TAttr]` / `GroupSpec[TAttr, TItem]` keep their generics.
 
 ### Strict spec = discriminated union over per-dtype models
 
