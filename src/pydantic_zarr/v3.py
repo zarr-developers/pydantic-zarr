@@ -175,6 +175,16 @@ class _BaseArraySpec(NodeSpec, Generic[TAttr]):
         """Serialize to a spec-defined Zarr v3 array metadata document (`zarr.json`)."""
         return cast("ArrayMetadataV3", self.model_dump(mode="json"))
 
+
+class ArraySpec(_BaseArraySpec[TAttr], Generic[TAttr]):
+    """Loose Zarr v3 array spec: codecs/dtype validated as syntax only."""
+
+    data_type: DTypeLike
+    chunk_grid: MetadataV3  # todo: validate this against shape
+    chunk_key_encoding: MetadataV3  # todo: validate this against shape
+    fill_value: JSONValue  # syntax only; strict mode validates against the data type
+    codecs: CodecTuple
+
     @classmethod
     def from_array(
         cls,
@@ -242,7 +252,7 @@ class _BaseArraySpec(NodeSpec, Generic[TAttr]):
         else:
             dimension_names_actual = dimension_names
 
-        return cls(  # type: ignore[call-arg]
+        return cls(
             shape=array.shape,
             attributes=attributes_actual,
             storage_transformers=tuple(storage_transformers_actual),
@@ -297,7 +307,7 @@ class _BaseArraySpec(NodeSpec, Generic[TAttr]):
             )
         else:
             meta_json = tuplify_json(array.metadata.to_dict())
-        return cls(  # type: ignore[call-arg]
+        return cls(
             attributes=meta_json["attributes"],
             shape=array.shape,
             storage_transformers=meta_json["storage_transformers"],
@@ -424,16 +434,6 @@ class _BaseArraySpec(NodeSpec, Generic[TAttr]):
             other_parsed = other  # type: ignore[assignment]
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
-
-
-class ArraySpec(_BaseArraySpec[TAttr], Generic[TAttr]):
-    """Loose Zarr v3 array spec: codecs/dtype validated as syntax only."""
-
-    data_type: DTypeLike
-    chunk_grid: MetadataV3  # todo: validate this against shape
-    chunk_key_encoding: MetadataV3  # todo: validate this against shape
-    fill_value: JSONValue  # syntax only; strict mode validates against the data type
-    codecs: CodecTuple
 
 
 class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
