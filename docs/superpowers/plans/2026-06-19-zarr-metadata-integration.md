@@ -334,7 +334,7 @@ git commit -m "refactor(v2): replace hand-rolled metadata types with zarr-metada
 
 **Interfaces:**
 - Consumes: loose v2 `ArraySpec`/`GroupSpec` (Task 4).
-- Produces: `ArraySpec.to_json(self) -> ArrayMetadataV2`; `ArraySpec.to_store_json(self) -> StoreArrayV2`; `GroupSpec.to_json(self) -> GroupMetadataV2`; `GroupSpec.to_store_json(self) -> StoreGroupV2`. New local TypedDicts `StoreArrayV2 = {".zarray": ZArrayMetadata, ".zattrs": ZAttrsMetadata}` and `StoreGroupV2 = {".zgroup": ZGroupMetadata, ".zattrs": ZAttrsMetadata}`.
+- Produces: `ArraySpec.to_json(self) -> ArrayMetadataV2`; `ArraySpec.to_store_json(self) -> Mapping[str, ZArrayMetadata | ZAttrsMetadata]` (keys `.zarray`, `.zattrs`); `GroupSpec.to_json(self) -> GroupMetadataV2`; `GroupSpec.to_store_json(self) -> Mapping[str, ZGroupMetadata | ZAttrsMetadata]` (keys `.zgroup`, `.zattrs`). The store-form return is a `Mapping`, **not** a TypedDict — `.zarray`/`.zattrs` are not valid TypedDict key identifiers. Do not define a `StoreArrayV2`/`StoreGroupV2` class.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -363,19 +363,9 @@ def test_v2_to_store_json_splits_zarray_zattrs() -> None:
 Run: `pytest tests/test_pydantic_zarr/test_v2.py::test_v2_to_store_json_splits_zarray_zattrs -v`
 Expected: FAIL with `AttributeError: ... 'to_store_json'`.
 
-- [ ] **Step 3: Add imports + store TypedDicts**
+- [ ] **Step 3: Add imports**
 
-Add imports: `from zarr_metadata import ArrayMetadataV2, GroupMetadataV2, ZArrayMetadata, ZAttrsMetadata, ZGroupMetadata`. Near the top types add:
-
-```python
-class StoreArrayV2(TypedDict):
-    """The two on-disk documents for a v2 array node."""
-    zarray: ZArrayMetadata
-    zattrs: ZAttrsMetadata
-```
-
-> NOTE: TypedDict keys can't be `.zarray` (not identifiers). Define the return type as `Mapping[str, ZArrayMetadata | ZAttrsMetadata]` instead and document the `.zarray`/`.zattrs` keys; drop the `StoreArrayV2` class. Use:
-> `def to_store_json(self) -> Mapping[str, ZArrayMetadata | ZAttrsMetadata]:`
+Add imports: `from zarr_metadata import ArrayMetadataV2, GroupMetadataV2, ZArrayMetadata, ZAttrsMetadata, ZGroupMetadata`. No new TypedDict classes are defined — the store-form methods return a plain `Mapping[str, ...]` (see Step 4), because `.zarray`/`.zattrs` are not valid TypedDict key identifiers. `Mapping` is already imported at the top of `v2.py`.
 
 - [ ] **Step 4: Add the methods to `ArraySpec`**
 
