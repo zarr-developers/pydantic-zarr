@@ -3,6 +3,8 @@
 **Date:** 2026-06-19
 **Status:** Approved (brainstorm), pending implementation plan
 **Scope:** Stable `pydantic_zarr.v2` / `pydantic_zarr.v3` only (not `experimental.*`)
+**Release posture:** Significant release — **breaking changes are permitted**. Back-compat
+shims are not required; breaks are documented in release notes / a migration guide instead.
 
 ## Goal
 
@@ -138,8 +140,9 @@ StrictArraySpec = Annotated[
 | `data_type` | `str \| AnyNamedConfig` (+ `parse_dtype_v3`) | `MetadataV3` (keep validator) |
 | `fill_value` | narrow local union | `JSONValue` (**widened** — syntax only) |
 
-The local `NamedConfig` is currently a public export; keep `NamedConfig = NamedConfigV3` as a
-re-export alias with a deprecation note to avoid breaking importers.
+The local `NamedConfig` is currently a public export. It is **removed** (breaking): consumers
+import `NamedConfigV3` from `zarr-metadata` instead. The break is documented in the migration
+guide. No deprecated re-export alias is retained.
 
 ### v2 loose `ArraySpec`
 
@@ -180,13 +183,21 @@ validates *in*, not what comes *out*.
 
 ## Compatibility
 
-- `ArraySpec` / `GroupSpec` keep their names and loose semantics → existing user code unaffected.
+This is a significant release; **breaking changes are permitted** and documented in a
+migration guide rather than softened with shims.
+
+- `ArraySpec` / `GroupSpec` keep their names and **loose** semantics → ordinary
+  construction/validation of existing user code is unaffected.
 - Internal-type swaps are structurally equivalent to current `model_dump` output → serialized
-  dicts unchanged (snapshot-tested).
+  dicts unchanged (snapshot-tested, as a deliberate guard — not an absolute constraint).
 - Loose `fill_value` **widens** to `JSONValue` (additive; previously-rejected hex-float strings
   now accepted in loose mode).
 - New public surface: `StrictArraySpec` (v2 + v3), `to_json`, `to_store_json`.
-- `NamedConfig` retained as a deprecated alias of `NamedConfigV3`.
+- **Breaking:** the local `NamedConfig` export is **removed** (use `NamedConfigV3` from
+  `zarr-metadata`). Other hand-rolled type exports that are replaced wholesale
+  (e.g. `MemoryOrder`, `DimensionSeparator`, `CodecDict`, `RegularChunking`,
+  `DefaultChunkKeyEncoding`, `V2ChunkKeyEncoding`) are likewise removed in favor of their
+  zarr-metadata equivalents; any that are easy to alias may be, but no alias is required.
 
 ## Tests
 
@@ -207,7 +218,8 @@ validates *in*, not what comes *out*.
 
 - Update `docs/usage_zarr_v2.md` / `docs/usage_zarr_v3.md` with a strict-vs-loose section and
   `to_json` / `to_store_json` usage.
-- Add a release note.
+- Add a release note **and a migration guide** covering removed exports (`NamedConfig` →
+  `NamedConfigV3`, etc.) and the new strict/loose distinction.
 
 ## Out of scope (possible follow-ups)
 
