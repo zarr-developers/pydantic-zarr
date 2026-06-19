@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     import numpy.typing as npt
-    import zarr  # noqa: TC004
+    import zarr
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
 
@@ -250,8 +250,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         # TODO: use exclude_if when we require a newer version of pydantic
         d = super().model_dump(**kwargs)
 
-        if d["dimension_names"] is None:
-            d.pop("dimension_names")
+        if d.get("dimension_names") is None:
+            d.pop("dimension_names", None)
         return d
 
     @classmethod
@@ -497,10 +497,10 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         """
 
         other_parsed: ArraySpec
-        if isinstance(other, zarr.Array):
+        if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Array):
             other_parsed = ArraySpec.from_zarr(other)
         else:
-            other_parsed = other
+            other_parsed = other  # type: ignore[assignment]
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
@@ -833,6 +833,8 @@ def from_zarr(element: zarr.Array | zarr.Group, *, depth: int = -1) -> AnyArrayS
     An instance of GroupSpec or ArraySpec that represents the
     structure of the zarr group or array.
     """
+
+    import zarr
 
     if isinstance(element, zarr.Array):
         return ArraySpec.from_zarr(element)

@@ -316,6 +316,74 @@ def test_v2_chunk_key_encoding() -> None:
     )
 
 
+def _make_array_spec() -> AnyArraySpec:
+    """Return a minimal ArraySpec with dimension_names=None for regression tests."""
+    return ArraySpec(
+        attributes={},
+        shape=(4,),
+        data_type="uint8",
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (4,)}},
+        chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
+        codecs=({"name": "bytes"},),
+        fill_value=0,
+    )
+
+
+def test_arrayspec_like_spec_vs_spec() -> None:
+    """
+    Regression test: ArraySpec.like(other_spec) must not raise NameError.
+    Previously crashed because `zarr` was only imported under TYPE_CHECKING.
+    """
+    spec = _make_array_spec()
+    assert spec.like(spec)
+
+
+def test_arrayspec_like_spec_vs_zarr_array() -> None:
+    """
+    Regression test: ArraySpec.like(zarr_array) must not raise NameError.
+    Previously zarr was only imported under TYPE_CHECKING so isinstance check crashed.
+    """
+    zarr = pytest.importorskip("zarr")
+    arr = zarr.create_array(store={}, shape=(4,), dtype="uint8", zarr_format=3)
+    spec = ArraySpec.from_zarr(arr)
+    assert spec.like(arr)
+
+
+def test_from_zarr_array() -> None:
+    """
+    Regression test: module-level from_zarr on a zarr array must not raise NameError.
+    Previously the function body referenced `zarr.Array` without a runtime import.
+    """
+    zarr = pytest.importorskip("zarr")
+    from pydantic_zarr.v3 import from_zarr
+
+    arr = zarr.create_array(store={}, shape=(4,), dtype="uint8", zarr_format=3)
+    result = from_zarr(arr)
+    assert isinstance(result, ArraySpec)
+
+
+def test_from_zarr_group() -> None:
+    """
+    Regression test: module-level from_zarr on a zarr group must not raise NameError.
+    """
+    zarr = pytest.importorskip("zarr")
+    from pydantic_zarr.v3 import from_zarr
+
+    grp = zarr.open_group(store={}, mode="w", zarr_format=3)
+    result = from_zarr(grp)
+    assert isinstance(result, GroupSpec)
+
+
+def test_model_dump_exclude_dimension_names() -> None:
+    """
+    Regression test: model_dump(exclude={'dimension_names'}) must not raise KeyError.
+    Previously the override did d["dimension_names"] unconditionally.
+    """
+    spec = _make_array_spec()
+    d = spec.model_dump(exclude={"dimension_names"})
+    assert "dimension_names" not in d
+
+
 @pytest.mark.parametrize(
     ("dtype", "expected"),
     [

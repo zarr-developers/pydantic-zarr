@@ -480,6 +480,71 @@ def test_consolidated_metadata_to_from_zarr() -> None:
     assert json.loads(store["zarr.json"].to_bytes()) == json.loads(store2["zarr.json"].to_bytes())
 
 
+def _make_array_spec_exp() -> ArraySpec:
+    """Return a minimal ArraySpec (experimental) with dimension_names=None."""
+    return ArraySpec(
+        attributes={},
+        shape=(4,),
+        data_type="uint8",
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (4,)}},
+        chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
+        codecs=({"name": "bytes"},),
+        fill_value=0,
+    )
+
+
+def test_exp_arrayspec_like_spec_vs_spec() -> None:
+    """
+    Regression test: experimental ArraySpec.like(other_spec) must not raise NameError.
+    """
+    spec = _make_array_spec_exp()
+    assert spec.like(spec)
+
+
+def test_exp_arrayspec_like_spec_vs_zarr_array() -> None:
+    """
+    Regression test: experimental ArraySpec.like(zarr_array) must not raise NameError.
+    Previously zarr was only imported under TYPE_CHECKING so isinstance check crashed.
+    """
+    zarr = pytest.importorskip("zarr")
+    arr = zarr.create_array(store={}, shape=(4,), dtype="uint8", zarr_format=3)
+    spec = ArraySpec.from_zarr(arr)
+    assert spec.like(arr)
+
+
+def test_exp_from_zarr_array() -> None:
+    """
+    Regression test: experimental module-level from_zarr on a zarr array must not raise NameError.
+    """
+    zarr = pytest.importorskip("zarr")
+    from pydantic_zarr.experimental.v3 import from_zarr
+
+    arr = zarr.create_array(store={}, shape=(4,), dtype="uint8", zarr_format=3)
+    result = from_zarr(arr)
+    assert isinstance(result, ArraySpec)
+
+
+def test_exp_from_zarr_group() -> None:
+    """
+    Regression test: experimental module-level from_zarr on a zarr group must not raise NameError.
+    """
+    zarr = pytest.importorskip("zarr")
+    from pydantic_zarr.experimental.v3 import from_zarr
+
+    grp = zarr.open_group(store={}, mode="w", zarr_format=3)
+    result = from_zarr(grp)
+    assert isinstance(result, GroupSpec)
+
+
+def test_exp_model_dump_exclude_dimension_names() -> None:
+    """
+    Regression test: experimental model_dump(exclude={'dimension_names'}) must not raise KeyError.
+    """
+    spec = _make_array_spec_exp()
+    d = spec.model_dump(exclude={"dimension_names"})
+    assert "dimension_names" not in d
+
+
 @pytest.mark.parametrize(
     ("dtype", "expected"),
     [
