@@ -1066,3 +1066,6 @@ def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, Array
     result[root_path] = model_copy
     # sort by increasing key length
     return dict(sorted(result.items(), key=lambda v: len(v[0])))
+
+
+from pydantic_zarr._strict_v3 import StrictArraySpec as StrictArraySpec  # noqa: E402
