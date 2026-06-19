@@ -80,6 +80,32 @@ def test_strict_group_accepts_nested_strict_members() -> None:
     ta.validate_python(doc)
 
 
+def test_strict_attributes_defaults_and_nongeneric() -> None:
+    from pydantic import TypeAdapter
+
+    from pydantic_zarr.v3 import StrictArraySpec, StrictGroupSpec
+
+    # array doc omitting attributes validates (default {})
+    ta = TypeAdapter(StrictArraySpec)
+    doc = {
+        "zarr_format": 3,
+        "node_type": "array",
+        "data_type": "int32",
+        "shape": (4,),
+        "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (4,)}},
+        "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
+        "fill_value": 0,
+        "codecs": ({"name": "bytes", "configuration": {"endian": "little"}},),
+    }  # no "attributes" key
+    result = ta.validate_python(doc)
+    assert result.attributes == {}
+    # group doc omitting attributes validates too
+    g = TypeAdapter(StrictGroupSpec).validate_python(
+        {"zarr_format": 3, "node_type": "group", "members": {}}
+    )
+    assert g.attributes == {}
+
+
 def test_strict_group_rejects_nonstrict_member() -> None:
     import pytest
     from pydantic import TypeAdapter, ValidationError

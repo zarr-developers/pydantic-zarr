@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Mapping  # noqa: TC003
-from typing import Annotated, Generic, Literal, Union
+from collections.abc import Mapping
+from typing import Annotated, Literal, Union
 
 from pydantic import AfterValidator, Field
 from zarr_metadata import (
@@ -49,7 +49,7 @@ from zarr_metadata import (
 )
 
 from pydantic_zarr.core import ensure_key_no_path
-from pydantic_zarr.v3 import NodeSpec, TAttr, _BaseArraySpec
+from pydantic_zarr.v3 import NodeSpec, _BaseArraySpec
 
 _StrictCodec = (
     BloscCodecMetadata
@@ -65,83 +65,84 @@ _StrictCodec = (
 _StrictChunkKeyEncoding = DefaultChunkKeyEncodingMetadata | V2ChunkKeyEncodingMetadata
 
 
-class _StrictBase(_BaseArraySpec[TAttr], Generic[TAttr]):
+class _StrictBase(_BaseArraySpec[Mapping[str, object]]):
+    attributes: Mapping[str, object] = {}
     chunk_grid: RegularChunkGridMetadata
     chunk_key_encoding: _StrictChunkKeyEncoding
     codecs: tuple[_StrictCodec, ...]
 
 
-class _BoolArraySpec(_StrictBase[TAttr], Generic[TAttr]):
+class _BoolArraySpec(_StrictBase):
     data_type: BoolDataTypeName
     fill_value: BoolFillValue
 
 
-class _Int8ArraySpec(_StrictBase[TAttr], Generic[TAttr]):
+class _Int8ArraySpec(_StrictBase):
     data_type: Int8DataTypeName
     fill_value: Int8FillValue
 
 
-class _Int16ArraySpec(_StrictBase[TAttr], Generic[TAttr]):
+class _Int16ArraySpec(_StrictBase):
     data_type: Int16DataTypeName
     fill_value: Int16FillValue
 
 
-class _Int32ArraySpec(_StrictBase[TAttr], Generic[TAttr]):
+class _Int32ArraySpec(_StrictBase):
     data_type: Int32DataTypeName
     fill_value: Int32FillValue
 
 
-class _Int64ArraySpec(_StrictBase[TAttr], Generic[TAttr]):
+class _Int64ArraySpec(_StrictBase):
     data_type: Int64DataTypeName
     fill_value: Int64FillValue
 
 
-class _Uint8ArraySpec(_StrictBase[TAttr], Generic[TAttr]):
+class _Uint8ArraySpec(_StrictBase):
     data_type: Uint8DataTypeName
     fill_value: Uint8FillValue
 
 
-class _Uint16ArraySpec(_StrictBase[TAttr], Generic[TAttr]):
+class _Uint16ArraySpec(_StrictBase):
     data_type: Uint16DataTypeName
     fill_value: Uint16FillValue
 
 
-class _Uint32ArraySpec(_StrictBase[TAttr], Generic[TAttr]):
+class _Uint32ArraySpec(_StrictBase):
     data_type: Uint32DataTypeName
     fill_value: Uint32FillValue
 
 
-class _Uint64ArraySpec(_StrictBase[TAttr], Generic[TAttr]):
+class _Uint64ArraySpec(_StrictBase):
     data_type: Uint64DataTypeName
     fill_value: Uint64FillValue
 
 
-class _Float16ArraySpec(_StrictBase[TAttr], Generic[TAttr]):
+class _Float16ArraySpec(_StrictBase):
     data_type: Float16DataTypeName
     fill_value: Float16FillValue
 
 
-class _Float32ArraySpec(_StrictBase[TAttr], Generic[TAttr]):
+class _Float32ArraySpec(_StrictBase):
     data_type: Float32DataTypeName
     fill_value: Float32FillValue
 
 
-class _Float64ArraySpec(_StrictBase[TAttr], Generic[TAttr]):
+class _Float64ArraySpec(_StrictBase):
     data_type: Float64DataTypeName
     fill_value: Float64FillValue
 
 
-class _Complex64ArraySpec(_StrictBase[TAttr], Generic[TAttr]):
+class _Complex64ArraySpec(_StrictBase):
     data_type: Complex64DataTypeName
     fill_value: Complex64FillValue
 
 
-class _Complex128ArraySpec(_StrictBase[TAttr], Generic[TAttr]):
+class _Complex128ArraySpec(_StrictBase):
     data_type: Complex128DataTypeName
     fill_value: Complex128FillValue
 
 
-class _RawArraySpec(_StrictBase[TAttr], Generic[TAttr]):
+class _RawArraySpec(_StrictBase):
     data_type: RawBytesDataTypeName
     fill_value: RawBytesFillValue
 
