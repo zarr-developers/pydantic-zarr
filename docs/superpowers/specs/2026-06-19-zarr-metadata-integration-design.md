@@ -121,8 +121,15 @@ StrictArraySpec = Annotated[
 - Per-dtype member classes are private (underscore-prefixed). `StrictArraySpec` is the public
   type alias.
 - Verified: the discriminated union routes by `data_type`, accepts `float64`+`"NaN"`/hex,
-  rejects `int64`+`"NaN"`. The bare union also works (pydantic smart-union), but
-  `Field(discriminator="data_type")` is used for sharper error messages.
+  rejects `int64`+`"NaN"`.
+- **Raw dtype caveat:** the `raw` (`r<N>`) dtype name is an open-ended `NewType(str)`, not a
+  `Literal`, so it cannot be a member of a pydantic `Field(discriminator="data_type")` union
+  (which requires every member's discriminator to be a `Literal`). The strict spec is therefore
+  a **hybrid**: a discriminated union over the `Literal`-named dtypes (bool / int / uint /
+  float / complex), unioned (plain smart-union) with the `_RawArraySpec` member:
+  `StrictArraySpec = _DiscriminatedLiteralDtypes | _RawArraySpec`. Verified to route all
+  members (incl. `r8`) and still reject mismatched fills. Sharp discriminator errors are
+  retained for the common literal dtypes.
 - Strict codec union is composed locally from zarr-metadata per-codec types
   (`BloscCodecMetadata | GzipCodecMetadata | BytesCodecMetadata | ...`); zarr-metadata does
   not ship a pre-built "any known codec" union.
