@@ -98,7 +98,8 @@ def ensure_member_name(data: Any) -> str:
 
 def ensure_key_no_path(data: Any) -> Any:
     if isinstance(data, Mapping):
-        [ensure_member_name(key) for key in data]
+        for key in data:
+            ensure_member_name(key)
     return data
 
 

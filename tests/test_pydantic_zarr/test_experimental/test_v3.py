@@ -145,7 +145,7 @@ def test_arrayspec_no_empty_codecs(arrayspec: ArraySpec) -> None:
     """
 
     with pytest.raises(
-        ValidationError, match="Value error, Invalid length. Expected 1 or more, got 0."
+        ValidationError, match=r"Value error, Invalid length\. Expected 1 or more, got 0\."
     ):
         ArraySpec(**(arrayspec.model_dump() | {"codecs": ()}))  # type: ignore[arg-type]
 
@@ -396,7 +396,7 @@ def test_arrayspec_with_methods_validation(arrayspec) -> None:
         arrayspec.with_dimension_names(("x", "y"))  # 2 names for 1D array
 
     # Test that validation fails with empty codecs
-    with pytest.raises(ValidationError, match="Invalid length. Expected 1 or more, got 0"):
+    with pytest.raises(ValidationError, match=r"Invalid length\. Expected 1 or more, got 0"):
         arrayspec.with_codecs(())
 
 

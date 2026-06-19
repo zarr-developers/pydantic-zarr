@@ -219,7 +219,7 @@ class ArraySpec(NodeSpec):
     fill_value: FillValue
         The fill value for this array.
     codecs: Sequence[NamedConfig]
-        The sequence of codices for this array.
+        The sequence of codecs for this array.
     storage_transformers: Optional[Sequence[NamedConfig]]
         An optional sequence of `NamedConfig` objects that define the storage
         transformers for this array.
@@ -457,7 +457,7 @@ class ArraySpec(NodeSpec):
         exclude: IncEx = None,
     ) -> bool:
         """
-        Compare am `ArraySpec` to another `ArraySpec` or a `zarr.Array`, parameterized over the
+        Compare an `ArraySpec` to another `ArraySpec` or a `zarr.Array`, parameterized over the
         fields to exclude or include in the comparison. Models are first converted to `dict` via the
         `model_dump` method of `pydantic.BaseModel`, then compared with the `==` operator.
 
@@ -1186,7 +1186,7 @@ def from_flat_group(
     # populates member_groups
     submember_by_parent_name: dict[str, dict[str, ArraySpec | BaseGroupSpec]] = {}
     # copy the input to ensure that mutations are contained inside this function
-    data_copy = dict(data).copy()
+    data_copy = dict(data)
     # Get the root node
     try:
         # The root node is a GroupSpec with the key ""
@@ -1262,9 +1262,9 @@ def auto_fill_value(data: object) -> FillValue:
             return False
         elif kind in ["i", "u"]:
             return 0
-        elif kind in ["f"]:
+        elif kind == "f":
             return "NaN"
-        elif kind in ["c"]:
+        elif kind == "c":
             return ("NaN", "NaN")
         else:
             raise ValueError(f"Cannot determine default fill value for data type {kind}")
