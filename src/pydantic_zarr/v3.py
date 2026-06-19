@@ -62,8 +62,17 @@ IntFillValue = int
 FloatFillValue = Literal["Infinity", "-Infinity", "NaN"] | float
 ComplexFillValue = tuple[FloatFillValue, FloatFillValue]
 RawFillValue = tuple[int, ...]
+StructFillValue = Mapping[str, object]
 
-FillValue = BoolFillValue | IntFillValue | FloatFillValue | ComplexFillValue | RawFillValue | str
+FillValue = (
+    BoolFillValue
+    | IntFillValue
+    | FloatFillValue
+    | ComplexFillValue
+    | RawFillValue
+    | str
+    | StructFillValue
+)
 
 TName = TypeVar("TName", bound=str)
 TConfig = TypeVar("TConfig", bound=Mapping[str, object])

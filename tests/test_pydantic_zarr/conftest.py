@@ -6,6 +6,7 @@ from importlib.metadata import version
 from importlib.util import find_spec
 
 from packaging.version import Version
+from zarr.dtype import Struct
 
 ZARR_AVAILABLE = find_spec("zarr") is not None
 
@@ -85,7 +86,7 @@ else:
             dt = dtype_cls(unit="s", scale_factor=10)
         elif dtype_cls in (FixedLengthUTF32, RawBytes, NullTerminatedBytes):
             dt = dtype_cls(length=10)
-        elif dtype_cls == Structured:
+        elif dtype_cls in (Structured, Struct):
             dt = dtype_cls(fields=[("a", Int32()), ("b", Float16())])
         else:
             dt = dtype_cls()
