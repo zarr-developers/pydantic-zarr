@@ -130,16 +130,16 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         The shape of this array.
     data_type: str
         The data type of this array.
-    chunk_grid: NamedConfig
-        A `NamedConfig` object defining the chunk shape of this array.
-    chunk_key_encoding: NamedConfig
-        A `NamedConfig` object defining the chunk_key_encoding for the array.
+    chunk_grid: MetadataV3
+        A `MetadataV3` value (a name string or `{name, configuration}` mapping) defining the chunk shape of this array.
+    chunk_key_encoding: MetadataV3
+        A `MetadataV3` value (a name string or `{name, configuration}` mapping) defining the chunk_key_encoding for the array.
     fill_value: JSONValue
         The fill value for this array.
-    codecs: Sequence[NamedConfig]
-        The sequence of codecs for this array.
-    storage_transformers: Optional[Sequence[NamedConfig]]
-        An optional sequence of `NamedConfig` objects that define the storage
+    codecs: Sequence[MetadataV3]
+        The sequence of `MetadataV3` values (name strings or `{name, configuration}` mappings) for this array.
+    storage_transformers: Optional[Sequence[MetadataV3]]
+        An optional sequence of `MetadataV3` values (name strings or `{name, configuration}` mappings) that define the storage
         transformers for this array.
     dimension_names: Optional[Sequence[str]]
         An optional sequence of strings that gives names to each axis of the array.
