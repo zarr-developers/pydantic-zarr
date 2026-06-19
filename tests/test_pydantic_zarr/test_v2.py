@@ -715,3 +715,24 @@ def test_v2_to_store_json_splits_zarray_zattrs() -> None:
     assert set(store) == {".zarray", ".zattrs"}
     assert "attributes" not in store[".zarray"]
     assert store[".zattrs"] == {"x": 1}
+
+
+def test_v2_group_to_json_excludes_members() -> None:
+    from pydantic import TypeAdapter
+    from zarr_metadata import GroupMetadataV2
+
+    spec = GroupSpec(attributes={"foo": "bar"}, members={})
+    doc = spec.to_json()
+    TypeAdapter(GroupMetadataV2).validate_python(doc)
+    assert "members" not in doc
+    assert doc["attributes"] == {"foo": "bar"}
+    assert doc["zarr_format"] == 2
+
+
+def test_v2_group_to_store_json_splits_zgroup_zattrs() -> None:
+    spec = GroupSpec(attributes={"foo": "bar"}, members={})
+    store = spec.to_store_json()
+    assert set(store) == {".zgroup", ".zattrs"}
+    assert store[".zattrs"] == {"foo": "bar"}
+    assert "attributes" not in store[".zgroup"]
+    assert "members" not in store[".zgroup"]
