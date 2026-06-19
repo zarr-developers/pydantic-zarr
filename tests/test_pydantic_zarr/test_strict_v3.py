@@ -133,3 +133,14 @@ def test_strict_group_rejects_nonstrict_member() -> None:
     }
     with pytest.raises(ValidationError):
         ta.validate_python(doc)
+
+
+def test_loose_and_strict_share_base_fields() -> None:
+    """Loose and strict specs must share identical non-codec/non-dtype fields."""
+    from pydantic_zarr._strict_v3 import _Float64ArraySpec
+    from pydantic_zarr.v3 import ArraySpec, _BaseArraySpec
+
+    shared = set(_BaseArraySpec.model_fields)
+    variant = {"data_type", "chunk_grid", "chunk_key_encoding", "fill_value", "codecs"}
+    assert set(ArraySpec.model_fields) - variant == shared
+    assert set(_Float64ArraySpec.model_fields) - variant == shared
