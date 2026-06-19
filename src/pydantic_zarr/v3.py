@@ -1069,3 +1069,4 @@ def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, Array
 
 
 from pydantic_zarr._strict_v3 import StrictArraySpec as StrictArraySpec  # noqa: E402
+from pydantic_zarr._strict_v3 import StrictGroupSpec as StrictGroupSpec  # noqa: E402

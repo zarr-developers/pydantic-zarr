@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Annotated, Generic, Union
+from collections.abc import Mapping  # noqa: TC003
+from typing import Annotated, Generic, Literal, Union
 
-from pydantic import Field
+from pydantic import AfterValidator, Field
 from zarr_metadata import (
     BloscCodecMetadata,
     BoolDataTypeName,
@@ -47,7 +48,8 @@ from zarr_metadata import (
     ZstdCodecMetadata,
 )
 
-from pydantic_zarr.v3 import TAttr, _BaseArraySpec
+from pydantic_zarr.core import ensure_key_no_path
+from pydantic_zarr.v3 import NodeSpec, TAttr, _BaseArraySpec
 
 _StrictCodec = (
     BloscCodecMetadata
@@ -64,6 +66,7 @@ _StrictChunkKeyEncoding = DefaultChunkKeyEncodingMetadata | V2ChunkKeyEncodingMe
 
 
 class _StrictBase(_BaseArraySpec[TAttr], Generic[TAttr]):
+    attributes: Mapping[str, object] = {}  # type: ignore[assignment]
     chunk_grid: RegularChunkGridMetadata
     chunk_key_encoding: _StrictChunkKeyEncoding
     codecs: tuple[_StrictCodec, ...]
@@ -166,3 +169,17 @@ _LiteralDtypeSpecs = Annotated[
 
 StrictArraySpec = Union[_LiteralDtypeSpecs, _RawArraySpec]
 """Strict Zarr v3 array spec: data_type and fill_value are coupled, codecs validated per type."""
+
+
+class StrictGroupSpec(NodeSpec):
+    """A Zarr v3 group whose members are recursively strict (StrictArraySpec/StrictGroupSpec)."""
+
+    node_type: Literal["group"] = "group"
+    attributes: Mapping[str, object] = {}
+    members: Annotated[
+        Mapping[str, Union[StrictArraySpec, StrictGroupSpec]] | None,
+        AfterValidator(ensure_key_no_path),
+    ] = {}
+
+
+StrictGroupSpec.model_rebuild()
