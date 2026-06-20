@@ -865,6 +865,109 @@ git commit -m "chore: lint and type-check fixups for zarr-metadata integration"
 
 ---
 
+## Task 12: Rework strict to the "both" design (constructible class + public per-dtype + union)
+
+**Added 2026-06-20.** The current strict implementation (Tasks 7–8) made `StrictArraySpec` the discriminated *union* (not constructible) over *private* per-dtype classes. The maintainer chose a "both" design: a single **constructible** `StrictArraySpec` class (runtime coupling) AND **public** per-dtype precise classes, with the union renamed `AnyStrictArraySpec`. This task transforms the existing module.
+
+**Files:**
+- Modify: `src/pydantic_zarr/_strict_v3.py`
+- Modify: `src/pydantic_zarr/v3.py` (re-exports)
+- Modify: `tests/test_pydantic_zarr/test_strict_v3.py`
+
+**Interfaces:**
+- Produces: `StrictArraySpec` (single constructible class), public per-dtype `BoolArraySpec`/`Int8ArraySpec`/…/`Float64ArraySpec`/…/`RawArraySpec`, `AnyStrictArraySpec` (discriminated-union alias), updated `StrictGroupSpec`.
+
+- [ ] **Step 1: Make the 15 per-dtype classes public**
+
+In `_strict_v3.py`, rename each `_<Dtype>ArraySpec` → `<Dtype>ArraySpec` (drop leading underscore) for all 15: `BoolArraySpec`, `Int8ArraySpec`, `Int16ArraySpec`, `Int32ArraySpec`, `Int64ArraySpec`, `Uint8ArraySpec`, `Uint16ArraySpec`, `Uint32ArraySpec`, `Uint64ArraySpec`, `Float16ArraySpec`, `Float32ArraySpec`, `Float64ArraySpec`, `Complex64ArraySpec`, `Complex128ArraySpec`, `RawArraySpec`. Keep `_StrictBase` and `_StrictCodec` private. Update the union member list accordingly.
+
+- [ ] **Step 2: Rename the union to `AnyStrictArraySpec`**
+
+Rename the existing `StrictArraySpec = Annotated[... discriminated ...] | _RawArraySpec` alias to `AnyStrictArraySpec` (now referencing the public class names). Add a module docstring note: "`AnyStrictArraySpec` is the discriminated-union validation target; validate into it with `TypeAdapter`."
+
+- [ ] **Step 3: Add the single constructible `StrictArraySpec` class**
+
+Add a `data_type → FillValue` lookup table and the class:
+
+```python
+import re
+from typing import Self
+from pydantic import model_validator
+from zarr_metadata import (
+    BoolFillValue, Int8FillValue, Int16FillValue, Int32FillValue, Int64FillValue,
+    Uint8FillValue, Uint16FillValue, Uint32FillValue, Uint64FillValue,
+    Float16FillValue, Float32FillValue, Float64FillValue,
+    Complex64FillValue, Complex128FillValue, RawBytesFillValue,
+)
+
+_RAW_DTYPE_RE = re.compile(r"^r\d+$")
+_FILL_BY_DTYPE = {
+    "bool": BoolFillValue,
+    "int8": Int8FillValue, "int16": Int16FillValue, "int32": Int32FillValue, "int64": Int64FillValue,
+    "uint8": Uint8FillValue, "uint16": Uint16FillValue, "uint32": Uint32FillValue, "uint64": Uint64FillValue,
+    "float16": Float16FillValue, "float32": Float32FillValue, "float64": Float64FillValue,
+    "complex64": Complex64FillValue, "complex128": Complex128FillValue,
+}
+
+
+class StrictArraySpec(_StrictBase):
+    """A directly-constructible strict v3 array spec.
+
+    `fill_value` is annotated loosely (`JSONValue`) but validated at runtime
+    against the per-`data_type` fill-value type. An unrecognized `data_type`
+    is rejected. For static per-dtype `fill_value` typing, use the public
+    per-dtype classes (e.g. `Float64ArraySpec`) or validate into
+    `AnyStrictArraySpec`.
+    """
+
+    data_type: str
+    fill_value: JSONValue
+
+    @model_validator(mode="after")
+    def _validate_fill_matches_dtype(self) -> Self:
+        ft = _FILL_BY_DTYPE.get(self.data_type)
+        if ft is not None:
+            TypeAdapter(ft).validate_python(self.fill_value)
+        elif _RAW_DTYPE_RE.match(self.data_type):
+            TypeAdapter(RawBytesFillValue).validate_python(self.fill_value)
+        else:
+            raise ValueError(f"Unrecognized strict data_type: {self.data_type!r}")
+        return self
+```
+
+(`_StrictBase` already supplies `chunk_grid`/`chunk_key_encoding`/`codecs`/`attributes`/`shape`/etc. `TypeAdapter` is imported from pydantic.)
+
+- [ ] **Step 4: Update `StrictGroupSpec.members`**
+
+Change the members union from `Union[StrictArraySpec, "StrictGroupSpec"]` to `Union[AnyStrictArraySpec, "StrictGroupSpec"]`, then `StrictGroupSpec.model_rebuild()`. (Members validate to the precise per-dtype class.)
+
+- [ ] **Step 5: Update re-exports in `v3.py`**
+
+At the bottom of `v3.py`, re-export: `StrictArraySpec`, `AnyStrictArraySpec`, `StrictGroupSpec`, and all 15 public per-dtype classes (`from pydantic_zarr._strict_v3 import (... ) ` with `# noqa: E402`). Keep the names alphabetized or grouped.
+
+- [ ] **Step 6: Update + extend tests**
+
+In `test_strict_v3.py`:
+- Replace `TypeAdapter(StrictArraySpec)` validation-target usages with `TypeAdapter(AnyStrictArraySpec)`.
+- Add: direct construction of `StrictArraySpec(data_type="float64", fill_value="NaN", shape=(4,), chunk_grid=..., chunk_key_encoding=..., codecs=...)` succeeds; `StrictArraySpec(data_type="int64", fill_value="NaN", ...)` raises `ValidationError`; an unrecognized `data_type="float128"` raises; `data_type="r8"` with a bytes-tuple fill succeeds and with `"NaN"` raises.
+- Add: a public per-dtype class constructs directly: `Float64ArraySpec(data_type="float64", fill_value="Infinity", shape=(4,), ...)`.
+- Update the drift-guard test (Task 9) to reference a public per-dtype class (`Float64ArraySpec`) instead of `_Float64ArraySpec`.
+
+- [ ] **Step 7: Verify**
+
+Run: `/home/d-v-b/dev/pydantic-zarr/.venv/bin/python -m pytest tests/test_pydantic_zarr/test_strict_v3.py tests/test_pydantic_zarr/test_v3.py -q` (all pass) and `pre-commit run mypy ruff --files src/pydantic_zarr/_strict_v3.py src/pydantic_zarr/v3.py tests/test_pydantic_zarr/test_strict_v3.py` (clean, no new ignores).
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add src/pydantic_zarr/_strict_v3.py src/pydantic_zarr/v3.py tests/test_pydantic_zarr/test_strict_v3.py
+git commit -m "feat(v3): 'both' strict design — constructible StrictArraySpec + public per-dtype + AnyStrictArraySpec"
+```
+
+> **Note:** Task 10 (docs) must be redone AFTER this task, since it documented the old union-only `StrictArraySpec`. The docs need all three paths: constructible `StrictArraySpec`, public per-dtype classes, and `AnyStrictArraySpec` as the validation target.
+
+---
+
 ## Self-Review notes
 
 - **Spec coverage:** dependency (T1), v3 type replacement (T2), v3 to_json (T3), v2 type replacement (T4), v2 to_json/to_store_json (T5), base extraction (T6), strict union incl. raw hybrid (T7), StrictGroupSpec recursive members (T8), drift guard (T9), docs+migration (T10), full gate (T11). All spec sections mapped.
