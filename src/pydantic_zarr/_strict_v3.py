@@ -239,6 +239,16 @@ class CoreRawArraySpec(_CoreBase):
     data_type: _RawDataTypeName
     fill_value: StrictRawFill
 
+    @model_validator(mode="after")
+    def _validate_raw_fill_length(self) -> Self:
+        nbytes = int(re.fullmatch(r"r(\d+)", self.data_type).group(1)) // 8  # type: ignore[union-attr]
+        if len(self.fill_value) != nbytes:
+            raise ValueError(
+                f"fill_value for {self.data_type!r} must be a {nbytes}-element tuple, "
+                f"got {len(self.fill_value)} elements"
+            )
+        return self
+
 
 # ---------------------------------------------------------------------------
 # Extra per-dtype classes (15 explicit)
@@ -318,6 +328,16 @@ class ExtraComplex128ArraySpec(_ExtraBase):
 class ExtraRawArraySpec(_ExtraBase):
     data_type: _RawDataTypeName
     fill_value: StrictRawFill
+
+    @model_validator(mode="after")
+    def _validate_raw_fill_length(self) -> Self:
+        nbytes = int(re.fullmatch(r"r(\d+)", self.data_type).group(1)) // 8  # type: ignore[union-attr]
+        if len(self.fill_value) != nbytes:
+            raise ValueError(
+                f"fill_value for {self.data_type!r} must be a {nbytes}-element tuple, "
+                f"got {len(self.fill_value)} elements"
+            )
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -430,6 +450,12 @@ class CoreArraySpec(_CoreBase):
             TypeAdapter(ft).validate_python(self.fill_value)
         elif _RAW_DTYPE_RE.match(self.data_type):
             TypeAdapter(StrictRawFill).validate_python(self.fill_value)
+            nbytes = int(re.fullmatch(r"r(\d+)", self.data_type).group(1)) // 8  # type: ignore[union-attr]
+            if len(self.fill_value) != nbytes:  # type: ignore[arg-type]
+                raise ValueError(
+                    f"fill_value for {self.data_type!r} must be a {nbytes}-element tuple, "
+                    f"got {len(self.fill_value)} elements"  # type: ignore[arg-type]
+                )
         else:
             raise ValueError(f"Unrecognized data_type: {self.data_type!r}")
         return self
@@ -454,6 +480,12 @@ class ExtraArraySpec(_ExtraBase):
             TypeAdapter(ft).validate_python(self.fill_value)
         elif _RAW_DTYPE_RE.match(self.data_type):
             TypeAdapter(StrictRawFill).validate_python(self.fill_value)
+            nbytes = int(re.fullmatch(r"r(\d+)", self.data_type).group(1)) // 8  # type: ignore[union-attr]
+            if len(self.fill_value) != nbytes:  # type: ignore[arg-type]
+                raise ValueError(
+                    f"fill_value for {self.data_type!r} must be a {nbytes}-element tuple, "
+                    f"got {len(self.fill_value)} elements"  # type: ignore[arg-type]
+                )
         else:
             raise ValueError(f"Unrecognized data_type: {self.data_type!r}")
         return self

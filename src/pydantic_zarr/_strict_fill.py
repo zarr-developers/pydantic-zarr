@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from pydantic import AfterValidator, BeforeValidator
+from pydantic import BeforeValidator
 from zarr_metadata import (
     BoolFillValue,
     Complex64FillValue,
@@ -37,21 +37,30 @@ from zarr_metadata.v3.data_type.float64 import (  # noqa: F401 (parity)
 _FLOAT_SPECIALS = frozenset({"NaN", "Infinity", "-Infinity"})
 
 
-def _make_float_check(hex_validator: Any) -> Any:
+def _make_float_before_check(hex_validator: Any) -> Any:
+    """BeforeValidator: reject booleans and invalid hex strings before pydantic coerces."""
+
     def _check(value: Any) -> Any:
+        if isinstance(value, bool):
+            raise ValueError(f"boolean is not a valid float fill value, got {value!r}")  # noqa: TRY004
         if isinstance(value, str):
             if value in _FLOAT_SPECIALS:
                 return value
             hex_validator(value)  # raises ValueError if not a valid hex float
-            return value
-        return value  # int/float already accepted by the base type
+        return value  # int/float pass through to the base type
 
     return _check
 
 
-StrictFloat16Fill = Annotated[Float16FillValue, AfterValidator(_make_float_check(hex_float16))]
-StrictFloat32Fill = Annotated[Float32FillValue, AfterValidator(_make_float_check(hex_float32))]
-StrictFloat64Fill = Annotated[Float64FillValue, AfterValidator(_make_float_check(hex_float64))]
+StrictFloat16Fill = Annotated[
+    Float16FillValue, BeforeValidator(_make_float_before_check(hex_float16))
+]
+StrictFloat32Fill = Annotated[
+    Float32FillValue, BeforeValidator(_make_float_before_check(hex_float32))
+]
+StrictFloat64Fill = Annotated[
+    Float64FillValue, BeforeValidator(_make_float_before_check(hex_float64))
+]
 
 # (min, max) per integer dtype — inlined fixed constants, no numpy needed at runtime
 _INT_RANGE: dict[str, tuple[int, int]] = {
@@ -116,12 +125,12 @@ def _make_complex_check(component_check: Any) -> Any:
     return _check
 
 
-# reuse the float checks from Task 1 for each component
+# reuse the float checks for each component
 StrictComplex64Fill = Annotated[
-    Complex64FillValue, BeforeValidator(_make_complex_check(_make_float_check(hex_float32)))
+    Complex64FillValue, BeforeValidator(_make_complex_check(_make_float_before_check(hex_float32)))
 ]
 StrictComplex128Fill = Annotated[
-    Complex128FillValue, BeforeValidator(_make_complex_check(_make_float_check(hex_float64)))
+    Complex128FillValue, BeforeValidator(_make_complex_check(_make_float_before_check(hex_float64)))
 ]
 
 
