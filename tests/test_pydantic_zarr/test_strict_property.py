@@ -178,3 +178,12 @@ def test_core_codec_matches_oracle(codec: object) -> None:
     bytes_codec = {"name": "bytes", "configuration": {"endian": "little"}}
     accepts = _accepts_field(adapter, codecs=(codec, bytes_codec))
     assert accepts == is_valid_codec("core", codec)
+
+
+@given(codec=_CODECS)
+def test_extra_codec_matches_oracle(codec: object) -> None:
+    adapter: TypeAdapter = TypeAdapter(AnyExtraArraySpec)
+    # a bytes codec is always needed; put the candidate first
+    bytes_codec = {"name": "bytes", "configuration": {"endian": "little"}}
+    accepts = _accepts_field(adapter, codecs=(codec, bytes_codec))
+    assert accepts == is_valid_codec("extra", codec)
