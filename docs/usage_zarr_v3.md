@@ -126,6 +126,12 @@ The *strict* classes couple `fill_value` validation to the array's `data_type`. 
 `float64` accepts numeric fill values as well as the special strings `"NaN"`, `"Infinity"`, and
 `"-Infinity"`, while integer types do not.
 
+!!! note
+    Strict validation checks the JSON *type* of `fill_value` against the data type (as modelled by
+    `zarr-metadata`); it does not enforce numeric range. An out-of-range integer fill value (e.g.
+    `999` for `int8`) is not rejected, and because Python treats `bool` as a subtype of `int`, a
+    boolean fill value is accepted for integer dtypes.
+
 ### Core vs Extra strict families
 
 There are **two strict families**, distinguished by which Zarr vocabulary they accept:
