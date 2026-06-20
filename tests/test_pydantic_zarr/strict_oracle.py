@@ -88,8 +88,11 @@ def is_valid_codec(family: str, codec: object) -> bool:
     name = _codec_name(codec)
     if name is None:
         return False
-    allowed = _CORE_CODECS if family == "core" else _EXTRA_CODECS
-    return name in allowed
+    if family == "core":
+        return name in _CORE_CODECS
+    if family == "extra":
+        return name in _EXTRA_CODECS
+    raise ValueError(f"unknown family: {family!r}")
 
 
 def is_valid_grid(family: str, grid: object) -> bool:
