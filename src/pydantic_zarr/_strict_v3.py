@@ -24,37 +24,26 @@ from zarr_metadata import (
     BloscCodecMetadata,
     BloscCodecName,
     BoolDataTypeName,
-    BoolFillValue,
     BytesCodecMetadata,
     BytesCodecName,
     CastValueCodecMetadata,
     CastValueCodecName,
     Complex64DataTypeName,
-    Complex64FillValue,
     Complex128DataTypeName,
-    Complex128FillValue,
     Crc32cCodecMetadata,
     Crc32cCodecName,
     DefaultChunkKeyEncodingMetadata,
     Float16DataTypeName,
-    Float16FillValue,
     Float32DataTypeName,
-    Float32FillValue,
     Float64DataTypeName,
-    Float64FillValue,
     GzipCodecMetadata,
     GzipCodecName,
     Int8DataTypeName,
-    Int8FillValue,
     Int16DataTypeName,
-    Int16FillValue,
     Int32DataTypeName,
-    Int32FillValue,
     Int64DataTypeName,
-    Int64FillValue,
     JSONValue,
     RawBytesDataTypeName,
-    RawBytesFillValue,
     RectilinearChunkGridMetadata,
     RegularChunkGridMetadata,
     ScaleOffsetCodecMetadata,
@@ -64,18 +53,31 @@ from zarr_metadata import (
     TransposeCodecMetadata,
     TransposeCodecName,
     Uint8DataTypeName,
-    Uint8FillValue,
     Uint16DataTypeName,
-    Uint16FillValue,
     Uint32DataTypeName,
-    Uint32FillValue,
     Uint64DataTypeName,
-    Uint64FillValue,
     V2ChunkKeyEncodingMetadata,
     ZstdCodecMetadata,
     ZstdCodecName,
 )
 
+from pydantic_zarr._strict_fill import (
+    StrictBoolFill,
+    StrictComplex64Fill,
+    StrictComplex128Fill,
+    StrictFloat16Fill,
+    StrictFloat32Fill,
+    StrictFloat64Fill,
+    StrictInt8Fill,
+    StrictInt16Fill,
+    StrictInt32Fill,
+    StrictInt64Fill,
+    StrictRawFill,
+    StrictUint8Fill,
+    StrictUint16Fill,
+    StrictUint32Fill,
+    StrictUint64Fill,
+)
 from pydantic_zarr.core import ensure_key_no_path
 from pydantic_zarr.v3 import NodeSpec, _BaseArraySpec
 
@@ -165,77 +167,77 @@ _RawDataTypeName = Annotated[RawBytesDataTypeName, BeforeValidator(_ensure_raw_d
 
 class CoreBoolArraySpec(_CoreBase):
     data_type: BoolDataTypeName
-    fill_value: BoolFillValue
+    fill_value: StrictBoolFill
 
 
 class CoreInt8ArraySpec(_CoreBase):
     data_type: Int8DataTypeName
-    fill_value: Int8FillValue
+    fill_value: StrictInt8Fill
 
 
 class CoreInt16ArraySpec(_CoreBase):
     data_type: Int16DataTypeName
-    fill_value: Int16FillValue
+    fill_value: StrictInt16Fill
 
 
 class CoreInt32ArraySpec(_CoreBase):
     data_type: Int32DataTypeName
-    fill_value: Int32FillValue
+    fill_value: StrictInt32Fill
 
 
 class CoreInt64ArraySpec(_CoreBase):
     data_type: Int64DataTypeName
-    fill_value: Int64FillValue
+    fill_value: StrictInt64Fill
 
 
 class CoreUint8ArraySpec(_CoreBase):
     data_type: Uint8DataTypeName
-    fill_value: Uint8FillValue
+    fill_value: StrictUint8Fill
 
 
 class CoreUint16ArraySpec(_CoreBase):
     data_type: Uint16DataTypeName
-    fill_value: Uint16FillValue
+    fill_value: StrictUint16Fill
 
 
 class CoreUint32ArraySpec(_CoreBase):
     data_type: Uint32DataTypeName
-    fill_value: Uint32FillValue
+    fill_value: StrictUint32Fill
 
 
 class CoreUint64ArraySpec(_CoreBase):
     data_type: Uint64DataTypeName
-    fill_value: Uint64FillValue
+    fill_value: StrictUint64Fill
 
 
 class CoreFloat16ArraySpec(_CoreBase):
     data_type: Float16DataTypeName
-    fill_value: Float16FillValue
+    fill_value: StrictFloat16Fill
 
 
 class CoreFloat32ArraySpec(_CoreBase):
     data_type: Float32DataTypeName
-    fill_value: Float32FillValue
+    fill_value: StrictFloat32Fill
 
 
 class CoreFloat64ArraySpec(_CoreBase):
     data_type: Float64DataTypeName
-    fill_value: Float64FillValue
+    fill_value: StrictFloat64Fill
 
 
 class CoreComplex64ArraySpec(_CoreBase):
     data_type: Complex64DataTypeName
-    fill_value: Complex64FillValue
+    fill_value: StrictComplex64Fill
 
 
 class CoreComplex128ArraySpec(_CoreBase):
     data_type: Complex128DataTypeName
-    fill_value: Complex128FillValue
+    fill_value: StrictComplex128Fill
 
 
 class CoreRawArraySpec(_CoreBase):
     data_type: _RawDataTypeName
-    fill_value: RawBytesFillValue
+    fill_value: StrictRawFill
 
 
 # ---------------------------------------------------------------------------
@@ -245,77 +247,77 @@ class CoreRawArraySpec(_CoreBase):
 
 class ExtraBoolArraySpec(_ExtraBase):
     data_type: BoolDataTypeName
-    fill_value: BoolFillValue
+    fill_value: StrictBoolFill
 
 
 class ExtraInt8ArraySpec(_ExtraBase):
     data_type: Int8DataTypeName
-    fill_value: Int8FillValue
+    fill_value: StrictInt8Fill
 
 
 class ExtraInt16ArraySpec(_ExtraBase):
     data_type: Int16DataTypeName
-    fill_value: Int16FillValue
+    fill_value: StrictInt16Fill
 
 
 class ExtraInt32ArraySpec(_ExtraBase):
     data_type: Int32DataTypeName
-    fill_value: Int32FillValue
+    fill_value: StrictInt32Fill
 
 
 class ExtraInt64ArraySpec(_ExtraBase):
     data_type: Int64DataTypeName
-    fill_value: Int64FillValue
+    fill_value: StrictInt64Fill
 
 
 class ExtraUint8ArraySpec(_ExtraBase):
     data_type: Uint8DataTypeName
-    fill_value: Uint8FillValue
+    fill_value: StrictUint8Fill
 
 
 class ExtraUint16ArraySpec(_ExtraBase):
     data_type: Uint16DataTypeName
-    fill_value: Uint16FillValue
+    fill_value: StrictUint16Fill
 
 
 class ExtraUint32ArraySpec(_ExtraBase):
     data_type: Uint32DataTypeName
-    fill_value: Uint32FillValue
+    fill_value: StrictUint32Fill
 
 
 class ExtraUint64ArraySpec(_ExtraBase):
     data_type: Uint64DataTypeName
-    fill_value: Uint64FillValue
+    fill_value: StrictUint64Fill
 
 
 class ExtraFloat16ArraySpec(_ExtraBase):
     data_type: Float16DataTypeName
-    fill_value: Float16FillValue
+    fill_value: StrictFloat16Fill
 
 
 class ExtraFloat32ArraySpec(_ExtraBase):
     data_type: Float32DataTypeName
-    fill_value: Float32FillValue
+    fill_value: StrictFloat32Fill
 
 
 class ExtraFloat64ArraySpec(_ExtraBase):
     data_type: Float64DataTypeName
-    fill_value: Float64FillValue
+    fill_value: StrictFloat64Fill
 
 
 class ExtraComplex64ArraySpec(_ExtraBase):
     data_type: Complex64DataTypeName
-    fill_value: Complex64FillValue
+    fill_value: StrictComplex64Fill
 
 
 class ExtraComplex128ArraySpec(_ExtraBase):
     data_type: Complex128DataTypeName
-    fill_value: Complex128FillValue
+    fill_value: StrictComplex128Fill
 
 
 class ExtraRawArraySpec(_ExtraBase):
     data_type: _RawDataTypeName
-    fill_value: RawBytesFillValue
+    fill_value: StrictRawFill
 
 
 # ---------------------------------------------------------------------------
@@ -383,20 +385,20 @@ codec types (and their name literals).
 # ---------------------------------------------------------------------------
 
 _FILL_BY_DTYPE: dict[str, Any] = {
-    "bool": BoolFillValue,
-    "int8": Int8FillValue,
-    "int16": Int16FillValue,
-    "int32": Int32FillValue,
-    "int64": Int64FillValue,
-    "uint8": Uint8FillValue,
-    "uint16": Uint16FillValue,
-    "uint32": Uint32FillValue,
-    "uint64": Uint64FillValue,
-    "float16": Float16FillValue,
-    "float32": Float32FillValue,
-    "float64": Float64FillValue,
-    "complex64": Complex64FillValue,
-    "complex128": Complex128FillValue,
+    "bool": StrictBoolFill,
+    "int8": StrictInt8Fill,
+    "int16": StrictInt16Fill,
+    "int32": StrictInt32Fill,
+    "int64": StrictInt64Fill,
+    "uint8": StrictUint8Fill,
+    "uint16": StrictUint16Fill,
+    "uint32": StrictUint32Fill,
+    "uint64": StrictUint64Fill,
+    "float16": StrictFloat16Fill,
+    "float32": StrictFloat32Fill,
+    "float64": StrictFloat64Fill,
+    "complex64": StrictComplex64Fill,
+    "complex128": StrictComplex128Fill,
 }
 
 # ---------------------------------------------------------------------------
@@ -427,7 +429,7 @@ class CoreArraySpec(_CoreBase):
         if ft is not None:
             TypeAdapter(ft).validate_python(self.fill_value)
         elif _RAW_DTYPE_RE.match(self.data_type):
-            TypeAdapter(RawBytesFillValue).validate_python(self.fill_value)
+            TypeAdapter(StrictRawFill).validate_python(self.fill_value)
         else:
             raise ValueError(f"Unrecognized data_type: {self.data_type!r}")
         return self
@@ -451,7 +453,7 @@ class ExtraArraySpec(_ExtraBase):
         if ft is not None:
             TypeAdapter(ft).validate_python(self.fill_value)
         elif _RAW_DTYPE_RE.match(self.data_type):
-            TypeAdapter(RawBytesFillValue).validate_python(self.fill_value)
+            TypeAdapter(StrictRawFill).validate_python(self.fill_value)
         else:
             raise ValueError(f"Unrecognized data_type: {self.data_type!r}")
         return self

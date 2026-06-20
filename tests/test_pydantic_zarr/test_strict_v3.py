@@ -503,3 +503,49 @@ def test_strict_raw_fill_rejects(bad: object) -> None:
 
     with pytest.raises(ValidationError):
         TypeAdapter(StrictRawFill).validate_python(bad)
+
+
+# ---------------------------------------------------------------------------
+# End-to-end fill rejection through per-dtype classes and single-class
+# ---------------------------------------------------------------------------
+
+_COMMON_E2E = {
+    "shape": (4,),
+    "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (4,)}},
+    "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
+    "codecs": ({"name": "bytes", "configuration": {"endian": "little"}},),
+    "attributes": {},
+}
+
+
+def test_per_dtype_class_rejects_garbage_float_fill() -> None:
+    from pydantic_zarr.v3 import CoreFloat64ArraySpec
+
+    with pytest.raises(ValidationError):
+        CoreFloat64ArraySpec(data_type="float64", fill_value="garbage", **_COMMON_E2E)
+
+
+def test_union_rejects_garbage_float_fill() -> None:
+    doc = {
+        "zarr_format": 3,
+        "node_type": "array",
+        "data_type": "float64",
+        "fill_value": "garbage",
+        **_COMMON_E2E,
+    }
+    with pytest.raises(ValidationError):
+        TypeAdapter(AnyCoreArraySpec).validate_python(doc)
+
+
+def test_single_class_rejects_garbage_float_fill() -> None:
+    from pydantic_zarr.v3 import CoreArraySpec
+
+    with pytest.raises(ValidationError):
+        CoreArraySpec(data_type="float64", fill_value="garbage", **_COMMON_E2E)
+
+
+def test_single_class_rejects_out_of_range_int_fill() -> None:
+    from pydantic_zarr.v3 import CoreArraySpec
+
+    with pytest.raises(ValidationError):
+        CoreArraySpec(data_type="int8", fill_value=999, **_COMMON_E2E)
