@@ -1068,5 +1068,21 @@ def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, Array
     return dict(sorted(result.items(), key=lambda v: len(v[0])))
 
 
+from pydantic_zarr._strict_v3 import AnyStrictArraySpec as AnyStrictArraySpec  # noqa: E402
+from pydantic_zarr._strict_v3 import BoolArraySpec as BoolArraySpec  # noqa: E402
+from pydantic_zarr._strict_v3 import Complex64ArraySpec as Complex64ArraySpec  # noqa: E402
+from pydantic_zarr._strict_v3 import Complex128ArraySpec as Complex128ArraySpec  # noqa: E402
+from pydantic_zarr._strict_v3 import Float16ArraySpec as Float16ArraySpec  # noqa: E402
+from pydantic_zarr._strict_v3 import Float32ArraySpec as Float32ArraySpec  # noqa: E402
+from pydantic_zarr._strict_v3 import Float64ArraySpec as Float64ArraySpec  # noqa: E402
+from pydantic_zarr._strict_v3 import Int8ArraySpec as Int8ArraySpec  # noqa: E402
+from pydantic_zarr._strict_v3 import Int16ArraySpec as Int16ArraySpec  # noqa: E402
+from pydantic_zarr._strict_v3 import Int32ArraySpec as Int32ArraySpec  # noqa: E402
+from pydantic_zarr._strict_v3 import Int64ArraySpec as Int64ArraySpec  # noqa: E402
+from pydantic_zarr._strict_v3 import RawArraySpec as RawArraySpec  # noqa: E402
 from pydantic_zarr._strict_v3 import StrictArraySpec as StrictArraySpec  # noqa: E402
 from pydantic_zarr._strict_v3 import StrictGroupSpec as StrictGroupSpec  # noqa: E402
+from pydantic_zarr._strict_v3 import Uint8ArraySpec as Uint8ArraySpec  # noqa: E402
+from pydantic_zarr._strict_v3 import Uint16ArraySpec as Uint16ArraySpec  # noqa: E402
+from pydantic_zarr._strict_v3 import Uint32ArraySpec as Uint32ArraySpec  # noqa: E402
+from pydantic_zarr._strict_v3 import Uint64ArraySpec as Uint64ArraySpec  # noqa: E402

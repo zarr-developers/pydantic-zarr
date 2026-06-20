@@ -3,9 +3,16 @@ from __future__ import annotations
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from pydantic_zarr.v3 import StrictArraySpec
+from pydantic_zarr.v3 import AnyStrictArraySpec
 
-ADAPTER = TypeAdapter(StrictArraySpec)
+ADAPTER = TypeAdapter(AnyStrictArraySpec)
+
+_COMMON = {
+    "shape": (4,),
+    "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (4,)}},
+    "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
+    "codecs": ({"name": "bytes", "configuration": {"endian": "little"}},),
+}
 
 
 def _doc(data_type: str, fill_value: object) -> dict:
@@ -83,10 +90,10 @@ def test_strict_group_accepts_nested_strict_members() -> None:
 def test_strict_attributes_defaults_and_nongeneric() -> None:
     from pydantic import TypeAdapter
 
-    from pydantic_zarr.v3 import StrictArraySpec, StrictGroupSpec
+    from pydantic_zarr.v3 import AnyStrictArraySpec, StrictGroupSpec
 
     # array doc omitting attributes validates (default {})
-    ta = TypeAdapter(StrictArraySpec)
+    ta = TypeAdapter(AnyStrictArraySpec)
     doc = {
         "zarr_format": 3,
         "node_type": "array",
@@ -137,10 +144,71 @@ def test_strict_group_rejects_nonstrict_member() -> None:
 
 def test_loose_and_strict_share_base_fields() -> None:
     """Loose and strict specs must share identical non-codec/non-dtype fields."""
-    from pydantic_zarr._strict_v3 import _Float64ArraySpec
+    from pydantic_zarr._strict_v3 import Float64ArraySpec
     from pydantic_zarr.v3 import ArraySpec, _BaseArraySpec
 
     shared = set(_BaseArraySpec.model_fields)
     variant = {"data_type", "chunk_grid", "chunk_key_encoding", "fill_value", "codecs"}
     assert set(ArraySpec.model_fields) - variant == shared
-    assert set(_Float64ArraySpec.model_fields) - variant == shared
+    assert set(Float64ArraySpec.model_fields) - variant == shared
+
+
+# ---- Construction tests for StrictArraySpec (single constructible class) ----
+
+
+def test_strict_array_spec_construct_float64_nan() -> None:
+    """StrictArraySpec with float64 + 'NaN' fill_value constructs successfully."""
+    from pydantic_zarr.v3 import StrictArraySpec
+
+    spec = StrictArraySpec(data_type="float64", fill_value="NaN", **_COMMON)
+    assert spec.data_type == "float64"
+    assert spec.fill_value == "NaN"
+
+
+def test_strict_array_spec_construct_int64_nan_raises() -> None:
+    """StrictArraySpec with int64 + 'NaN' fill_value raises ValidationError."""
+    from pydantic import ValidationError
+
+    from pydantic_zarr.v3 import StrictArraySpec
+
+    with pytest.raises(ValidationError):
+        StrictArraySpec(data_type="int64", fill_value="NaN", **_COMMON)
+
+
+def test_strict_array_spec_construct_unknown_dtype_raises() -> None:
+    """StrictArraySpec with unrecognized data_type raises ValidationError."""
+    from pydantic import ValidationError
+
+    from pydantic_zarr.v3 import StrictArraySpec
+
+    with pytest.raises(ValidationError):
+        StrictArraySpec(data_type="float128", fill_value=0.0, **_COMMON)
+
+
+def test_strict_array_spec_construct_raw_bytes_ok() -> None:
+    """StrictArraySpec with r8 data_type and bytes-tuple fill_value constructs successfully."""
+    from pydantic_zarr.v3 import StrictArraySpec
+
+    spec = StrictArraySpec(data_type="r8", fill_value=(1,), **_COMMON)
+    assert spec.data_type == "r8"
+
+
+def test_strict_array_spec_construct_raw_nan_raises() -> None:
+    """StrictArraySpec with r8 data_type and 'NaN' fill_value raises ValidationError."""
+    from pydantic import ValidationError
+
+    from pydantic_zarr.v3 import StrictArraySpec
+
+    with pytest.raises(ValidationError):
+        StrictArraySpec(data_type="r8", fill_value="NaN", **_COMMON)
+
+
+# ---- Construction tests for public per-dtype classes ----
+
+
+def test_float64_array_spec_construct_infinity() -> None:
+    """Float64ArraySpec constructs directly with fill_value='Infinity'."""
+    from pydantic_zarr.v3 import Float64ArraySpec
+
+    spec = Float64ArraySpec(data_type="float64", fill_value="Infinity", **_COMMON)
+    assert spec.fill_value == "Infinity"
