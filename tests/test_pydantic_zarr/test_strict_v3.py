@@ -1,61 +1,285 @@
+"""Tests for Core/Extra strict families in pydantic_zarr._strict_v3."""
+
 from __future__ import annotations
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from pydantic_zarr.v3 import AnyStrictArraySpec
+from pydantic_zarr.v3 import AnyCoreArraySpec, AnyExtraArraySpec
 
-ADAPTER = TypeAdapter(AnyStrictArraySpec)
+CORE_ADAPTER = TypeAdapter(AnyCoreArraySpec)
+EXTRA_ADAPTER = TypeAdapter(AnyExtraArraySpec)
+
+_REGULAR_GRID = {"name": "regular", "configuration": {"chunk_shape": (4,)}}
+_RECTILINEAR_GRID = {
+    "name": "rectilinear",
+    "configuration": {"kind": "inline", "chunk_shapes": ((2, 2),)},
+}
+_DEFAULT_CKE = {"name": "default", "configuration": {"separator": "/"}}
+_BYTES_CODEC = {"name": "bytes", "configuration": {"endian": "little"}}
 
 _COMMON = {
     "shape": (4,),
-    "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (4,)}},
-    "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
-    "codecs": ({"name": "bytes", "configuration": {"endian": "little"}},),
+    "chunk_grid": _REGULAR_GRID,
+    "chunk_key_encoding": _DEFAULT_CKE,
+    "codecs": (_BYTES_CODEC,),
 }
 
 
-def _doc(data_type: str, fill_value: object) -> dict:
+def _doc(data_type: str, fill_value: object, *, grid: dict | None = None) -> dict:
     return {
         "zarr_format": 3,
         "node_type": "array",
         "data_type": data_type,
         "shape": (4,),
-        "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (4,)}},
-        "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
+        "chunk_grid": grid if grid is not None else _REGULAR_GRID,
+        "chunk_key_encoding": _DEFAULT_CKE,
         "fill_value": fill_value,
-        "codecs": ({"name": "bytes", "configuration": {"endian": "little"}},),
+        "codecs": (_BYTES_CODEC,),
         "attributes": {},
     }
 
 
-def test_float64_accepts_nan_and_hex() -> None:
-    ADAPTER.validate_python(_doc("float64", "NaN"))
-    ADAPTER.validate_python(_doc("float64", "0x7ff8000000000000"))
+# ---------------------------------------------------------------------------
+# AnyCoreArraySpec union routing
+# ---------------------------------------------------------------------------
 
 
-def test_int64_rejects_nan_string() -> None:
+def test_core_float64_accepts_nan_and_hex() -> None:
+    CORE_ADAPTER.validate_python(_doc("float64", "NaN"))
+    CORE_ADAPTER.validate_python(_doc("float64", "0x7ff8000000000000"))
+
+
+def test_core_int64_rejects_nan_string() -> None:
     with pytest.raises(ValidationError):
-        ADAPTER.validate_python(_doc("int64", "NaN"))
+        CORE_ADAPTER.validate_python(_doc("int64", "NaN"))
 
 
-def test_raw_dtype_routes_and_validates() -> None:
-    ADAPTER.validate_python(_doc("r8", (1,)))
+def test_core_raw_dtype_routes_and_validates() -> None:
+    result = CORE_ADAPTER.validate_python(_doc("r8", (1,)))
+    from pydantic_zarr.v3 import CoreRawArraySpec
+
+    assert isinstance(result, CoreRawArraySpec)
 
 
-def test_strict_rejects_unknown_codec() -> None:
+def test_core_union_routes_to_float64_class() -> None:
+    from pydantic_zarr.v3 import CoreFloat64ArraySpec
+
+    result = CORE_ADAPTER.validate_python(_doc("float64", "NaN"))
+    assert isinstance(result, CoreFloat64ArraySpec)
+
+
+# ---------------------------------------------------------------------------
+# Codec string strictness (Core)
+# ---------------------------------------------------------------------------
+
+
+def test_core_accepts_known_codec_name_string() -> None:
+    doc = _doc("int32", 0)
+    doc["codecs"] = ("blosc",)
+    CORE_ADAPTER.validate_python(doc)
+
+
+def test_core_rejects_unknown_codec_name_string() -> None:
+    doc = _doc("int32", 0)
+    doc["codecs"] = ("made_up",)
+    with pytest.raises(ValidationError):
+        CORE_ADAPTER.validate_python(doc)
+
+
+def test_core_rejects_unknown_codec_object() -> None:
     doc = _doc("int32", 0)
     doc["codecs"] = ({"name": "made_up_codec", "configuration": {}},)
     with pytest.raises(ValidationError):
-        ADAPTER.validate_python(doc)
+        CORE_ADAPTER.validate_python(doc)
 
 
-def test_strict_group_accepts_nested_strict_members() -> None:
-    from pydantic import TypeAdapter
+# ---------------------------------------------------------------------------
+# Codec string strictness (Extra)
+# ---------------------------------------------------------------------------
 
-    from pydantic_zarr.v3 import StrictGroupSpec
 
-    ta = TypeAdapter(StrictGroupSpec)
+def test_extra_accepts_known_codec_name_string() -> None:
+    doc = _doc("int32", 0)
+    doc["codecs"] = ("blosc",)
+    EXTRA_ADAPTER.validate_python(doc)
+
+
+def test_extra_rejects_unknown_codec_name_string() -> None:
+    doc = _doc("int32", 0)
+    doc["codecs"] = ("made_up",)
+    with pytest.raises(ValidationError):
+        EXTRA_ADAPTER.validate_python(doc)
+
+
+# ---------------------------------------------------------------------------
+# Family difference: chunk_grid
+# ---------------------------------------------------------------------------
+
+
+def test_core_rejects_rectilinear_grid() -> None:
+    doc = _doc("int32", 0, grid=_RECTILINEAR_GRID)
+    with pytest.raises(ValidationError):
+        CORE_ADAPTER.validate_python(doc)
+
+
+def test_extra_accepts_rectilinear_grid() -> None:
+    doc = _doc("int32", 0, grid=_RECTILINEAR_GRID)
+    EXTRA_ADAPTER.validate_python(doc)
+
+
+# ---------------------------------------------------------------------------
+# Family difference: codecs
+# ---------------------------------------------------------------------------
+
+
+def test_core_rejects_scale_offset_codec() -> None:
+    doc = _doc("float32", 0.0)
+    doc["codecs"] = ({"name": "scale_offset", "configuration": {"scale": 1.0, "offset": 0.0}},)
+    with pytest.raises(ValidationError):
+        CORE_ADAPTER.validate_python(doc)
+
+
+def test_extra_accepts_scale_offset_codec() -> None:
+    doc = _doc("float32", 0.0)
+    doc["codecs"] = ({"name": "scale_offset", "configuration": {"scale": 1.0, "offset": 0.0}},)
+    EXTRA_ADAPTER.validate_python(doc)
+
+
+def test_core_rejects_scale_offset_codec_name_string() -> None:
+    doc = _doc("float32", 0.0)
+    doc["codecs"] = ("scale_offset",)
+    with pytest.raises(ValidationError):
+        CORE_ADAPTER.validate_python(doc)
+
+
+def test_extra_accepts_scale_offset_codec_name_string() -> None:
+    doc = _doc("float32", 0.0)
+    doc["codecs"] = ("scale_offset",)
+    EXTRA_ADAPTER.validate_python(doc)
+
+
+# ---------------------------------------------------------------------------
+# CoreArraySpec single-class construction (runtime dtype/fill coupling)
+# ---------------------------------------------------------------------------
+
+
+def test_core_array_spec_construct_float64_nan() -> None:
+    from pydantic_zarr.v3 import CoreArraySpec
+
+    spec = CoreArraySpec(data_type="float64", fill_value="NaN", **_COMMON)
+    assert spec.data_type == "float64"
+    assert spec.fill_value == "NaN"
+
+
+def test_core_array_spec_construct_int64_nan_raises() -> None:
+    from pydantic_zarr.v3 import CoreArraySpec
+
+    with pytest.raises(ValidationError):
+        CoreArraySpec(data_type="int64", fill_value="NaN", **_COMMON)
+
+
+def test_core_array_spec_construct_unknown_dtype_raises() -> None:
+    from pydantic_zarr.v3 import CoreArraySpec
+
+    with pytest.raises(ValidationError):
+        CoreArraySpec(data_type="float128", fill_value=0.0, **_COMMON)
+
+
+def test_core_array_spec_construct_raw_bytes_ok() -> None:
+    from pydantic_zarr.v3 import CoreArraySpec
+
+    spec = CoreArraySpec(data_type="r8", fill_value=(1,), **_COMMON)
+    assert spec.data_type == "r8"
+
+
+def test_core_array_spec_construct_raw_nan_raises() -> None:
+    from pydantic_zarr.v3 import CoreArraySpec
+
+    with pytest.raises(ValidationError):
+        CoreArraySpec(data_type="r8", fill_value="NaN", **_COMMON)
+
+
+def test_core_array_spec_rejects_rectilinear_grid() -> None:
+    from pydantic_zarr.v3 import CoreArraySpec
+
+    with pytest.raises(ValidationError):
+        CoreArraySpec(
+            data_type="float64",
+            fill_value="NaN",
+            shape=(4,),
+            chunk_grid=_RECTILINEAR_GRID,
+            chunk_key_encoding=_DEFAULT_CKE,
+            codecs=(_BYTES_CODEC,),
+        )
+
+
+# ---------------------------------------------------------------------------
+# ExtraArraySpec single-class construction
+# ---------------------------------------------------------------------------
+
+
+def test_extra_array_spec_construct_float64_nan() -> None:
+    from pydantic_zarr.v3 import ExtraArraySpec
+
+    spec = ExtraArraySpec(data_type="float64", fill_value="NaN", **_COMMON)
+    assert spec.data_type == "float64"
+
+
+def test_extra_array_spec_accepts_rectilinear_grid() -> None:
+    from pydantic_zarr.v3 import ExtraArraySpec
+
+    spec = ExtraArraySpec(
+        data_type="float64",
+        fill_value="NaN",
+        shape=(4,),
+        chunk_grid=_RECTILINEAR_GRID,
+        chunk_key_encoding=_DEFAULT_CKE,
+        codecs=(_BYTES_CODEC,),
+    )
+    assert spec.data_type == "float64"
+
+
+# ---------------------------------------------------------------------------
+# Public per-dtype classes
+# ---------------------------------------------------------------------------
+
+
+def test_core_float64_array_spec_construct_infinity() -> None:
+    from pydantic_zarr.v3 import CoreFloat64ArraySpec
+
+    spec = CoreFloat64ArraySpec(data_type="float64", fill_value="Infinity", **_COMMON)
+    assert spec.fill_value == "Infinity"
+
+
+def test_extra_float64_array_spec_construct() -> None:
+    from pydantic_zarr.v3 import ExtraFloat64ArraySpec
+
+    spec = ExtraFloat64ArraySpec(data_type="float64", fill_value="NaN", **_COMMON)
+    assert spec.data_type == "float64"
+
+
+# ---------------------------------------------------------------------------
+# Group spec recursion
+# ---------------------------------------------------------------------------
+
+_ARRAY_DOC_INT32 = {
+    "zarr_format": 3,
+    "node_type": "array",
+    "data_type": "int32",
+    "shape": (4,),
+    "chunk_grid": _REGULAR_GRID,
+    "chunk_key_encoding": _DEFAULT_CKE,
+    "fill_value": 0,
+    "codecs": (_BYTES_CODEC,),
+    "attributes": {},
+}
+
+
+def test_core_group_accepts_nested_strict_members() -> None:
+    from pydantic_zarr.v3 import CoreGroupSpec
+
+    ta = TypeAdapter(CoreGroupSpec)
     doc = {
         "zarr_format": 3,
         "node_type": "group",
@@ -65,150 +289,94 @@ def test_strict_group_accepts_nested_strict_members() -> None:
                 "zarr_format": 3,
                 "node_type": "group",
                 "attributes": {},
-                "members": {
-                    "arr": {
-                        "zarr_format": 3,
-                        "node_type": "array",
-                        "data_type": "int32",
-                        "shape": (4,),
-                        "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (4,)}},
-                        "chunk_key_encoding": {
-                            "name": "default",
-                            "configuration": {"separator": "/"},
-                        },
-                        "fill_value": 0,
-                        "codecs": ({"name": "bytes", "configuration": {"endian": "little"}},),
-                        "attributes": {},
-                    },
-                },
+                "members": {"arr": _ARRAY_DOC_INT32},
             },
         },
     }
     ta.validate_python(doc)
 
 
-def test_strict_attributes_defaults_and_nongeneric() -> None:
-    from pydantic import TypeAdapter
+def test_core_group_rejects_nonstrict_member() -> None:
+    from pydantic_zarr.v3 import CoreGroupSpec
 
-    from pydantic_zarr.v3 import AnyStrictArraySpec, StrictGroupSpec
-
-    # array doc omitting attributes validates (default {})
-    ta = TypeAdapter(AnyStrictArraySpec)
-    doc = {
-        "zarr_format": 3,
-        "node_type": "array",
-        "data_type": "int32",
-        "shape": (4,),
-        "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (4,)}},
-        "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
-        "fill_value": 0,
-        "codecs": ({"name": "bytes", "configuration": {"endian": "little"}},),
-    }  # no "attributes" key
-    result = ta.validate_python(doc)
-    assert result.attributes == {}
-    # group doc omitting attributes validates too
-    g = TypeAdapter(StrictGroupSpec).validate_python(
-        {"zarr_format": 3, "node_type": "group", "members": {}}
-    )
-    assert g.attributes == {}
-
-
-def test_strict_group_rejects_nonstrict_member() -> None:
-    import pytest
-    from pydantic import TypeAdapter, ValidationError
-
-    from pydantic_zarr.v3 import StrictGroupSpec
-
-    ta = TypeAdapter(StrictGroupSpec)
+    ta = TypeAdapter(CoreGroupSpec)
+    bad_arr = {**_ARRAY_DOC_INT32, "fill_value": "NaN"}  # invalid for int32
     doc = {
         "zarr_format": 3,
         "node_type": "group",
         "attributes": {},
-        "members": {
-            "arr": {
-                "zarr_format": 3,
-                "node_type": "array",
-                "data_type": "int32",
-                "shape": (4,),
-                "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (4,)}},
-                "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
-                "fill_value": "NaN",  # invalid for int32 -> must propagate to a rejection
-                "codecs": ({"name": "bytes", "configuration": {"endian": "little"}},),
-                "attributes": {},
-            },
-        },
+        "members": {"arr": bad_arr},
     }
     with pytest.raises(ValidationError):
         ta.validate_python(doc)
 
 
-def test_loose_and_strict_share_base_fields() -> None:
-    """Loose and strict specs must share identical non-codec/non-dtype fields."""
-    from pydantic_zarr._strict_v3 import Float64ArraySpec
-    from pydantic_zarr.v3 import ArraySpec, _BaseArraySpec
+def test_core_group_rejects_rectilinear_member() -> None:
+    from pydantic_zarr.v3 import CoreGroupSpec
+
+    ta = TypeAdapter(CoreGroupSpec)
+    recti_arr = {**_ARRAY_DOC_INT32, "chunk_grid": _RECTILINEAR_GRID}
+    doc = {
+        "zarr_format": 3,
+        "node_type": "group",
+        "attributes": {},
+        "members": {"arr": recti_arr},
+    }
+    with pytest.raises(ValidationError):
+        ta.validate_python(doc)
+
+
+def test_extra_group_accepts_rectilinear_member() -> None:
+    from pydantic_zarr.v3 import ExtraGroupSpec
+
+    ta = TypeAdapter(ExtraGroupSpec)
+    recti_arr = {**_ARRAY_DOC_INT32, "chunk_grid": _RECTILINEAR_GRID}
+    doc = {
+        "zarr_format": 3,
+        "node_type": "group",
+        "attributes": {},
+        "members": {"arr": recti_arr},
+    }
+    ta.validate_python(doc)
+
+
+# ---------------------------------------------------------------------------
+# Attributes default and non-generic
+# ---------------------------------------------------------------------------
+
+
+def test_core_attributes_defaults_and_nongeneric() -> None:
+    doc = {
+        "zarr_format": 3,
+        "node_type": "array",
+        "data_type": "int32",
+        "shape": (4,),
+        "chunk_grid": _REGULAR_GRID,
+        "chunk_key_encoding": _DEFAULT_CKE,
+        "fill_value": 0,
+        "codecs": (_BYTES_CODEC,),
+    }  # no "attributes" key
+    result = CORE_ADAPTER.validate_python(doc)
+    assert result.attributes == {}
+
+    from pydantic_zarr.v3 import CoreGroupSpec
+
+    g = TypeAdapter(CoreGroupSpec).validate_python(
+        {"zarr_format": 3, "node_type": "group", "members": {}}
+    )
+    assert g.attributes == {}
+
+
+# ---------------------------------------------------------------------------
+# Drift-guard: shared base fields with loose ArraySpec
+# ---------------------------------------------------------------------------
+
+
+def test_loose_and_core_share_base_fields() -> None:
+    """Loose and Core strict specs must share identical non-variant fields."""
+    from pydantic_zarr.v3 import ArraySpec, CoreFloat64ArraySpec, _BaseArraySpec
 
     shared = set(_BaseArraySpec.model_fields)
     variant = {"data_type", "chunk_grid", "chunk_key_encoding", "fill_value", "codecs"}
     assert set(ArraySpec.model_fields) - variant == shared
-    assert set(Float64ArraySpec.model_fields) - variant == shared
-
-
-# ---- Construction tests for StrictArraySpec (single constructible class) ----
-
-
-def test_strict_array_spec_construct_float64_nan() -> None:
-    """StrictArraySpec with float64 + 'NaN' fill_value constructs successfully."""
-    from pydantic_zarr.v3 import StrictArraySpec
-
-    spec = StrictArraySpec(data_type="float64", fill_value="NaN", **_COMMON)
-    assert spec.data_type == "float64"
-    assert spec.fill_value == "NaN"
-
-
-def test_strict_array_spec_construct_int64_nan_raises() -> None:
-    """StrictArraySpec with int64 + 'NaN' fill_value raises ValidationError."""
-    from pydantic import ValidationError
-
-    from pydantic_zarr.v3 import StrictArraySpec
-
-    with pytest.raises(ValidationError):
-        StrictArraySpec(data_type="int64", fill_value="NaN", **_COMMON)
-
-
-def test_strict_array_spec_construct_unknown_dtype_raises() -> None:
-    """StrictArraySpec with unrecognized data_type raises ValidationError."""
-    from pydantic import ValidationError
-
-    from pydantic_zarr.v3 import StrictArraySpec
-
-    with pytest.raises(ValidationError):
-        StrictArraySpec(data_type="float128", fill_value=0.0, **_COMMON)
-
-
-def test_strict_array_spec_construct_raw_bytes_ok() -> None:
-    """StrictArraySpec with r8 data_type and bytes-tuple fill_value constructs successfully."""
-    from pydantic_zarr.v3 import StrictArraySpec
-
-    spec = StrictArraySpec(data_type="r8", fill_value=(1,), **_COMMON)
-    assert spec.data_type == "r8"
-
-
-def test_strict_array_spec_construct_raw_nan_raises() -> None:
-    """StrictArraySpec with r8 data_type and 'NaN' fill_value raises ValidationError."""
-    from pydantic import ValidationError
-
-    from pydantic_zarr.v3 import StrictArraySpec
-
-    with pytest.raises(ValidationError):
-        StrictArraySpec(data_type="r8", fill_value="NaN", **_COMMON)
-
-
-# ---- Construction tests for public per-dtype classes ----
-
-
-def test_float64_array_spec_construct_infinity() -> None:
-    """Float64ArraySpec constructs directly with fill_value='Infinity'."""
-    from pydantic_zarr.v3 import Float64ArraySpec
-
-    spec = Float64ArraySpec(data_type="float64", fill_value="Infinity", **_COMMON)
-    assert spec.fill_value == "Infinity"
+    assert set(CoreFloat64ArraySpec.model_fields) - variant == shared

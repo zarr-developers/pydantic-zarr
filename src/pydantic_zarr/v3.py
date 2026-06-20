@@ -1068,21 +1068,42 @@ def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, Array
     return dict(sorted(result.items(), key=lambda v: len(v[0])))
 
 
-from pydantic_zarr._strict_v3 import AnyStrictArraySpec as AnyStrictArraySpec  # noqa: E402
-from pydantic_zarr._strict_v3 import BoolArraySpec as BoolArraySpec  # noqa: E402
-from pydantic_zarr._strict_v3 import Complex64ArraySpec as Complex64ArraySpec  # noqa: E402
-from pydantic_zarr._strict_v3 import Complex128ArraySpec as Complex128ArraySpec  # noqa: E402
-from pydantic_zarr._strict_v3 import Float16ArraySpec as Float16ArraySpec  # noqa: E402
-from pydantic_zarr._strict_v3 import Float32ArraySpec as Float32ArraySpec  # noqa: E402
-from pydantic_zarr._strict_v3 import Float64ArraySpec as Float64ArraySpec  # noqa: E402
-from pydantic_zarr._strict_v3 import Int8ArraySpec as Int8ArraySpec  # noqa: E402
-from pydantic_zarr._strict_v3 import Int16ArraySpec as Int16ArraySpec  # noqa: E402
-from pydantic_zarr._strict_v3 import Int32ArraySpec as Int32ArraySpec  # noqa: E402
-from pydantic_zarr._strict_v3 import Int64ArraySpec as Int64ArraySpec  # noqa: E402
-from pydantic_zarr._strict_v3 import RawArraySpec as RawArraySpec  # noqa: E402
-from pydantic_zarr._strict_v3 import StrictArraySpec as StrictArraySpec  # noqa: E402
-from pydantic_zarr._strict_v3 import StrictGroupSpec as StrictGroupSpec  # noqa: E402
-from pydantic_zarr._strict_v3 import Uint8ArraySpec as Uint8ArraySpec  # noqa: E402
-from pydantic_zarr._strict_v3 import Uint16ArraySpec as Uint16ArraySpec  # noqa: E402
-from pydantic_zarr._strict_v3 import Uint32ArraySpec as Uint32ArraySpec  # noqa: E402
-from pydantic_zarr._strict_v3 import Uint64ArraySpec as Uint64ArraySpec  # noqa: E402
+# fmt: off
+# ruff: noqa: E402
+from pydantic_zarr._strict_v3 import AnyCoreArraySpec as AnyCoreArraySpec
+from pydantic_zarr._strict_v3 import AnyExtraArraySpec as AnyExtraArraySpec
+from pydantic_zarr._strict_v3 import CoreArraySpec as CoreArraySpec
+from pydantic_zarr._strict_v3 import CoreBoolArraySpec as CoreBoolArraySpec
+from pydantic_zarr._strict_v3 import CoreComplex64ArraySpec as CoreComplex64ArraySpec
+from pydantic_zarr._strict_v3 import CoreComplex128ArraySpec as CoreComplex128ArraySpec
+from pydantic_zarr._strict_v3 import CoreFloat16ArraySpec as CoreFloat16ArraySpec
+from pydantic_zarr._strict_v3 import CoreFloat32ArraySpec as CoreFloat32ArraySpec
+from pydantic_zarr._strict_v3 import CoreFloat64ArraySpec as CoreFloat64ArraySpec
+from pydantic_zarr._strict_v3 import CoreGroupSpec as CoreGroupSpec
+from pydantic_zarr._strict_v3 import CoreInt8ArraySpec as CoreInt8ArraySpec
+from pydantic_zarr._strict_v3 import CoreInt16ArraySpec as CoreInt16ArraySpec
+from pydantic_zarr._strict_v3 import CoreInt32ArraySpec as CoreInt32ArraySpec
+from pydantic_zarr._strict_v3 import CoreInt64ArraySpec as CoreInt64ArraySpec
+from pydantic_zarr._strict_v3 import CoreRawArraySpec as CoreRawArraySpec
+from pydantic_zarr._strict_v3 import CoreUint8ArraySpec as CoreUint8ArraySpec
+from pydantic_zarr._strict_v3 import CoreUint16ArraySpec as CoreUint16ArraySpec
+from pydantic_zarr._strict_v3 import CoreUint32ArraySpec as CoreUint32ArraySpec
+from pydantic_zarr._strict_v3 import CoreUint64ArraySpec as CoreUint64ArraySpec
+from pydantic_zarr._strict_v3 import ExtraArraySpec as ExtraArraySpec
+from pydantic_zarr._strict_v3 import ExtraBoolArraySpec as ExtraBoolArraySpec
+from pydantic_zarr._strict_v3 import ExtraComplex64ArraySpec as ExtraComplex64ArraySpec
+from pydantic_zarr._strict_v3 import ExtraComplex128ArraySpec as ExtraComplex128ArraySpec
+from pydantic_zarr._strict_v3 import ExtraFloat16ArraySpec as ExtraFloat16ArraySpec
+from pydantic_zarr._strict_v3 import ExtraFloat32ArraySpec as ExtraFloat32ArraySpec
+from pydantic_zarr._strict_v3 import ExtraFloat64ArraySpec as ExtraFloat64ArraySpec
+from pydantic_zarr._strict_v3 import ExtraGroupSpec as ExtraGroupSpec
+from pydantic_zarr._strict_v3 import ExtraInt8ArraySpec as ExtraInt8ArraySpec
+from pydantic_zarr._strict_v3 import ExtraInt16ArraySpec as ExtraInt16ArraySpec
+from pydantic_zarr._strict_v3 import ExtraInt32ArraySpec as ExtraInt32ArraySpec
+from pydantic_zarr._strict_v3 import ExtraInt64ArraySpec as ExtraInt64ArraySpec
+from pydantic_zarr._strict_v3 import ExtraRawArraySpec as ExtraRawArraySpec
+from pydantic_zarr._strict_v3 import ExtraUint8ArraySpec as ExtraUint8ArraySpec
+from pydantic_zarr._strict_v3 import ExtraUint16ArraySpec as ExtraUint16ArraySpec
+from pydantic_zarr._strict_v3 import ExtraUint32ArraySpec as ExtraUint32ArraySpec
+from pydantic_zarr._strict_v3 import ExtraUint64ArraySpec as ExtraUint64ArraySpec
+# fmt: on
