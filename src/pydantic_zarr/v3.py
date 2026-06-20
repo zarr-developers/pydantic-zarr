@@ -1068,42 +1068,41 @@ def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, Array
     return dict(sorted(result.items(), key=lambda v: len(v[0])))
 
 
-# fmt: off
-# ruff: noqa: E402
-from pydantic_zarr._strict_v3 import AnyCoreArraySpec as AnyCoreArraySpec
-from pydantic_zarr._strict_v3 import AnyExtraArraySpec as AnyExtraArraySpec
-from pydantic_zarr._strict_v3 import CoreArraySpec as CoreArraySpec
-from pydantic_zarr._strict_v3 import CoreBoolArraySpec as CoreBoolArraySpec
-from pydantic_zarr._strict_v3 import CoreComplex64ArraySpec as CoreComplex64ArraySpec
-from pydantic_zarr._strict_v3 import CoreComplex128ArraySpec as CoreComplex128ArraySpec
-from pydantic_zarr._strict_v3 import CoreFloat16ArraySpec as CoreFloat16ArraySpec
-from pydantic_zarr._strict_v3 import CoreFloat32ArraySpec as CoreFloat32ArraySpec
-from pydantic_zarr._strict_v3 import CoreFloat64ArraySpec as CoreFloat64ArraySpec
-from pydantic_zarr._strict_v3 import CoreGroupSpec as CoreGroupSpec
-from pydantic_zarr._strict_v3 import CoreInt8ArraySpec as CoreInt8ArraySpec
-from pydantic_zarr._strict_v3 import CoreInt16ArraySpec as CoreInt16ArraySpec
-from pydantic_zarr._strict_v3 import CoreInt32ArraySpec as CoreInt32ArraySpec
-from pydantic_zarr._strict_v3 import CoreInt64ArraySpec as CoreInt64ArraySpec
-from pydantic_zarr._strict_v3 import CoreRawArraySpec as CoreRawArraySpec
-from pydantic_zarr._strict_v3 import CoreUint8ArraySpec as CoreUint8ArraySpec
-from pydantic_zarr._strict_v3 import CoreUint16ArraySpec as CoreUint16ArraySpec
-from pydantic_zarr._strict_v3 import CoreUint32ArraySpec as CoreUint32ArraySpec
-from pydantic_zarr._strict_v3 import CoreUint64ArraySpec as CoreUint64ArraySpec
-from pydantic_zarr._strict_v3 import ExtraArraySpec as ExtraArraySpec
-from pydantic_zarr._strict_v3 import ExtraBoolArraySpec as ExtraBoolArraySpec
-from pydantic_zarr._strict_v3 import ExtraComplex64ArraySpec as ExtraComplex64ArraySpec
-from pydantic_zarr._strict_v3 import ExtraComplex128ArraySpec as ExtraComplex128ArraySpec
-from pydantic_zarr._strict_v3 import ExtraFloat16ArraySpec as ExtraFloat16ArraySpec
-from pydantic_zarr._strict_v3 import ExtraFloat32ArraySpec as ExtraFloat32ArraySpec
-from pydantic_zarr._strict_v3 import ExtraFloat64ArraySpec as ExtraFloat64ArraySpec
-from pydantic_zarr._strict_v3 import ExtraGroupSpec as ExtraGroupSpec
-from pydantic_zarr._strict_v3 import ExtraInt8ArraySpec as ExtraInt8ArraySpec
-from pydantic_zarr._strict_v3 import ExtraInt16ArraySpec as ExtraInt16ArraySpec
-from pydantic_zarr._strict_v3 import ExtraInt32ArraySpec as ExtraInt32ArraySpec
-from pydantic_zarr._strict_v3 import ExtraInt64ArraySpec as ExtraInt64ArraySpec
-from pydantic_zarr._strict_v3 import ExtraRawArraySpec as ExtraRawArraySpec
-from pydantic_zarr._strict_v3 import ExtraUint8ArraySpec as ExtraUint8ArraySpec
-from pydantic_zarr._strict_v3 import ExtraUint16ArraySpec as ExtraUint16ArraySpec
-from pydantic_zarr._strict_v3 import ExtraUint32ArraySpec as ExtraUint32ArraySpec
-from pydantic_zarr._strict_v3 import ExtraUint64ArraySpec as ExtraUint64ArraySpec
-# fmt: on
+from pydantic_zarr._strict_v3 import (  # noqa: E402, I001
+    AnyCoreArraySpec as AnyCoreArraySpec,
+    AnyExtraArraySpec as AnyExtraArraySpec,
+    CoreArraySpec as CoreArraySpec,
+    CoreBoolArraySpec as CoreBoolArraySpec,
+    CoreComplex128ArraySpec as CoreComplex128ArraySpec,
+    CoreComplex64ArraySpec as CoreComplex64ArraySpec,
+    CoreFloat16ArraySpec as CoreFloat16ArraySpec,
+    CoreFloat32ArraySpec as CoreFloat32ArraySpec,
+    CoreFloat64ArraySpec as CoreFloat64ArraySpec,
+    CoreGroupSpec as CoreGroupSpec,
+    CoreInt16ArraySpec as CoreInt16ArraySpec,
+    CoreInt32ArraySpec as CoreInt32ArraySpec,
+    CoreInt64ArraySpec as CoreInt64ArraySpec,
+    CoreInt8ArraySpec as CoreInt8ArraySpec,
+    CoreRawArraySpec as CoreRawArraySpec,
+    CoreUint16ArraySpec as CoreUint16ArraySpec,
+    CoreUint32ArraySpec as CoreUint32ArraySpec,
+    CoreUint64ArraySpec as CoreUint64ArraySpec,
+    CoreUint8ArraySpec as CoreUint8ArraySpec,
+    ExtraArraySpec as ExtraArraySpec,
+    ExtraBoolArraySpec as ExtraBoolArraySpec,
+    ExtraComplex128ArraySpec as ExtraComplex128ArraySpec,
+    ExtraComplex64ArraySpec as ExtraComplex64ArraySpec,
+    ExtraFloat16ArraySpec as ExtraFloat16ArraySpec,
+    ExtraFloat32ArraySpec as ExtraFloat32ArraySpec,
+    ExtraFloat64ArraySpec as ExtraFloat64ArraySpec,
+    ExtraGroupSpec as ExtraGroupSpec,
+    ExtraInt16ArraySpec as ExtraInt16ArraySpec,
+    ExtraInt32ArraySpec as ExtraInt32ArraySpec,
+    ExtraInt64ArraySpec as ExtraInt64ArraySpec,
+    ExtraInt8ArraySpec as ExtraInt8ArraySpec,
+    ExtraRawArraySpec as ExtraRawArraySpec,
+    ExtraUint16ArraySpec as ExtraUint16ArraySpec,
+    ExtraUint32ArraySpec as ExtraUint32ArraySpec,
+    ExtraUint64ArraySpec as ExtraUint64ArraySpec,
+    ExtraUint8ArraySpec as ExtraUint8ArraySpec,
+)
