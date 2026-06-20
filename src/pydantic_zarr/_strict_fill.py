@@ -13,9 +13,13 @@ from typing import Annotated, Any
 
 from pydantic import AfterValidator, BeforeValidator
 from zarr_metadata import (
+    BoolFillValue,
+    Complex64FillValue,
+    Complex128FillValue,
     Float16FillValue,
     Float32FillValue,
     Float64FillValue,
+    RawBytesFillValue,
 )
 from zarr_metadata.v3.data_type.float16 import (  # noqa: F401 (parity)
     Float16SpecialFillValue,
@@ -88,3 +92,47 @@ StrictUint8Fill = Annotated[int | float, BeforeValidator(_make_int_check(*_INT_R
 StrictUint16Fill = Annotated[int | float, BeforeValidator(_make_int_check(*_INT_RANGE["uint16"]))]
 StrictUint32Fill = Annotated[int | float, BeforeValidator(_make_int_check(*_INT_RANGE["uint32"]))]
 StrictUint64Fill = Annotated[int | float, BeforeValidator(_make_int_check(*_INT_RANGE["uint64"]))]
+
+
+def _check_bool(value: Any) -> Any:
+    # BeforeValidator: reject anything that isn't a real bool BEFORE pydantic coerces 1 -> True.
+    if type(value) is not bool:
+        raise ValueError(f"bool fill must be a boolean, got {value!r}")
+    return value
+
+
+StrictBoolFill = Annotated[BoolFillValue, BeforeValidator(_check_bool)]
+
+
+def _make_complex_check(component_check: Any) -> Any:
+    def _check(value: Any) -> Any:
+        # BeforeValidator: value is the raw input; require a 2-element sequence and validate each.
+        if not isinstance(value, (tuple, list)) or len(value) != 2:
+            raise ValueError(f"complex fill must be a 2-tuple, got {value!r}")
+        for component in value:
+            component_check(component)  # raises on a bad float component
+        return value
+
+    return _check
+
+
+# reuse the float checks from Task 1 for each component
+StrictComplex64Fill = Annotated[
+    Complex64FillValue, BeforeValidator(_make_complex_check(_make_float_check(hex_float32)))
+]
+StrictComplex128Fill = Annotated[
+    Complex128FillValue, BeforeValidator(_make_complex_check(_make_float_check(hex_float64)))
+]
+
+
+def _check_raw(value: Any) -> Any:
+    # BeforeValidator: require a real tuple of in-range, non-bool ints on the RAW input.
+    if not isinstance(value, tuple):
+        raise ValueError(f"raw fill must be a tuple, got {value!r}")  # noqa: TRY004
+    for b in value:
+        if isinstance(b, bool) or not isinstance(b, int) or not (0 <= b <= 255):
+            raise ValueError(f"raw fill byte out of range [0, 255]: {b!r}")
+    return value
+
+
+StrictRawFill = Annotated[RawBytesFillValue, BeforeValidator(_check_raw)]

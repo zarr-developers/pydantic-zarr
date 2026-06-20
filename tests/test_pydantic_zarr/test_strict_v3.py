@@ -449,3 +449,57 @@ def test_strict_int8_fill_rejects_bad(bad: object) -> None:
 def test_strict_uint8_fill_rejects_bad(bad: object) -> None:
     with pytest.raises(ValidationError):
         TypeAdapter(StrictUint8Fill).validate_python(bad)
+
+
+# ---------------------------------------------------------------------------
+# Bool fill wrapper tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("good", "bad"), [(True, 1), (False, "True")])
+def test_strict_bool_fill(good: object, bad: object) -> None:
+    from pydantic_zarr._strict_fill import StrictBoolFill
+
+    TypeAdapter(StrictBoolFill).validate_python(good)
+    with pytest.raises(ValidationError):
+        TypeAdapter(StrictBoolFill).validate_python(bad)
+
+
+# ---------------------------------------------------------------------------
+# Complex fill wrapper tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("good", [(1.0, 2.0), ("NaN", 1.0), (1.0, "Infinity")])
+def test_strict_complex64_fill_accepts(good: object) -> None:
+    from pydantic_zarr._strict_fill import StrictComplex64Fill
+
+    TypeAdapter(StrictComplex64Fill).validate_python(good)
+
+
+@pytest.mark.parametrize("bad", [("garbage", 1.0), 1.0, ("NaN",)])
+def test_strict_complex64_fill_rejects(bad: object) -> None:
+    from pydantic_zarr._strict_fill import StrictComplex64Fill
+
+    with pytest.raises(ValidationError):
+        TypeAdapter(StrictComplex64Fill).validate_python(bad)
+
+
+# ---------------------------------------------------------------------------
+# Raw bytes fill wrapper tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("good", [(1, 2, 3), (0, 255), ()])
+def test_strict_raw_fill_accepts(good: object) -> None:
+    from pydantic_zarr._strict_fill import StrictRawFill
+
+    TypeAdapter(StrictRawFill).validate_python(good)
+
+
+@pytest.mark.parametrize("bad", [(1, 999), (-1, 0), [1, 2], ("a",)])
+def test_strict_raw_fill_rejects(bad: object) -> None:
+    from pydantic_zarr._strict_fill import StrictRawFill
+
+    with pytest.raises(ValidationError):
+        TypeAdapter(StrictRawFill).validate_python(bad)
