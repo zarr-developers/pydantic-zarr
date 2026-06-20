@@ -281,6 +281,52 @@ print(GroupSpec.from_flat(tree).model_dump())
 """
 ```
 
+## Using generic types
+
+`GroupSpec` and `ArraySpec` are both generic Pydantic models. `ArraySpec` takes one type
+parameter that specializes the type of its `attributes` field. `GroupSpec` takes two type
+parameters: the first specializes `GroupSpec.attributes`, and the second specializes the type of
+the *values* of `GroupSpec.members`.
+
+This lets you encode domain-specific metadata in a type-safe way:
+
+```python
+from pydantic import BaseModel
+
+from pydantic_zarr.v2 import ArraySpec, GroupSpec
+
+
+class ArrayAttrs(BaseModel):
+    units: str
+    resolution: float
+
+
+class GroupAttrs(BaseModel):
+    author: str
+
+
+# ArraySpec with typed attributes
+arr = ArraySpec[ArrayAttrs](
+    shape=(100,),
+    dtype="float64",
+    chunks=(10,),
+    fill_value=0.0,
+    attributes=ArrayAttrs(units="meters", resolution=0.5),
+)
+print(type(arr.attributes).__name__)
+#> ArrayAttrs
+print(arr.attributes.units)
+#> meters
+
+# GroupSpec with typed attributes
+grp = GroupSpec[GroupAttrs, ArraySpec[ArrayAttrs]](
+    attributes=GroupAttrs(author="me"),
+    members={"arr": arr},
+)
+print(grp.attributes.author)
+#> me
+```
+
 ## Comparing `GroupSpec` and `ArraySpec` models
 
 `GroupSpec` and `ArraySpec` both have `like` methods that take another `GroupSpec` or `ArraySpec` as an argument and return `True` (the models are like each other) or `False` (the models are not like each other).

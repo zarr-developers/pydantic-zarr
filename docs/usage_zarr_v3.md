@@ -122,22 +122,87 @@ print(list(grp_doc.keys()))
 JSON-compatible `fill_value`. This is suitable for generic code that does not know the dtype at
 construction time, or for typed-attribute workflows where `ArraySpec[MyAttrs]` is used.
 
-`StrictArraySpec` is a *strict* discriminated union exported from `pydantic_zarr.v3`. Pydantic
-selects the appropriate per-dtype variant based on the `data_type` field and then validates the
-`fill_value` against that dtype's allowed values. For example, `float64` accepts numeric fill
-values as well as the special strings `"NaN"`, `"Infinity"`, and `"-Infinity"`, while integer
-types do not.
+The strict classes couple `fill_value` validation to the array's `data_type`. For example,
+`float64` accepts numeric fill values as well as the special strings `"NaN"`, `"Infinity"`, and
+`"-Infinity"`, while integer types do not. There are three usage paths:
 
-Because `StrictArraySpec` is a `Union` type alias (not a class), you cannot call
-`StrictArraySpec(...)` directly. Use `TypeAdapter` to validate data from a `dict`, or construct
-one of the concrete per-dtype classes (e.g. `_Float64ArraySpec`) directly. In practice the most
-common pattern is to use `TypeAdapter`:
+### Path 1 — Build a strict spec ergonomically: `StrictArraySpec`
+
+`StrictArraySpec` is a *single constructible class* exported from `pydantic_zarr.v3`. Its
+`fill_value` is annotated loosely (`JSONValue`) but validated at runtime against the per-`data_type`
+rules. An unrecognized `data_type` is rejected.
+
+```python
+from pydantic import ValidationError
+from pydantic_zarr.v3 import StrictArraySpec
+
+# float64 accepts "NaN" as a fill value
+arr_float = StrictArraySpec(
+    shape=(100,),
+    data_type="float64",
+    chunk_grid={"name": "regular", "configuration": {"chunk_shape": [100]}},
+    chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
+    fill_value="NaN",
+    codecs=[{"name": "bytes", "configuration": {"endian": "little"}}],
+    attributes={},
+)
+print(type(arr_float).__name__)
+#> StrictArraySpec
+
+# int64 rejects "NaN" — fill_value must be an integer
+try:
+    StrictArraySpec(
+        shape=(100,),
+        data_type="int64",
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": [100]}},
+        chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
+        fill_value="NaN",
+        codecs=[{"name": "bytes", "configuration": {"endian": "little"}}],
+        attributes={},
+    )
+except ValidationError:
+    print("int64 + 'NaN' rejected as expected")
+#> int64 + 'NaN' rejected as expected
+```
+
+### Path 2 — Build with precise static types: per-dtype classes
+
+For each supported Zarr v3 data type there is a corresponding class whose `fill_value` field
+carries the exact static type, giving mypy and IDEs precise information. All per-dtype classes are
+importable from `pydantic_zarr.v3`:
+
+`BoolArraySpec`, `Int8ArraySpec`, `Int16ArraySpec`, `Int32ArraySpec`, `Int64ArraySpec`,
+`Uint8ArraySpec`, `Uint16ArraySpec`, `Uint32ArraySpec`, `Uint64ArraySpec`,
+`Float16ArraySpec`, `Float32ArraySpec`, `Float64ArraySpec`,
+`Complex64ArraySpec`, `Complex128ArraySpec`, `RawArraySpec`.
+
+```python
+from pydantic_zarr.v3 import Float64ArraySpec
+
+arr = Float64ArraySpec(
+    shape=(100,),
+    data_type="float64",
+    chunk_grid={"name": "regular", "configuration": {"chunk_shape": [100]}},
+    chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
+    fill_value="NaN",
+    codecs=[{"name": "bytes", "configuration": {"endian": "little"}}],
+    attributes={},
+)
+print(type(arr).__name__)
+#> Float64ArraySpec
+```
+
+### Path 3 — Validate an existing `zarr.json` dict: `AnyStrictArraySpec`
+
+`AnyStrictArraySpec` is the discriminated union over all per-dtype classes. It is the right
+validation target when you have a raw `dict` (e.g. parsed from `zarr.json`) and want Pydantic to
+route to the precise per-dtype class based on `data_type`.
 
 ```python
 from pydantic import TypeAdapter, ValidationError
-from pydantic_zarr.v3 import StrictArraySpec
+from pydantic_zarr.v3 import AnyStrictArraySpec
 
-ta = TypeAdapter(StrictArraySpec)
+ta = TypeAdapter(AnyStrictArraySpec)
 
 # float64 accepts "NaN" as a fill value
 arr_float = ta.validate_python(
@@ -152,7 +217,7 @@ arr_float = ta.validate_python(
     }
 )
 print(type(arr_float).__name__)
-#> _Float64ArraySpec
+#> Float64ArraySpec
 
 # int64 rejects "NaN" — fill_value must be an integer
 try:
@@ -173,10 +238,10 @@ except ValidationError:
 ```
 
 `StrictGroupSpec` is the group counterpart. Its `members` must recursively contain only
-`StrictArraySpec` or `StrictGroupSpec` instances:
+`AnyStrictArraySpec` variants or `StrictGroupSpec` instances:
 
 ```python
-from pydantic_zarr.v3 import StrictGroupSpec
+from pydantic_zarr.v3 import Float64ArraySpec, StrictGroupSpec
 
 grp = StrictGroupSpec(
     attributes={},
@@ -194,11 +259,10 @@ grp = StrictGroupSpec(
         }
     },
 )
-from pydantic_zarr._strict_v3 import _Float64ArraySpec
-print(isinstance(grp.members["arr"], _Float64ArraySpec))
+print(isinstance(grp.members["arr"], Float64ArraySpec))
 #> True
 ```
 
-> **Note:** `StrictArraySpec` does not support generic attributes (`ArraySpec[MyAttrs]`). The
+> **Note:** Strict classes do not support generic attributes (`ArraySpec[MyAttrs]`). The
 > `attributes` field is `Mapping[str, object]`. Users who need typed attributes should use the
 > loose `ArraySpec[MyAttrs]`.
