@@ -15,7 +15,7 @@ symbol and its replacement.
 | `RegularChunking`, `RegularChunkingConfig` | plain dicts or `zarr_metadata.RegularChunkGridMetadata` |
 | `DefaultChunkKeyEncoding`, `DefaultChunkKeyEncodingConfig` | `zarr_metadata.DefaultChunkKeyEncodingMetadata` |
 | `V2ChunkKeyEncoding`, `V2ChunkKeyEncodingConfig` | `zarr_metadata.V2ChunkKeyEncodingMetadata` |
-| `FillValue` union | `zarr_metadata.JSONValue` (loose) or `StrictArraySpec` (per-dtype) |
+| `FillValue` union | `zarr_metadata.JSONValue` (loose) or `CoreArraySpec`/`ExtraArraySpec` (per-dtype) |
 
 ### `pydantic_zarr.v2`
 
@@ -48,36 +48,42 @@ on-disk document pair that Zarr v2 uses:
 - `ArraySpec.to_store_json()` returns `{".zarray": ..., ".zattrs": ...}`.
 - `GroupSpec.to_store_json()` returns `{".zgroup": ..., ".zattrs": ...}`.
 
-### `StrictArraySpec`, per-dtype classes, `AnyStrictArraySpec`, and `StrictGroupSpec` (v3 only)
+### Core and Extra strict families (v3 only)
 
-Three classes/types related to strict validation are now exported from `pydantic_zarr.v3`:
+Two families of strict validation classes are now exported from `pydantic_zarr.v3`:
 
-- **`StrictArraySpec`** — a directly constructible class. Its `fill_value` is annotated loosely
+**Core family** — restricts chunk grids to `regular` and codecs to the seven types defined in
+the core Zarr v3 spec (blosc, bytes, crc32c, gzip, sharding_indexed, transpose, zstd):
+
+- **`CoreArraySpec`** — directly constructible. Its `fill_value` is annotated loosely
   (`JSONValue`) but validated at runtime against the rules for the given `data_type`. An
-  unrecognized `data_type` is rejected. Use this when you want a single ergonomic constructor
-  without caring about the static fill-value type.
+  unrecognized `data_type` is rejected.
 
-- **Per-dtype classes** — one class per Zarr v3 data type
-  (`BoolArraySpec`, `Int8ArraySpec`, `Int16ArraySpec`, `Int32ArraySpec`, `Int64ArraySpec`,
-  `Uint8ArraySpec`, `Uint16ArraySpec`, `Uint32ArraySpec`, `Uint64ArraySpec`,
-  `Float16ArraySpec`, `Float32ArraySpec`, `Float64ArraySpec`,
-  `Complex64ArraySpec`, `Complex128ArraySpec`, `RawArraySpec`).
-  Each has a precisely typed `fill_value` field. Use these when you want mypy/IDE to know the
-  exact fill type at static analysis time.
+- **Core per-dtype classes** —
+  `CoreBoolArraySpec`, `CoreInt8ArraySpec`, `CoreInt16ArraySpec`, `CoreInt32ArraySpec`,
+  `CoreInt64ArraySpec`, `CoreUint8ArraySpec`, `CoreUint16ArraySpec`, `CoreUint32ArraySpec`,
+  `CoreUint64ArraySpec`, `CoreFloat16ArraySpec`, `CoreFloat32ArraySpec`, `CoreFloat64ArraySpec`,
+  `CoreComplex64ArraySpec`, `CoreComplex128ArraySpec`, `CoreRawArraySpec`.
+  Each has a precisely typed `fill_value` field for static analysis.
 
-- **`AnyStrictArraySpec`** — a discriminated union over all per-dtype classes. This is the
-  validation target when you have a raw `dict` (e.g. parsed from `zarr.json`) and want Pydantic
-  to route to the correct per-dtype class based on `data_type`.
+- **`AnyCoreArraySpec`** — discriminated union over all Core per-dtype classes. Use with
+  `TypeAdapter(AnyCoreArraySpec).validate_python(doc)` to route by `data_type`.
 
-`StrictGroupSpec` is the group counterpart. Its `members` must recursively contain only
-`AnyStrictArraySpec` variants or `StrictGroupSpec` instances.
+- **`CoreGroupSpec`** — group whose members are recursively `AnyCoreArraySpec | CoreGroupSpec`.
+
+**Extra family** — extends Core by also accepting `rectilinear` chunk grids and two additional
+codec types (`scale_offset`, `cast_value`):
+
+- **`ExtraArraySpec`**, **Extra per-dtype classes** (`ExtraBoolArraySpec`, `ExtraInt8ArraySpec`,
+  ..., `ExtraFloat64ArraySpec`, ..., `ExtraComplex128ArraySpec`, `ExtraRawArraySpec`),
+  **`AnyExtraArraySpec`**, **`ExtraGroupSpec`** — exact mirrors of the Core family.
 
 ```python
 from pydantic import TypeAdapter
-from pydantic_zarr.v3 import AnyStrictArraySpec, Float64ArraySpec, StrictArraySpec
+from pydantic_zarr.v3 import AnyCoreArraySpec, CoreArraySpec, CoreFloat64ArraySpec
 
 # Path 1: ergonomic single class
-arr1 = StrictArraySpec(
+arr1 = CoreArraySpec(
     shape=(100,),
     data_type="float64",
     chunk_grid={"name": "regular", "configuration": {"chunk_shape": [100]}},
@@ -88,7 +94,7 @@ arr1 = StrictArraySpec(
 )
 
 # Path 2: per-dtype class for precise static types
-arr2 = Float64ArraySpec(
+arr2 = CoreFloat64ArraySpec(
     shape=(100,),
     data_type="float64",
     chunk_grid={"name": "regular", "configuration": {"chunk_shape": [100]}},
@@ -99,7 +105,7 @@ arr2 = Float64ArraySpec(
 )
 
 # Path 3: validate a zarr.json dict into the precise per-dtype class
-arr3 = TypeAdapter(AnyStrictArraySpec).validate_python(
+arr3 = TypeAdapter(AnyCoreArraySpec).validate_python(
     {
         "shape": (100,),
         "data_type": "float64",
@@ -111,7 +117,7 @@ arr3 = TypeAdapter(AnyStrictArraySpec).validate_python(
     }
 )
 print(type(arr3).__name__)
-#> Float64ArraySpec
+#> CoreFloat64ArraySpec
 ```
 
 See [Usage (Zarr V3)](usage_zarr_v3.md#loose-vs-strict-validation) for a full example.
