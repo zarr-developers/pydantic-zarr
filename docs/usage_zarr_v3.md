@@ -238,6 +238,47 @@ The full per-dtype class list (each importable from `pydantic_zarr.v3`, with an 
 `CoreBoolArraySpec`, `CoreInt8ArraySpec`/`16`/`32`/`64`, `CoreUint8ArraySpec`/`16`/`32`/`64`,
 `CoreFloat16ArraySpec`/`32`/`64`, `CoreComplex64ArraySpec`/`128`, `CoreRawArraySpec`.
 
+### Ergonomic construction
+
+The per-dtype and family-wide strict classes expose a `.create()` classmethod that fills every
+field with a sensible default, so you can focus only on the fields you care about:
+
+```python {group="strict-v3"}
+import numpy as np
+
+# bare call — defaults to float64, empty shape, NaN fill_value
+bare = CoreArraySpec.create()
+print(type(bare).__name__)
+#> CoreArraySpec
+print(bare.data_type)
+#> float64
+
+# specify only shape — everything else gets sensible defaults
+shaped = CoreArraySpec.create(shape=(10, 10))
+print(type(shaped).__name__)
+#> CoreArraySpec
+print(shaped.shape)
+#> (10, 10)
+print(shaped.data_type)
+#> float64
+
+# per-dtype class with a single override
+inf_arr = CoreFloat64ArraySpec.create(fill_value="Infinity")
+print(type(inf_arr).__name__)
+#> CoreFloat64ArraySpec
+print(inf_arr.fill_value)
+#> Infinity
+
+# derive a strict spec directly from a numpy array
+derived = CoreFloat64ArraySpec.from_array(np.zeros((4, 4), dtype="float64"))
+print(type(derived).__name__)
+#> CoreFloat64ArraySpec
+print(derived.shape)
+#> (4, 4)
+print(derived.data_type)
+#> float64
+```
+
 ### Validating a raw `dict`: `AnyCoreArraySpec` / `AnyExtraArraySpec`
 
 When you have a `dict` (e.g. parsed from a `zarr.json`), validate it through the family's
