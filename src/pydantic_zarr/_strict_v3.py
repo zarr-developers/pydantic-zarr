@@ -230,6 +230,46 @@ class _CoreBase(_BaseArraySpec[Mapping[str, object]]):
         )
         return cls(**resolved, **kwargs)
 
+    @classmethod
+    def from_array(
+        cls,
+        array: Any,
+        *,
+        attributes: Any = "auto",
+        chunk_grid: Any = "auto",
+        chunk_key_encoding: Any = "auto",
+        fill_value: Any = "auto",
+        codecs: Any = "auto",
+        dimension_names: Any = "auto",
+    ) -> Self:
+        from pydantic_zarr.v3 import (
+            auto_attributes,
+            auto_chunk_grid,
+            auto_chunk_key_encoding,
+            auto_codecs,
+            auto_dimension_names,
+            auto_fill_value,
+            parse_dtype_v3,
+        )
+
+        doc: dict[str, Any] = {
+            "shape": tuple(array.shape),
+            "data_type": parse_dtype_v3(array.dtype),
+            "attributes": auto_attributes(array) if attributes == "auto" else attributes,
+            "chunk_grid": auto_chunk_grid(array) if chunk_grid == "auto" else chunk_grid,
+            "chunk_key_encoding": (
+                auto_chunk_key_encoding(array)
+                if chunk_key_encoding == "auto"
+                else chunk_key_encoding
+            ),
+            "fill_value": auto_fill_value(array) if fill_value == "auto" else fill_value,
+            "codecs": auto_codecs(array) if codecs == "auto" else codecs,
+            "dimension_names": (
+                auto_dimension_names(array) if dimension_names == "auto" else dimension_names
+            ),
+        }
+        return cls.model_validate(doc)
+
 
 class _ExtraBase(_BaseArraySpec[Mapping[str, object]]):
     attributes: Mapping[str, object] = {}
@@ -261,6 +301,46 @@ class _ExtraBase(_BaseArraySpec[Mapping[str, object]]):
             default_data_type=getattr(cls, "_default_data_type", ""),
         )
         return cls(**resolved, **kwargs)
+
+    @classmethod
+    def from_array(
+        cls,
+        array: Any,
+        *,
+        attributes: Any = "auto",
+        chunk_grid: Any = "auto",
+        chunk_key_encoding: Any = "auto",
+        fill_value: Any = "auto",
+        codecs: Any = "auto",
+        dimension_names: Any = "auto",
+    ) -> Self:
+        from pydantic_zarr.v3 import (
+            auto_attributes,
+            auto_chunk_grid,
+            auto_chunk_key_encoding,
+            auto_codecs,
+            auto_dimension_names,
+            auto_fill_value,
+            parse_dtype_v3,
+        )
+
+        doc: dict[str, Any] = {
+            "shape": tuple(array.shape),
+            "data_type": parse_dtype_v3(array.dtype),
+            "attributes": auto_attributes(array) if attributes == "auto" else attributes,
+            "chunk_grid": auto_chunk_grid(array) if chunk_grid == "auto" else chunk_grid,
+            "chunk_key_encoding": (
+                auto_chunk_key_encoding(array)
+                if chunk_key_encoding == "auto"
+                else chunk_key_encoding
+            ),
+            "fill_value": auto_fill_value(array) if fill_value == "auto" else fill_value,
+            "codecs": auto_codecs(array) if codecs == "auto" else codecs,
+            "dimension_names": (
+                auto_dimension_names(array) if dimension_names == "auto" else dimension_names
+            ),
+        }
+        return cls.model_validate(doc)
 
 
 # ---------------------------------------------------------------------------

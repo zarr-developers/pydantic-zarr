@@ -577,3 +577,37 @@ def test_core_float64_defaults_fill() -> None:
 
     spec = CoreFloat64ArraySpec.create(shape=(4,))
     assert spec.fill_value == "NaN"  # float64 default
+
+
+# ---------------------------------------------------------------------------
+# from_array constructors (Task 11)
+# ---------------------------------------------------------------------------
+
+
+def test_core_from_array_single_class() -> None:
+    import numpy as np
+
+    from pydantic_zarr.v3 import CoreArraySpec
+
+    spec = CoreArraySpec.from_array(np.zeros((4, 4), dtype="float64"))
+    assert spec.data_type == "float64"
+    assert spec.shape == (4, 4)
+    assert spec.chunk_grid["configuration"]["chunk_shape"] == (4, 4)
+
+
+def test_core_float64_from_array_returns_that_class() -> None:
+    import numpy as np
+
+    from pydantic_zarr.v3 import CoreFloat64ArraySpec
+
+    spec = CoreFloat64ArraySpec.from_array(np.zeros((2,), dtype="float64"))
+    assert type(spec).__name__ == "CoreFloat64ArraySpec"
+
+
+def test_core_float64_from_array_wrong_dtype_raises() -> None:
+    import numpy as np
+
+    from pydantic_zarr.v3 import CoreFloat64ArraySpec
+
+    with pytest.raises(ValidationError):
+        CoreFloat64ArraySpec.from_array(np.zeros((2,), dtype="int32"))
