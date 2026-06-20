@@ -73,7 +73,24 @@ def test_oracle_codec(fam: str, codec: object, ok: bool) -> None:
     assert is_valid_codec(fam, codec) is ok
 
 
-_DTYPES = ["bool", "int8", "uint8", "int64", "float16", "float64", "complex64", "r8", "r16"]
+_DTYPES = [
+    "bool",
+    "int8",
+    "int16",
+    "int32",
+    "int64",
+    "uint8",
+    "uint16",
+    "uint32",
+    "uint64",
+    "float16",
+    "float32",
+    "float64",
+    "complex64",
+    "complex128",
+    "r8",
+    "r16",
+]
 # candidate fill values spanning valid + adversarial inputs
 _FILLS = st.one_of(
     st.booleans(),
