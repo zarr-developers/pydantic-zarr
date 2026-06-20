@@ -184,9 +184,12 @@ has its own `_CoreBase` / `_ExtraBase` (carrying that family's `chunk_grid` / `c
 types) and its own 15 concrete per-dtype classes. ~30 per-dtype classes total. Chosen over a
 generic `Float64Spec[TGrid, TCodec]` (which halves the class count but reintroduces generics and
 produces verbose revealed types like `Float64Spec[RegularChunkGridObject, Union[...]]`),
-consistent with the non-generic-strict decision. Per-dtype classes may be produced via a small
-internal factory to avoid hand-writing 30 near-identical bodies, but the public result is plain
-named classes.
+consistent with the non-generic-strict decision. The ~30 per-dtype classes are written out
+**explicitly as real source** (NOT generated at runtime via `create_model` — a runtime factory
+gives correct validation but mypy/IDEs cannot see the generated classes, and these per-dtype
+classes are public and meant to be statically typed). They are short and mechanical (each adds
+only `data_type` + `fill_value` to its family base), so the duplication is acceptable for full
+static typing.
 
 **Codec string strictness:** the bare-string short-hand codec form is permitted (the spec allows
 it) but, in strict mode, only for **known** codec names — the union of the family's

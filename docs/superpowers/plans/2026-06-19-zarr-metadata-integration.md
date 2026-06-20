@@ -968,6 +968,18 @@ git commit -m "feat(v3): 'both' strict design — constructible StrictArraySpec 
 
 ---
 
+## Task 13: Core/Extra strict families (replaces the "both" Strict* design)
+
+**Added 2026-06-20.** Replaces Task 12's single `Strict*` family with TWO families — `Core` (core Zarr v3 spec only) and `Extra` (core + well-known zarr extensions) — differing in `chunk_grid` and `codecs` vocabulary, and closing the codec `| str` strictness hole. Full requirements, vocabulary lists, and the explicit per-dtype class structure are in the standalone brief: `.superpowers/sdd/task-13-brief.md` (authored directly, not extracted from this plan). Summary:
+
+- **Naming:** `ArraySpec`/`GroupSpec` stay loose (unchanged). Add `CoreArraySpec`/`Core<Dtype>ArraySpec`(×15)/`AnyCoreArraySpec`/`CoreGroupSpec` and the `Extra*` mirror. Remove the interim `StrictArraySpec`/`AnyStrictArraySpec`/`<Dtype>ArraySpec`/`StrictGroupSpec` names.
+- **Vocabulary:** Core grid = `regular`; Extra grid = `regular | rectilinear`. Core codecs = blosc/bytes/crc32c/gzip/sharding_indexed/transpose/zstd; Extra adds scale_offset/cast_value. Codec string form = known `<X>CodecName` literals only (no arbitrary `str`).
+- **Structure:** Approach A — explicit non-generic per-dtype classes (~30), `_CoreBase`/`_ExtraBase` carry the family grid/codec field types. Single constructible `CoreArraySpec`/`ExtraArraySpec` with runtime coupling + reject-unknown-dtype. Verified: factory works but explicit classes chosen for static typing; discriminated-union routing + known-string codec strictness verified.
+
+> **Note:** Task 10 (docs) must be redone AFTER this task — it documented the superseded `Strict*` names.
+
+---
+
 ## Self-Review notes
 
 - **Spec coverage:** dependency (T1), v3 type replacement (T2), v3 to_json (T3), v2 type replacement (T4), v2 to_json/to_store_json (T5), base extraction (T6), strict union incl. raw hybrid (T7), StrictGroupSpec recursive members (T8), drift guard (T9), docs+migration (T10), full gate (T11). All spec sections mapped.
