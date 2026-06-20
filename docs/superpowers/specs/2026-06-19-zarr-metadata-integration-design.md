@@ -93,8 +93,9 @@ alias for the discriminated union of the per-dtype members.
 - `StrictArraySpec` is new and opt-in.
 - `GroupSpec` keeps its loose form and gains `to_json` (+ v2 `to_store_json`).
 - `StrictGroupSpec` is added (v3): same group fields as `GroupSpec`, but its `members` must
-  recursively be `StrictArraySpec` / `StrictGroupSpec`. The group document itself is otherwise
-  identical; strictness propagates only through membership.
+  recursively be `AnyStrictArraySpec` / `StrictGroupSpec` (so members validate to the precise
+  per-dtype class). The group document itself is otherwise identical; strictness propagates only
+  through membership.
 - **Strict specs are non-generic.** The strict per-dtype array members and `StrictGroupSpec` do
   not take `TAttr`/`TItem` parameters: `attributes: Mapping[str, object] = {}` (default `{}`,
   matching the existing loose `GroupSpec.members = {}` convention — pydantic copies the default
@@ -150,47 +151,65 @@ as siblings over `_BaseArraySpec`. The consumer functions (`like`, `to_flat`, `f
 specific call site to also accept a strict instance is a one-line change to make if and when a
 concrete need arises, not pre-solved here.
 
-### Strict spec = discriminated union over per-dtype models
+### Strict spec: "both" design — one constructible class AND per-dtype precise classes
 
 Strict mode's defining feature is that `data_type` and `fill_value` are **coupled**: e.g. a
 `float64` array may have fill value `"NaN"` / `"Infinity"` / `"-Infinity"` / a `HexFloat64`
-string / a number, while an `int64` array may not have a string fill value at all. The current
-flat `FillValue` union cannot express this because it does not tie `fill_value` to `data_type`.
+string / a number, while an `int64` array may not have a string fill value at all. The loose
+`fill_value: JSONValue` cannot express this because it does not tie `fill_value` to `data_type`.
 
-We model strict mode as one pydantic model **per core dtype**, then take their union,
-discriminated on `data_type`:
+A single discriminated union expresses the coupling with full static precision, but a union
+**cannot be constructed directly** (`StrictArraySpec(...)` fails — it is a type alias, not a
+class); you can only validate *into* it via `TypeAdapter`. To serve both "construct a strict
+spec" and "validate with precise static types", strict mode provides **both** (decided
+2026-06-20; mechanism verified end-to-end under runtime + `mypy --strict`):
 
-```python
-class _Float64ArraySpec(_BaseArraySpec[TAttr], Generic[TAttr]):
-    data_type: Float64DataTypeName        # Literal["float64"]
-    fill_value: Float64FillValue          # float | int | "NaN"|"Infinity"|"-Infinity" | HexFloat64
-    codecs: tuple[_StrictCodec, ...]      # union of per-codec metadata types
-    chunk_grid: RegularChunkGridMetadata
-    chunk_key_encoding: DefaultChunkKeyEncodingMetadata | V2ChunkKeyEncodingMetadata
-    ...
-# one such class per core dtype: bool, int8..uint64, float16/32/64, complex64/128, raw
+1. **`StrictArraySpec` — a single, directly constructible class.** Weak field annotation
+   (`fill_value: JSONValue`, `data_type: str`) plus a `model_validator(mode="after")` that
+   enforces the coupling **at runtime**: it looks up the per-dtype zarr-metadata fill-value type
+   by `data_type` and validates `fill_value` against it (`TypeAdapter(Float64FillValue)...`).
+   `StrictArraySpec(data_type="float64", fill_value="NaN", ...)` works; `int64`+`"NaN"` raises.
+   This is the **construction** path. Codecs are validated strictly here too.
 
-StrictArraySpec = Annotated[
-    _BoolArraySpec | _Int8ArraySpec | ... | _RawArraySpec,
-    Field(discriminator="data_type"),
-]
-```
+2. **Per-dtype precise classes (`Float64ArraySpec`, `Int64ArraySpec`, … — PUBLIC).** One concrete
+   class per core dtype, each pairing `data_type: <X>DataTypeName` with `fill_value: <X>FillValue`
+   for **static** precision (mypy/IDE know `fill_value` is float-or-special-string for float64).
+   Directly constructible. Public (no underscore).
 
-- Per-dtype member classes are private (underscore-prefixed). `StrictArraySpec` is the public
-  type alias.
-- Verified: the discriminated union routes by `data_type`, accepts `float64`+`"NaN"`/hex,
-  rejects `int64`+`"NaN"`.
-- **Raw dtype caveat:** the `raw` (`r<N>`) dtype name is an open-ended `NewType(str)`, not a
-  `Literal`, so it cannot be a member of a pydantic `Field(discriminator="data_type")` union
-  (which requires every member's discriminator to be a `Literal`). The strict spec is therefore
-  a **hybrid**: a discriminated union over the `Literal`-named dtypes (bool / int / uint /
-  float / complex), unioned (plain smart-union) with the `_RawArraySpec` member:
-  `StrictArraySpec = _DiscriminatedLiteralDtypes | _RawArraySpec`. Verified to route all
-  members (incl. `r8`) and still reject mismatched fills. Sharp discriminator errors are
-  retained for the common literal dtypes.
+   ```python
+   class Float64ArraySpec(_StrictBase):
+       data_type: Float64DataTypeName        # Literal["float64"]
+       fill_value: Float64FillValue          # float | int | "NaN"|"Infinity"|"-Infinity" | HexFloat64
+   # one per core dtype: bool, int8..uint64, float16/32/64, complex64/128, raw
+   ```
+
+3. **`AnyStrictArraySpec` — the discriminated union** over the public per-dtype classes. The
+   **validation target**: `TypeAdapter(AnyStrictArraySpec).validate_python(doc)` routes by
+   `data_type` to the precise per-dtype class.
+
+   ```python
+   _LiteralDtypeSpecs = Annotated[
+       BoolArraySpec | Int8ArraySpec | ... | Complex128ArraySpec,
+       Field(discriminator="data_type"),
+   ]
+   AnyStrictArraySpec = _LiteralDtypeSpecs | RawArraySpec
+   ```
+
+- **Raw dtype caveat (unchanged):** the `raw` (`r<N>`) dtype name is an open-ended `NewType(str)`,
+  not a `Literal`, so `RawArraySpec` cannot be a member of a `Field(discriminator="data_type")`
+  union. `AnyStrictArraySpec` is therefore a **hybrid**: the discriminated literal-dtype group
+  smart-unioned with `RawArraySpec`. Verified to route all members (incl. `r8`) and reject
+  mismatched fills.
 - Strict codec union is composed locally from zarr-metadata per-codec types
-  (`BloscCodecMetadata | GzipCodecMetadata | BytesCodecMetadata | ...`); zarr-metadata does
-  not ship a pre-built "any known codec" union.
+  (`BloscCodecMetadata | GzipCodecMetadata | BytesCodecMetadata | ...` plus `str`); zarr-metadata
+  does not ship a pre-built "any known codec" union. Used by both `StrictArraySpec` and the
+  per-dtype classes (via the shared `_StrictBase`).
+- All strict classes are **non-generic** (`attributes: Mapping[str, object] = {}`), per the
+  decision above.
+
+**Verified (2026-06-20):** the union routes `float64`+`"NaN"`→`Float64ArraySpec` and
+`r8`→`RawArraySpec`; the single `StrictArraySpec` constructs directly and rejects `int64`+`"NaN"`
+at runtime; the public `Float64ArraySpec` constructs directly with its precise type.
 
 ## Internal type replacements (loose classes)
 
