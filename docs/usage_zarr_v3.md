@@ -176,7 +176,7 @@ try:
     )
 except ValidationError:
     print("int64 + 'NaN' rejected as expected")
-#> int64 + 'NaN' rejected as expected
+    #> int64 + 'NaN' rejected as expected
 
 # Unknown codec names are rejected
 try:
@@ -191,7 +191,7 @@ try:
     )
 except ValidationError:
     print("Unknown codec 'made_up' rejected as expected")
-#> Unknown codec 'made_up' rejected as expected
+    #> Unknown codec 'made_up' rejected as expected
 ```
 
 ### Path 2 — Build with precise static types: per-dtype classes
@@ -268,7 +268,7 @@ try:
     )
 except ValidationError:
     print("int64 + 'NaN' rejected as expected")
-#> int64 + 'NaN' rejected as expected
+    #> int64 + 'NaN' rejected as expected
 ```
 
 `CoreGroupSpec` is the group counterpart for the Core family. Its `members` must recursively
@@ -337,7 +337,7 @@ try:
     )
 except ValidationError:
     print("CoreArraySpec rejects rectilinear chunk_grid")
-#> CoreArraySpec rejects rectilinear chunk_grid
+    #> CoreArraySpec rejects rectilinear chunk_grid
 
 # scale_offset codec: accepted by Extra, rejected by Core
 extra_arr2 = ExtraArraySpec(
@@ -370,7 +370,7 @@ try:
     )
 except ValidationError:
     print("CoreArraySpec rejects scale_offset codec")
-#> CoreArraySpec rejects scale_offset codec
+    #> CoreArraySpec rejects scale_offset codec
 ```
 
 > **Note:** Strict classes do not support generic attributes (`ArraySpec[MyAttrs]`). The
