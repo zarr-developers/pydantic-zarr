@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from pydantic_zarr._strict_fill import StrictFloat64Fill
+from pydantic_zarr._strict_fill import StrictFloat64Fill, StrictInt8Fill, StrictUint8Fill
 from pydantic_zarr.v3 import AnyCoreArraySpec, AnyExtraArraySpec
 
 CORE_ADAPTER = TypeAdapter(AnyCoreArraySpec)
@@ -427,3 +427,25 @@ def test_strict_float64_fill_accepts_valid(good: object) -> None:
 def test_strict_float64_fill_rejects_bad_strings(bad: str) -> None:
     with pytest.raises(ValidationError):
         TypeAdapter(StrictFloat64Fill).validate_python(bad)
+
+
+# ---------------------------------------------------------------------------
+# Integer fill wrapper tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("good", [5, 5.0, 127, -128, 127.0, 0])
+def test_strict_int8_fill_accepts_valid(good: object) -> None:
+    TypeAdapter(StrictInt8Fill).validate_python(good)
+
+
+@pytest.mark.parametrize("bad", [5.5, True, False, "5", 999, -200, "garbage"])
+def test_strict_int8_fill_rejects_bad(bad: object) -> None:
+    with pytest.raises(ValidationError):
+        TypeAdapter(StrictInt8Fill).validate_python(bad)
+
+
+@pytest.mark.parametrize("bad", [-1, 256, 1.5, True])
+def test_strict_uint8_fill_rejects_bad(bad: object) -> None:
+    with pytest.raises(ValidationError):
+        TypeAdapter(StrictUint8Fill).validate_python(bad)
