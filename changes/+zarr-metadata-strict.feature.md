@@ -1,0 +1,1 @@
+Added `StrictArraySpec` and `StrictGroupSpec` (Zarr v3 only). `StrictArraySpec` is a discriminated union that couples `fill_value` validation to the array's `data_type` (e.g. `float64` accepts `"NaN"` but `int64` does not) and validates codecs against their specific types. `StrictGroupSpec` is the group counterpart requiring all members to be recursively strict.
