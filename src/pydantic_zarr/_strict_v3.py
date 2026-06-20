@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import Annotated, Any, Literal, Self, Union
+from enum import Enum
+from typing import Annotated, Any, ClassVar, Literal, Self, Union
 
 from pydantic import AfterValidator, BeforeValidator, Field, TypeAdapter, model_validator
 from zarr_metadata import (
@@ -82,6 +83,74 @@ from pydantic_zarr.core import ensure_key_no_path
 from pydantic_zarr.v3 import NodeSpec, _BaseArraySpec
 
 # ---------------------------------------------------------------------------
+# AUTO sentinel for ergonomic default construction
+# ---------------------------------------------------------------------------
+
+
+class _Auto(Enum):
+    token = 0
+
+
+AUTO = _Auto.token
+
+_DEFAULT_FILL_BY_DTYPE: dict[str, Any] = {
+    "bool": False,
+    "int8": 0,
+    "int16": 0,
+    "int32": 0,
+    "int64": 0,
+    "uint8": 0,
+    "uint16": 0,
+    "uint32": 0,
+    "uint64": 0,
+    "float16": "NaN",
+    "float32": "NaN",
+    "float64": "NaN",
+    "complex64": ("NaN", "NaN"),
+    "complex128": ("NaN", "NaN"),
+}
+
+
+def _resolve_strict_init(
+    *,
+    shape: Any,
+    data_type: Any,
+    fill_value: Any,
+    chunk_grid: Any,
+    chunk_key_encoding: Any,
+    codecs: Any,
+    attributes: Any,
+    default_data_type: str,
+) -> dict[str, Any]:
+    dt = "float64" if data_type is AUTO else data_type
+    if default_data_type:  # per-dtype subclass fixes the dtype
+        dt = default_data_type
+    shape_v = () if shape is AUTO else shape
+    out: dict[str, Any] = {
+        "shape": shape_v,
+        "data_type": dt,
+        "attributes": {} if attributes is AUTO else attributes,
+        "fill_value": (_DEFAULT_FILL_BY_DTYPE.get(dt, 0) if fill_value is AUTO else fill_value),
+        "chunk_grid": (
+            {"name": "regular", "configuration": {"chunk_shape": shape_v or (1,)}}
+            if chunk_grid is AUTO
+            else chunk_grid
+        ),
+        "chunk_key_encoding": (
+            {"name": "default", "configuration": {"separator": "/"}}
+            if chunk_key_encoding is AUTO
+            else chunk_key_encoding
+        ),
+        "codecs": (
+            ({"name": "bytes", "configuration": {"endian": "little"}},)
+            if codecs is AUTO
+            else codecs
+        ),
+    }
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Codec vocabulary
 # ---------------------------------------------------------------------------
 
@@ -136,12 +205,62 @@ class _CoreBase(_BaseArraySpec[Mapping[str, object]]):
     chunk_key_encoding: _ChunkKeyEncoding
     codecs: tuple[_CoreCodec, ...]
 
+    @classmethod
+    def create(
+        cls,
+        *,
+        shape: tuple[int, ...] | _Auto = AUTO,
+        data_type: Any = AUTO,
+        fill_value: Any = AUTO,
+        chunk_grid: Any = AUTO,
+        chunk_key_encoding: Any = AUTO,
+        codecs: Any = AUTO,
+        attributes: Mapping[str, object] | _Auto = AUTO,
+        **kwargs: Any,
+    ) -> Self:
+        resolved = _resolve_strict_init(
+            shape=shape,
+            data_type=data_type,
+            fill_value=fill_value,
+            chunk_grid=chunk_grid,
+            chunk_key_encoding=chunk_key_encoding,
+            codecs=codecs,
+            attributes=attributes,
+            default_data_type=getattr(cls, "_default_data_type", ""),
+        )
+        return cls(**resolved, **kwargs)
+
 
 class _ExtraBase(_BaseArraySpec[Mapping[str, object]]):
     attributes: Mapping[str, object] = {}
     chunk_grid: RegularChunkGridMetadata | RectilinearChunkGridMetadata
     chunk_key_encoding: _ChunkKeyEncoding
     codecs: tuple[_ExtraCodec, ...]
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        shape: tuple[int, ...] | _Auto = AUTO,
+        data_type: Any = AUTO,
+        fill_value: Any = AUTO,
+        chunk_grid: Any = AUTO,
+        chunk_key_encoding: Any = AUTO,
+        codecs: Any = AUTO,
+        attributes: Mapping[str, object] | _Auto = AUTO,
+        **kwargs: Any,
+    ) -> Self:
+        resolved = _resolve_strict_init(
+            shape=shape,
+            data_type=data_type,
+            fill_value=fill_value,
+            chunk_grid=chunk_grid,
+            chunk_key_encoding=chunk_key_encoding,
+            codecs=codecs,
+            attributes=attributes,
+            default_data_type=getattr(cls, "_default_data_type", ""),
+        )
+        return cls(**resolved, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -166,72 +285,86 @@ _RawDataTypeName = Annotated[RawBytesDataTypeName, BeforeValidator(_ensure_raw_d
 
 
 class CoreBoolArraySpec(_CoreBase):
-    data_type: BoolDataTypeName
+    _default_data_type: ClassVar[str] = "bool"
+    data_type: BoolDataTypeName = "bool"
     fill_value: StrictBoolFill
 
 
 class CoreInt8ArraySpec(_CoreBase):
-    data_type: Int8DataTypeName
+    _default_data_type: ClassVar[str] = "int8"
+    data_type: Int8DataTypeName = "int8"
     fill_value: StrictInt8Fill
 
 
 class CoreInt16ArraySpec(_CoreBase):
-    data_type: Int16DataTypeName
+    _default_data_type: ClassVar[str] = "int16"
+    data_type: Int16DataTypeName = "int16"
     fill_value: StrictInt16Fill
 
 
 class CoreInt32ArraySpec(_CoreBase):
-    data_type: Int32DataTypeName
+    _default_data_type: ClassVar[str] = "int32"
+    data_type: Int32DataTypeName = "int32"
     fill_value: StrictInt32Fill
 
 
 class CoreInt64ArraySpec(_CoreBase):
-    data_type: Int64DataTypeName
+    _default_data_type: ClassVar[str] = "int64"
+    data_type: Int64DataTypeName = "int64"
     fill_value: StrictInt64Fill
 
 
 class CoreUint8ArraySpec(_CoreBase):
-    data_type: Uint8DataTypeName
+    _default_data_type: ClassVar[str] = "uint8"
+    data_type: Uint8DataTypeName = "uint8"
     fill_value: StrictUint8Fill
 
 
 class CoreUint16ArraySpec(_CoreBase):
-    data_type: Uint16DataTypeName
+    _default_data_type: ClassVar[str] = "uint16"
+    data_type: Uint16DataTypeName = "uint16"
     fill_value: StrictUint16Fill
 
 
 class CoreUint32ArraySpec(_CoreBase):
-    data_type: Uint32DataTypeName
+    _default_data_type: ClassVar[str] = "uint32"
+    data_type: Uint32DataTypeName = "uint32"
     fill_value: StrictUint32Fill
 
 
 class CoreUint64ArraySpec(_CoreBase):
-    data_type: Uint64DataTypeName
+    _default_data_type: ClassVar[str] = "uint64"
+    data_type: Uint64DataTypeName = "uint64"
     fill_value: StrictUint64Fill
 
 
 class CoreFloat16ArraySpec(_CoreBase):
-    data_type: Float16DataTypeName
+    _default_data_type: ClassVar[str] = "float16"
+    data_type: Float16DataTypeName = "float16"
     fill_value: StrictFloat16Fill
 
 
 class CoreFloat32ArraySpec(_CoreBase):
-    data_type: Float32DataTypeName
+    _default_data_type: ClassVar[str] = "float32"
+    data_type: Float32DataTypeName = "float32"
     fill_value: StrictFloat32Fill
 
 
 class CoreFloat64ArraySpec(_CoreBase):
-    data_type: Float64DataTypeName
+    _default_data_type: ClassVar[str] = "float64"
+    data_type: Float64DataTypeName = "float64"
     fill_value: StrictFloat64Fill
 
 
 class CoreComplex64ArraySpec(_CoreBase):
-    data_type: Complex64DataTypeName
+    _default_data_type: ClassVar[str] = "complex64"
+    data_type: Complex64DataTypeName = "complex64"
     fill_value: StrictComplex64Fill
 
 
 class CoreComplex128ArraySpec(_CoreBase):
-    data_type: Complex128DataTypeName
+    _default_data_type: ClassVar[str] = "complex128"
+    data_type: Complex128DataTypeName = "complex128"
     fill_value: StrictComplex128Fill
 
 
@@ -256,72 +389,86 @@ class CoreRawArraySpec(_CoreBase):
 
 
 class ExtraBoolArraySpec(_ExtraBase):
-    data_type: BoolDataTypeName
+    _default_data_type: ClassVar[str] = "bool"
+    data_type: BoolDataTypeName = "bool"
     fill_value: StrictBoolFill
 
 
 class ExtraInt8ArraySpec(_ExtraBase):
-    data_type: Int8DataTypeName
+    _default_data_type: ClassVar[str] = "int8"
+    data_type: Int8DataTypeName = "int8"
     fill_value: StrictInt8Fill
 
 
 class ExtraInt16ArraySpec(_ExtraBase):
-    data_type: Int16DataTypeName
+    _default_data_type: ClassVar[str] = "int16"
+    data_type: Int16DataTypeName = "int16"
     fill_value: StrictInt16Fill
 
 
 class ExtraInt32ArraySpec(_ExtraBase):
-    data_type: Int32DataTypeName
+    _default_data_type: ClassVar[str] = "int32"
+    data_type: Int32DataTypeName = "int32"
     fill_value: StrictInt32Fill
 
 
 class ExtraInt64ArraySpec(_ExtraBase):
-    data_type: Int64DataTypeName
+    _default_data_type: ClassVar[str] = "int64"
+    data_type: Int64DataTypeName = "int64"
     fill_value: StrictInt64Fill
 
 
 class ExtraUint8ArraySpec(_ExtraBase):
-    data_type: Uint8DataTypeName
+    _default_data_type: ClassVar[str] = "uint8"
+    data_type: Uint8DataTypeName = "uint8"
     fill_value: StrictUint8Fill
 
 
 class ExtraUint16ArraySpec(_ExtraBase):
-    data_type: Uint16DataTypeName
+    _default_data_type: ClassVar[str] = "uint16"
+    data_type: Uint16DataTypeName = "uint16"
     fill_value: StrictUint16Fill
 
 
 class ExtraUint32ArraySpec(_ExtraBase):
-    data_type: Uint32DataTypeName
+    _default_data_type: ClassVar[str] = "uint32"
+    data_type: Uint32DataTypeName = "uint32"
     fill_value: StrictUint32Fill
 
 
 class ExtraUint64ArraySpec(_ExtraBase):
-    data_type: Uint64DataTypeName
+    _default_data_type: ClassVar[str] = "uint64"
+    data_type: Uint64DataTypeName = "uint64"
     fill_value: StrictUint64Fill
 
 
 class ExtraFloat16ArraySpec(_ExtraBase):
-    data_type: Float16DataTypeName
+    _default_data_type: ClassVar[str] = "float16"
+    data_type: Float16DataTypeName = "float16"
     fill_value: StrictFloat16Fill
 
 
 class ExtraFloat32ArraySpec(_ExtraBase):
-    data_type: Float32DataTypeName
+    _default_data_type: ClassVar[str] = "float32"
+    data_type: Float32DataTypeName = "float32"
     fill_value: StrictFloat32Fill
 
 
 class ExtraFloat64ArraySpec(_ExtraBase):
-    data_type: Float64DataTypeName
+    _default_data_type: ClassVar[str] = "float64"
+    data_type: Float64DataTypeName = "float64"
     fill_value: StrictFloat64Fill
 
 
 class ExtraComplex64ArraySpec(_ExtraBase):
-    data_type: Complex64DataTypeName
+    _default_data_type: ClassVar[str] = "complex64"
+    data_type: Complex64DataTypeName = "complex64"
     fill_value: StrictComplex64Fill
 
 
 class ExtraComplex128ArraySpec(_ExtraBase):
-    data_type: Complex128DataTypeName
+    _default_data_type: ClassVar[str] = "complex128"
+    data_type: Complex128DataTypeName = "complex128"
     fill_value: StrictComplex128Fill
 
 

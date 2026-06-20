@@ -549,3 +549,31 @@ def test_single_class_rejects_out_of_range_int_fill() -> None:
 
     with pytest.raises(ValidationError):
         CoreArraySpec(data_type="int8", fill_value=999, **_COMMON_E2E)
+
+
+# ---------------------------------------------------------------------------
+# AUTO sentinel / default constructors (Task 10)
+# ---------------------------------------------------------------------------
+
+
+def test_core_array_spec_bare_construct() -> None:
+    from pydantic_zarr.v3 import CoreArraySpec
+
+    spec = CoreArraySpec.create()
+    assert spec.data_type == "float64"  # default dtype
+    assert spec.chunk_grid["name"] == "regular"
+    assert spec.codecs[0]["name"] == "bytes"
+
+
+def test_core_array_spec_shape_only_derives_grid() -> None:
+    from pydantic_zarr.v3 import CoreArraySpec
+
+    spec = CoreArraySpec.create(shape=(10, 10))
+    assert spec.chunk_grid["configuration"]["chunk_shape"] == (10, 10)
+
+
+def test_core_float64_defaults_fill() -> None:
+    from pydantic_zarr.v3 import CoreFloat64ArraySpec
+
+    spec = CoreFloat64ArraySpec.create(shape=(4,))
+    assert spec.fill_value == "NaN"  # float64 default
