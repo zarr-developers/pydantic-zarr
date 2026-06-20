@@ -144,241 +144,169 @@ There are **two strict families**, distinguished by which Zarr vocabulary they a
 | Unknown codec string | **rejected** | **rejected** |
 | Unknown `data_type` | **rejected** | **rejected** |
 
-Each family exposes the same three usage paths.
+The `Extra` family is the right default for code that reads real-world archives (many use
+`scale_offset` and similar extensions); reach for `Core` when you specifically want to reject
+anything outside the core spec.
 
-### Path 1 — Build a strict spec ergonomically: `CoreArraySpec` / `ExtraArraySpec`
+### Which class should I use?
 
-`CoreArraySpec` and `ExtraArraySpec` are *single constructible classes* whose `fill_value` is
-annotated loosely (`JSONValue`) but validated at runtime against the per-`data_type` rules. An
-unrecognized `data_type` is rejected.
+Within a family there are three array types. They differ only in *how* you reach them and *how
+precisely* `fill_value` is typed — they validate the same rules:
 
-```python
-from pydantic import ValidationError
-from pydantic_zarr.v3 import CoreArraySpec
+| You have… | Use | `fill_value` static type |
+|---|---|---|
+| a known dtype, want it checked but typed loosely | `CoreArraySpec` / `ExtraArraySpec` | `JSONValue` (any JSON) |
+| a known dtype, want precise IDE/mypy types | `CoreFloat64ArraySpec`, … (per-dtype) | the exact per-dtype type |
+| a raw `dict` (e.g. parsed `zarr.json`) to validate | `AnyCoreArraySpec` / `AnyExtraArraySpec` via `TypeAdapter` | routed to the matching per-dtype class |
 
-# float64 accepts "NaN" as a fill value
-arr_float = CoreArraySpec(
-    shape=(100,),
-    data_type="float64",
-    chunk_grid={"name": "regular", "configuration": {"chunk_shape": [100]}},
-    chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
-    fill_value="NaN",
-    codecs=[{"name": "bytes", "configuration": {"endian": "little"}}],
-    attributes={},
+Groups use `CoreGroupSpec` / `ExtraGroupSpec`, whose `members` are validated recursively.
+
+Every strict array also needs `shape`, `chunk_grid`, `chunk_key_encoding`, `codecs`, and
+`attributes`. To keep the examples focused on the strict behaviour, each one starts by collecting
+those universal fields into a `COMMON` dict and spreads it with `**COMMON`.
+
+### Constructing and the `data_type` ↔ `fill_value` coupling
+
+`CoreArraySpec` / `ExtraArraySpec` are single constructible classes. `fill_value` is annotated
+loosely (`JSONValue`) but validated at runtime against the per-`data_type` rules; an unrecognized
+`data_type` or codec is rejected:
+
+```python {group="strict-v3"}
+from pydantic import TypeAdapter, ValidationError
+
+from pydantic_zarr.v3 import (
+    AnyCoreArraySpec,
+    CoreArraySpec,
+    CoreFloat64ArraySpec,
+    CoreGroupSpec,
+    ExtraArraySpec,
 )
-print(type(arr_float).__name__)
+
+# the universal fields every strict array needs; spread with **COMMON below
+COMMON = {
+    "shape": (100,),
+    "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": [100]}},
+    "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
+    "codecs": [{"name": "bytes", "configuration": {"endian": "little"}}],
+    "attributes": {},
+}
+
+# float64 accepts "NaN"
+arr = CoreArraySpec(data_type="float64", fill_value="NaN", **COMMON)
+print(type(arr).__name__)
 #> CoreArraySpec
 
 # int64 rejects "NaN" — fill_value must be an integer
 try:
-    CoreArraySpec(
-        shape=(100,),
-        data_type="int64",
-        chunk_grid={"name": "regular", "configuration": {"chunk_shape": [100]}},
-        chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
-        fill_value="NaN",
-        codecs=[{"name": "bytes", "configuration": {"endian": "little"}}],
-        attributes={},
-    )
+    CoreArraySpec(data_type="int64", fill_value="NaN", **COMMON)
 except ValidationError:
-    print("int64 + 'NaN' rejected as expected")
-    #> int64 + 'NaN' rejected as expected
+    print("int64 + 'NaN' rejected")
+    #> int64 + 'NaN' rejected
 
-# Unknown codec names are rejected
+# an unknown codec name is rejected
 try:
     CoreArraySpec(
-        shape=(100,),
         data_type="float64",
-        chunk_grid={"name": "regular", "configuration": {"chunk_shape": [100]}},
-        chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
         fill_value=0.0,
-        codecs=[{"name": "made_up"}],
-        attributes={},
+        **{**COMMON, "codecs": [{"name": "made_up"}]},
     )
 except ValidationError:
-    print("Unknown codec 'made_up' rejected as expected")
-    #> Unknown codec 'made_up' rejected as expected
+    print("unknown codec 'made_up' rejected")
+    #> unknown codec 'made_up' rejected
 ```
 
-### Path 2 — Build with precise static types: per-dtype classes
+### Per-dtype classes: precise static types
 
-For each supported Zarr v3 data type there is a corresponding class in both families whose
-`fill_value` field carries the exact static type, giving mypy and IDEs precise information.
+For each data type there is a class in both families whose `fill_value` field carries the *exact*
+static type, so mypy and your IDE know what a valid fill value is. This is the difference from the
+single `CoreArraySpec` class, whose `fill_value` is the wide `JSONValue`:
 
-**Core family** (importable from `pydantic_zarr.v3`):
-`CoreBoolArraySpec`, `CoreInt8ArraySpec`, `CoreInt16ArraySpec`, `CoreInt32ArraySpec`,
-`CoreInt64ArraySpec`, `CoreUint8ArraySpec`, `CoreUint16ArraySpec`, `CoreUint32ArraySpec`,
-`CoreUint64ArraySpec`, `CoreFloat16ArraySpec`, `CoreFloat32ArraySpec`, `CoreFloat64ArraySpec`,
-`CoreComplex64ArraySpec`, `CoreComplex128ArraySpec`, `CoreRawArraySpec`.
+```python {group="strict-v3"}
+# the single class's fill_value is the wide JSONValue (any JSON; checked only at runtime):
+#   CoreArraySpec.fill_value:        JSONValue
+# the per-dtype class's fill_value is the exact float64 fill type, which mypy/IDEs see:
+#   CoreFloat64ArraySpec.fill_value: float | int | "NaN" | "Infinity" | "-Infinity" | HexFloat64
+print(CoreArraySpec.model_fields["fill_value"].annotation.__name__)
+#> JSONValue
 
-**Extra family** (importable from `pydantic_zarr.v3`):
-`ExtraBoolArraySpec`, `ExtraInt8ArraySpec`, ..., `ExtraFloat64ArraySpec`, ...,
-`ExtraComplex128ArraySpec`, `ExtraRawArraySpec` — one-to-one mirror of the Core family.
-
-```python
-from pydantic_zarr.v3 import CoreFloat64ArraySpec
-
-arr = CoreFloat64ArraySpec(
-    shape=(100,),
-    data_type="float64",
-    chunk_grid={"name": "regular", "configuration": {"chunk_shape": [100]}},
-    chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
-    fill_value="NaN",
-    codecs=[{"name": "bytes", "configuration": {"endian": "little"}}],
-    attributes={},
-)
+arr = CoreFloat64ArraySpec(data_type="float64", fill_value="Infinity", **COMMON)
 print(type(arr).__name__)
 #> CoreFloat64ArraySpec
 ```
 
-### Path 3 — Validate an existing `zarr.json` dict: `AnyCoreArraySpec` / `AnyExtraArraySpec`
+The full per-dtype class list (each importable from `pydantic_zarr.v3`, with an `Extra` mirror):
+`CoreBoolArraySpec`, `CoreInt8ArraySpec`/`16`/`32`/`64`, `CoreUint8ArraySpec`/`16`/`32`/`64`,
+`CoreFloat16ArraySpec`/`32`/`64`, `CoreComplex64ArraySpec`/`128`, `CoreRawArraySpec`.
 
-`AnyCoreArraySpec` and `AnyExtraArraySpec` are discriminated unions over all per-dtype classes in
-their respective families. They are the right validation targets when you have a raw `dict` (e.g.
-parsed from `zarr.json`) and want Pydantic to route to the precise per-dtype class based on
-`data_type`.
+### Validating a raw `dict`: `AnyCoreArraySpec` / `AnyExtraArraySpec`
 
-```python
-from pydantic import TypeAdapter, ValidationError
-from pydantic_zarr.v3 import AnyCoreArraySpec
+When you have a `dict` (e.g. parsed from a `zarr.json`), validate it through the family's
+discriminated union — Pydantic routes to the precise per-dtype class by `data_type`:
 
+```python {group="strict-v3"}
 ta = TypeAdapter(AnyCoreArraySpec)
-
-# float64 accepts "NaN" as a fill value
-arr_float = ta.validate_python(
-    {
-        "shape": (100,),
-        "data_type": "float64",
-        "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": [100]}},
-        "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
-        "fill_value": "NaN",
-        "codecs": [{"name": "bytes", "configuration": {"endian": "little"}}],
-        "attributes": {},
-    }
-)
-print(type(arr_float).__name__)
+arr = ta.validate_python({"data_type": "float64", "fill_value": "NaN", **COMMON})
+print(type(arr).__name__)  # routed to the precise per-dtype class
 #> CoreFloat64ArraySpec
-
-# int64 rejects "NaN" — fill_value must be an integer
-try:
-    ta.validate_python(
-        {
-            "shape": (100,),
-            "data_type": "int64",
-            "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": [100]}},
-            "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
-            "fill_value": "NaN",
-            "codecs": [{"name": "bytes", "configuration": {"endian": "little"}}],
-            "attributes": {},
-        }
-    )
-except ValidationError:
-    print("int64 + 'NaN' rejected as expected")
-    #> int64 + 'NaN' rejected as expected
 ```
 
-`CoreGroupSpec` is the group counterpart for the Core family. Its `members` must recursively
-contain only `AnyCoreArraySpec` variants or `CoreGroupSpec` instances:
+`CoreGroupSpec` is the group counterpart; its `members` are validated recursively to
+`AnyCoreArraySpec` variants or nested `CoreGroupSpec` instances (raw dicts are coerced):
 
-```python
-from pydantic_zarr.v3 import CoreFloat64ArraySpec, CoreGroupSpec
-
+```python {group="strict-v3"}
 grp = CoreGroupSpec(
     attributes={},
-    members={
-        "arr": {
-            "zarr_format": 3,
-            "node_type": "array",
-            "shape": (100,),
-            "data_type": "float64",
-            "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": [100]}},
-            "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
-            "fill_value": "NaN",
-            "codecs": [{"name": "bytes", "configuration": {"endian": "little"}}],
-            "attributes": {},
-        }
-    },
+    members={"arr": {"data_type": "float64", "fill_value": "NaN", **COMMON}},
 )
 print(isinstance(grp.members["arr"], CoreFloat64ArraySpec))
 #> True
 ```
 
-### Core vs Extra difference in practice
+### Core vs Extra in practice
 
-The Extra family accepts `rectilinear` chunk grids and extra codecs such as `scale_offset`,
-while Core rejects them.
+The Extra family accepts `rectilinear` chunk grids and extension codecs such as `scale_offset`;
+Core rejects them:
 
-```python
-from pydantic import ValidationError
-from pydantic_zarr.v3 import CoreArraySpec, ExtraArraySpec
+```python {group="strict-v3"}
+rectilinear = {
+    "name": "rectilinear",
+    "configuration": {"kind": "inline", "chunk_shapes": (5, 5, 5, 5)},
+}
 
-# rectilinear chunk_grid: accepted by Extra, rejected by Core
+# Extra accepts a rectilinear chunk grid; Core rejects it
 extra_arr = ExtraArraySpec(
-    shape=(20,),
-    data_type="float64",
-    chunk_grid={
-        "name": "rectilinear",
-        "configuration": {"kind": "inline", "chunk_shapes": (5, 5, 5, 5)},
-    },
-    chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
-    fill_value=0.0,
-    codecs=[{"name": "bytes", "configuration": {"endian": "little"}}],
-    attributes={},
+    data_type="float64", fill_value=0.0, **{**COMMON, "chunk_grid": rectilinear}
 )
 print(type(extra_arr).__name__)
 #> ExtraArraySpec
 
 try:
     CoreArraySpec(
-        shape=(20,),
-        data_type="float64",
-        chunk_grid={
-            "name": "rectilinear",
-            "configuration": {"kind": "inline", "chunk_shapes": (5, 5, 5, 5)},
-        },
-        chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
-        fill_value=0.0,
-        codecs=[{"name": "bytes", "configuration": {"endian": "little"}}],
-        attributes={},
+        data_type="float64", fill_value=0.0, **{**COMMON, "chunk_grid": rectilinear}
     )
 except ValidationError:
-    print("CoreArraySpec rejects rectilinear chunk_grid")
-    #> CoreArraySpec rejects rectilinear chunk_grid
+    print("Core rejects rectilinear chunk_grid")
+    #> Core rejects rectilinear chunk_grid
 
-# scale_offset codec: accepted by Extra, rejected by Core
+# Extra accepts the scale_offset codec; Core rejects it
+scale_offset = [
+    {"name": "scale_offset", "configuration": {"scale": 1.0, "offset": 0.0}},
+    {"name": "bytes", "configuration": {"endian": "little"}},
+]
 extra_arr2 = ExtraArraySpec(
-    shape=(100,),
-    data_type="float64",
-    chunk_grid={"name": "regular", "configuration": {"chunk_shape": [100]}},
-    chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
-    fill_value=0.0,
-    codecs=[
-        {"name": "scale_offset", "configuration": {"scale": 1.0, "offset": 0.0}},
-        {"name": "bytes", "configuration": {"endian": "little"}},
-    ],
-    attributes={},
+    data_type="float64", fill_value=0.0, **{**COMMON, "codecs": scale_offset}
 )
 print(type(extra_arr2).__name__)
 #> ExtraArraySpec
 
 try:
     CoreArraySpec(
-        shape=(100,),
-        data_type="float64",
-        chunk_grid={"name": "regular", "configuration": {"chunk_shape": [100]}},
-        chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
-        fill_value=0.0,
-        codecs=[
-            {"name": "scale_offset", "configuration": {"scale": 1.0, "offset": 0.0}},
-            {"name": "bytes", "configuration": {"endian": "little"}},
-        ],
-        attributes={},
+        data_type="float64", fill_value=0.0, **{**COMMON, "codecs": scale_offset}
     )
 except ValidationError:
-    print("CoreArraySpec rejects scale_offset codec")
-    #> CoreArraySpec rejects scale_offset codec
+    print("Core rejects scale_offset codec")
+    #> Core rejects scale_offset codec
 ```
 
-> **Note:** Strict classes do not support generic attributes (`ArraySpec[MyAttrs]`). The
-> `attributes` field is `Mapping[str, object]`. Users who need typed attributes should use the
-> loose `ArraySpec[MyAttrs]`.
+> **Note:** Strict classes do not support generic attributes. The `attributes` field is
+> `Mapping[str, object]`; if you need typed attributes, use the loose `ArraySpec[MyAttrs]`.
