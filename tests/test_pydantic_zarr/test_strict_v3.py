@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+from pydantic_zarr._strict_fill import StrictFloat64Fill
 from pydantic_zarr.v3 import AnyCoreArraySpec, AnyExtraArraySpec
 
 CORE_ADAPTER = TypeAdapter(AnyCoreArraySpec)
@@ -410,3 +411,19 @@ def test_loose_and_core_share_base_fields() -> None:
     variant = {"data_type", "chunk_grid", "chunk_key_encoding", "fill_value", "codecs"}
     assert set(ArraySpec.model_fields) - variant == shared
     assert set(CoreFloat64ArraySpec.model_fields) - variant == shared
+
+
+# ---------------------------------------------------------------------------
+# Float fill wrapper tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("good", [1.0, 5, "NaN", "Infinity", "-Infinity", "0x7ff8000000000000"])
+def test_strict_float64_fill_accepts_valid(good: object) -> None:
+    assert TypeAdapter(StrictFloat64Fill).validate_python(good) == good
+
+
+@pytest.mark.parametrize("bad", ["garbage", "0xZZ", "0x123", "NotAFloat", "nan"])
+def test_strict_float64_fill_rejects_bad_strings(bad: str) -> None:
+    with pytest.raises(ValidationError):
+        TypeAdapter(StrictFloat64Fill).validate_python(bad)
