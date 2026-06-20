@@ -611,3 +611,95 @@ def test_core_float64_from_array_wrong_dtype_raises() -> None:
 
     with pytest.raises(ValidationError):
         CoreFloat64ArraySpec.from_array(np.zeros((2,), dtype="int32"))
+
+
+# ---------------------------------------------------------------------------
+# create_with_sharding constructors (Task 14)
+# ---------------------------------------------------------------------------
+
+
+def test_create_with_sharding_builds_sharding_codec() -> None:
+    from pydantic_zarr.v3 import CoreArraySpec
+
+    spec = CoreArraySpec.create_with_sharding(
+        outer_chunk_shape=(8, 8),
+        inner_chunk_shape=(4, 4),
+        shape=(8, 8),
+        data_type="int32",
+        fill_value=0,
+    )
+    assert spec.chunk_grid["configuration"]["chunk_shape"] == (8, 8)
+    codec = spec.codecs[0]
+    assert codec["name"] == "sharding_indexed"
+    assert codec["configuration"]["chunk_shape"] == (4, 4)
+    assert codec["configuration"]["index_codecs"][-1]["name"] == "crc32c"  # default index pipeline
+
+
+def test_create_with_sharding_rejects_indivisible() -> None:
+    from pydantic_zarr.v3 import CoreArraySpec
+
+    with pytest.raises(ValueError):
+        CoreArraySpec.create_with_sharding(
+            outer_chunk_shape=(8, 8),
+            inner_chunk_shape=(3, 3),
+            shape=(8, 8),
+            data_type="int32",
+            fill_value=0,
+        )
+
+
+def test_create_with_sharding_rejects_rank_mismatch() -> None:
+    from pydantic_zarr.v3 import CoreArraySpec
+
+    with pytest.raises(ValueError):
+        CoreArraySpec.create_with_sharding(
+            outer_chunk_shape=(8, 8),
+            inner_chunk_shape=(4,),
+            shape=(8, 8),
+            data_type="int32",
+            fill_value=0,
+        )
+
+
+def test_create_with_sharding_per_dtype_class() -> None:
+    from pydantic_zarr.v3 import CoreFloat64ArraySpec
+
+    spec = CoreFloat64ArraySpec.create_with_sharding(
+        outer_chunk_shape=(8,),
+        inner_chunk_shape=(4,),
+        shape=(8,),
+        fill_value="NaN",
+    )
+    assert type(spec).__name__ == "CoreFloat64ArraySpec"
+    assert spec.codecs[0]["name"] == "sharding_indexed"
+
+
+def test_create_with_sharding_custom_inner_codecs() -> None:
+    from pydantic_zarr.v3 import CoreArraySpec
+
+    spec = CoreArraySpec.create_with_sharding(
+        outer_chunk_shape=(8,),
+        inner_chunk_shape=(4,),
+        shape=(8,),
+        data_type="int32",
+        fill_value=0,
+        inner_chunk_codecs=(
+            {"name": "bytes", "configuration": {"endian": "little"}},
+            {"name": "gzip", "configuration": {"level": 1}},
+        ),
+    )
+    inner = spec.codecs[0]["configuration"]["codecs"]
+    assert inner[-1]["name"] == "gzip"
+
+
+def test_extra_create_with_sharding() -> None:
+    from pydantic_zarr.v3 import ExtraArraySpec
+
+    spec = ExtraArraySpec.create_with_sharding(
+        outer_chunk_shape=(8,),
+        inner_chunk_shape=(4,),
+        shape=(8,),
+        data_type="int32",
+        fill_value=0,
+    )
+    assert spec.codecs[0]["name"] == "sharding_indexed"

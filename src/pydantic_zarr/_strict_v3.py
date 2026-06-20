@@ -111,6 +111,49 @@ _DEFAULT_FILL_BY_DTYPE: dict[str, Any] = {
 }
 
 
+_DEFAULT_INNER_CHUNK_CODECS: tuple[dict[str, Any], ...] = (
+    {"name": "bytes", "configuration": {"endian": "little"}},
+)
+_DEFAULT_INDEX_CODECS: tuple[dict[str, Any], ...] = (
+    {"name": "bytes", "configuration": {"endian": "little"}},
+    {"name": "crc32c"},
+)
+
+
+def _check_divides(outer: tuple[int, ...], inner: tuple[int, ...]) -> None:
+    """Raise ValueError if inner does not evenly divide outer (rank or remainder)."""
+    if len(outer) != len(inner):
+        raise ValueError(
+            f"inner_chunk_shape {inner} has rank {len(inner)} but outer_chunk_shape "
+            f"{outer} has rank {len(outer)}; ranks must match"
+        )
+    bad = [i for i in range(len(outer)) if outer[i] % inner[i] != 0]
+    if bad:
+        raise ValueError(
+            f"inner_chunk_shape {inner} does not evenly divide outer_chunk_shape {outer}"
+        )
+
+
+def _build_sharding_codec(
+    inner_chunk_shape: tuple[int, ...],
+    inner_chunk_codecs: Any,
+    index_codecs: Any,
+) -> dict[str, Any]:
+    """Build a sharding_indexed codec dict from validated inputs."""
+    inner_codecs_resolved: Any = (
+        _DEFAULT_INNER_CHUNK_CODECS if inner_chunk_codecs is AUTO else inner_chunk_codecs
+    )
+    index_codecs_resolved: Any = _DEFAULT_INDEX_CODECS if index_codecs is AUTO else index_codecs
+    return {
+        "name": "sharding_indexed",
+        "configuration": {
+            "chunk_shape": tuple(inner_chunk_shape),
+            "codecs": tuple(inner_codecs_resolved),
+            "index_codecs": tuple(index_codecs_resolved),
+        },
+    }
+
+
 def _resolve_strict_init(
     *,
     shape: Any,
@@ -231,6 +274,38 @@ class _CoreBase(_BaseArraySpec[Mapping[str, object]]):
         return cls(**resolved, **kwargs)
 
     @classmethod
+    def create_with_sharding(
+        cls,
+        *,
+        outer_chunk_shape: tuple[int, ...],
+        inner_chunk_shape: tuple[int, ...],
+        inner_chunk_codecs: Any = AUTO,
+        index_codecs: Any = AUTO,
+        shape: tuple[int, ...] | _Auto = AUTO,
+        data_type: Any = AUTO,
+        fill_value: Any = AUTO,
+        chunk_key_encoding: Any = AUTO,
+        attributes: Mapping[str, object] | _Auto = AUTO,
+        **kwargs: Any,
+    ) -> Self:
+        _check_divides(outer_chunk_shape, inner_chunk_shape)
+        sharding_codec = _build_sharding_codec(inner_chunk_shape, inner_chunk_codecs, index_codecs)
+        chunk_grid: dict[str, Any] = {
+            "name": "regular",
+            "configuration": {"chunk_shape": tuple(outer_chunk_shape)},
+        }
+        return cls.create(
+            shape=shape,
+            data_type=data_type,
+            fill_value=fill_value,
+            chunk_grid=chunk_grid,
+            chunk_key_encoding=chunk_key_encoding,
+            codecs=(sharding_codec,),
+            attributes=attributes,
+            **kwargs,
+        )
+
+    @classmethod
     def from_array(
         cls,
         array: Any,
@@ -301,6 +376,38 @@ class _ExtraBase(_BaseArraySpec[Mapping[str, object]]):
             default_data_type=getattr(cls, "_default_data_type", ""),
         )
         return cls(**resolved, **kwargs)
+
+    @classmethod
+    def create_with_sharding(
+        cls,
+        *,
+        outer_chunk_shape: tuple[int, ...],
+        inner_chunk_shape: tuple[int, ...],
+        inner_chunk_codecs: Any = AUTO,
+        index_codecs: Any = AUTO,
+        shape: tuple[int, ...] | _Auto = AUTO,
+        data_type: Any = AUTO,
+        fill_value: Any = AUTO,
+        chunk_key_encoding: Any = AUTO,
+        attributes: Mapping[str, object] | _Auto = AUTO,
+        **kwargs: Any,
+    ) -> Self:
+        _check_divides(outer_chunk_shape, inner_chunk_shape)
+        sharding_codec = _build_sharding_codec(inner_chunk_shape, inner_chunk_codecs, index_codecs)
+        chunk_grid: dict[str, Any] = {
+            "name": "regular",
+            "configuration": {"chunk_shape": tuple(outer_chunk_shape)},
+        }
+        return cls.create(
+            shape=shape,
+            data_type=data_type,
+            fill_value=fill_value,
+            chunk_grid=chunk_grid,
+            chunk_key_encoding=chunk_key_encoding,
+            codecs=(sharding_codec,),
+            attributes=attributes,
+            **kwargs,
+        )
 
     @classmethod
     def from_array(
