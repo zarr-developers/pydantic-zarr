@@ -132,3 +132,49 @@ def test_core_fill_matches_oracle(data_type: str, fill: object) -> None:
 def test_extra_fill_matches_oracle(data_type: str, fill: object) -> None:
     adapter: TypeAdapter = TypeAdapter(AnyExtraArraySpec)
     assert _accepts(adapter, data_type, fill) == is_valid_fill(data_type, fill)
+
+
+# Restrict to short-string (name-only) form so the only variable is name-vocabulary.
+# Object forms like {"name": "blosc"} are structurally rejected when required config
+# fields (e.g. cname/clevel for blosc) are absent — a rejection unrelated to the
+# name-validity question the oracle tests.  Short strings avoid that noise.
+_CODECS = st.sampled_from(
+    ["blosc", "bytes", "zstd", "scale_offset", "cast_value", "made_up", "garbage"]
+)
+_GRIDS = st.sampled_from(
+    [
+        {"name": "regular", "configuration": {"chunk_shape": (4,)}},
+        {"name": "rectilinear", "configuration": {"kind": "inline", "chunk_shapes": ((1, 3),)}},
+        {"name": "made_up", "configuration": {}},
+    ]
+)
+
+
+def _accepts_field(adapter: TypeAdapter, **override: object) -> bool:
+    try:
+        adapter.validate_python({**_BASE, "data_type": "int64", "fill_value": 0, **override})
+    except ValidationError:
+        return False
+    else:
+        return True
+
+
+@given(grid=_GRIDS)
+def test_core_grid_matches_oracle(grid: object) -> None:
+    adapter: TypeAdapter = TypeAdapter(AnyCoreArraySpec)
+    assert _accepts_field(adapter, chunk_grid=grid) == is_valid_grid("core", grid)
+
+
+@given(grid=_GRIDS)
+def test_extra_grid_matches_oracle(grid: object) -> None:
+    adapter: TypeAdapter = TypeAdapter(AnyExtraArraySpec)
+    assert _accepts_field(adapter, chunk_grid=grid) == is_valid_grid("extra", grid)
+
+
+@given(codec=_CODECS)
+def test_core_codec_matches_oracle(codec: object) -> None:
+    adapter: TypeAdapter = TypeAdapter(AnyCoreArraySpec)
+    # a bytes codec is always needed; put the candidate first
+    bytes_codec = {"name": "bytes", "configuration": {"endian": "little"}}
+    accepts = _accepts_field(adapter, codecs=(codec, bytes_codec))
+    assert accepts == is_valid_codec("core", codec)
