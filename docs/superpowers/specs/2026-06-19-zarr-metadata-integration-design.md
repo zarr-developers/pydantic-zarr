@@ -151,7 +151,61 @@ as siblings over `_BaseArraySpec`. The consumer functions (`like`, `to_flat`, `f
 specific call site to also accept a strict instance is a one-line change to make if and when a
 concrete need arises, not pre-solved here.
 
+### Strict families: Core vs Extra (SUPERSEDES the "both"-design naming below; decided 2026-06-20)
+
+Strict mode has **two vocabulary levels**, realized as two parallel class families. They are
+identical in the `data_type`↔`fill_value` coupling and in dtype coverage (the deferred extension
+dtypes aren't in either yet); they differ only in which **chunk grids** and **codecs** they
+accept:
+
+| | **Core** (core Zarr v3 spec only) | **Extra** (core spec + well-known zarr extensions) |
+| --- | --- | --- |
+| chunk_grid | `regular` | `regular` \| `rectilinear` |
+| codecs (object form) | blosc, bytes, crc32c, gzip, sharding_indexed, transpose, zstd | + scale_offset, cast_value |
+| codecs (string form) | the 7 core codec **name literals** only | the 9 name literals only |
+| dtypes | bool, int*, uint*, float*, complex*, raw | same (extension dtypes deferred) |
+
+Classification is authoritative from each zarr-metadata leaf module's source URL
+(`zarr-specs.readthedocs.io` = core; `github.com/zarr-developers/zarr-extensions` = extension).
+zstd (a merged spec PR) is treated as core.
+
+**Naming (no `Strict` prefix; loose `ArraySpec` keeps the short default name):**
+- Loose: `ArraySpec` / `GroupSpec` (unchanged, generic, default).
+- Core family: `CoreArraySpec` (single constructible), `CoreBoolArraySpec` … `CoreFloat64ArraySpec`
+  … `CoreRawArraySpec` (15 per-dtype precise), `AnyCoreArraySpec` (discriminated-union validation
+  target), `CoreGroupSpec` (members recursively `AnyCoreArraySpec | CoreGroupSpec`).
+- Extra family: `ExtraArraySpec`, `Extra<Dtype>ArraySpec` (×15), `AnyExtraArraySpec`,
+  `ExtraGroupSpec` — same structure, the Extra vocabulary.
+- The interim `Strict*` / `Float64ArraySpec` / `AnyStrictArraySpec` / `StrictGroupSpec` names from
+  the "both" design are **replaced** by the Core/Extra families (no compat alias).
+
+**Structure: Approach A — plain non-generic classes (no `TGrid`/`TCodec` generics).** Each family
+has its own `_CoreBase` / `_ExtraBase` (carrying that family's `chunk_grid` / `codecs` field
+types) and its own 15 concrete per-dtype classes. ~30 per-dtype classes total. Chosen over a
+generic `Float64Spec[TGrid, TCodec]` (which halves the class count but reintroduces generics and
+produces verbose revealed types like `Float64Spec[RegularChunkGridObject, Union[...]]`),
+consistent with the non-generic-strict decision. Per-dtype classes may be produced via a small
+internal factory to avoid hand-writing 30 near-identical bodies, but the public result is plain
+named classes.
+
+**Codec string strictness:** the bare-string short-hand codec form is permitted (the spec allows
+it) but, in strict mode, only for **known** codec names — the union of the family's
+`<X>CodecName` literals (e.g. `BloscCodecName = Literal["blosc"]`), NOT arbitrary `str`. This
+closes the `| str` hole where strict mode rubber-stamped unknown codec names. An unrecognized
+codec name is rejected.
+
+**Single constructible class coupling (both families):** `CoreArraySpec` / `ExtraArraySpec` carry
+`data_type: str` + `fill_value: JSONValue` + a `model_validator` that (a) looks up the per-dtype
+fill type by `data_type`, (b) handles raw `r<N>` by regex, (c) **rejects unrecognized
+data_types**. (Same mechanism as the "both" design's single class, applied per family.)
+
+---
+
 ### Strict spec: "both" design — one constructible class AND per-dtype precise classes
+
+> **Naming superseded** by the Core/Extra families above — the `Strict*` names here are replaced
+> by `Core*` / `Extra*`. The "both" *mechanism* (single constructible class + per-dtype precise
+> classes + discriminated-union validation target) is retained, instantiated once per family.
 
 Strict mode's defining feature is that `data_type` and `fill_value` are **coupled**: e.g. a
 `float64` array may have fill value `"NaN"` / `"Infinity"` / `"-Infinity"` / a `HexFloat64`
