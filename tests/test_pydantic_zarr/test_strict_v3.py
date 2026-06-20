@@ -62,6 +62,36 @@ def test_core_raw_dtype_routes_and_validates() -> None:
     assert isinstance(result, CoreRawArraySpec)
 
 
+@pytest.mark.parametrize("bad_dtype", ["garbage", "float128", "bytes", "r"])
+def test_core_union_rejects_unknown_data_type(bad_dtype: str) -> None:
+    """Union must reject data_type values that are not known literal types or r<N>."""
+    with pytest.raises(ValidationError):
+        CORE_ADAPTER.validate_python(_doc(bad_dtype, 0))
+
+
+@pytest.mark.parametrize("bad_dtype", ["garbage", "float128", "bytes", "r"])
+def test_extra_union_rejects_unknown_data_type(bad_dtype: str) -> None:
+    """Union must reject data_type values that are not known literal types or r<N>."""
+    with pytest.raises(ValidationError):
+        EXTRA_ADAPTER.validate_python(_doc(bad_dtype, 0))
+
+
+def test_core_union_accepts_raw_r8() -> None:
+    """R8 with a bytes-tuple fill_value is accepted through the union."""
+    from pydantic_zarr.v3 import CoreRawArraySpec
+
+    result = CORE_ADAPTER.validate_python(_doc("r8", (1,)))
+    assert isinstance(result, CoreRawArraySpec)
+
+
+def test_extra_union_accepts_raw_r16() -> None:
+    """R16 with a bytes-tuple fill_value is accepted through the extra union."""
+    from pydantic_zarr.v3 import ExtraRawArraySpec
+
+    result = EXTRA_ADAPTER.validate_python(_doc("r16", (0, 0)))
+    assert isinstance(result, ExtraRawArraySpec)
+
+
 def test_core_union_routes_to_float64_class() -> None:
     from pydantic_zarr.v3 import CoreFloat64ArraySpec
 

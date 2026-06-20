@@ -19,7 +19,7 @@ import re
 from collections.abc import Mapping
 from typing import Annotated, Any, Literal, Self, Union
 
-from pydantic import AfterValidator, Field, TypeAdapter, model_validator
+from pydantic import AfterValidator, BeforeValidator, Field, TypeAdapter, model_validator
 from zarr_metadata import (
     BloscCodecMetadata,
     BloscCodecName,
@@ -143,6 +143,22 @@ class _ExtraBase(_BaseArraySpec[Mapping[str, object]]):
 
 
 # ---------------------------------------------------------------------------
+# Raw dtype name validator
+# ---------------------------------------------------------------------------
+
+_RAW_DTYPE_RE = re.compile(r"^r\d+$")
+
+
+def _ensure_raw_dtype_name(value: str) -> str:
+    """Validate a raw ``r<N>`` data type name (N a positive integer)."""
+    if not _RAW_DTYPE_RE.match(value):
+        raise ValueError("raw data_type must match 'r<N>', got " + repr(value))
+    return value
+
+
+_RawDataTypeName = Annotated[RawBytesDataTypeName, BeforeValidator(_ensure_raw_dtype_name)]
+
+# ---------------------------------------------------------------------------
 # Core per-dtype classes (15 explicit)
 # ---------------------------------------------------------------------------
 
@@ -218,7 +234,7 @@ class CoreComplex128ArraySpec(_CoreBase):
 
 
 class CoreRawArraySpec(_CoreBase):
-    data_type: RawBytesDataTypeName
+    data_type: _RawDataTypeName
     fill_value: RawBytesFillValue
 
 
@@ -298,7 +314,7 @@ class ExtraComplex128ArraySpec(_ExtraBase):
 
 
 class ExtraRawArraySpec(_ExtraBase):
-    data_type: RawBytesDataTypeName
+    data_type: _RawDataTypeName
     fill_value: RawBytesFillValue
 
 
@@ -366,7 +382,6 @@ codec types (and their name literals).
 # Fill-value lookup (shared between Core and Extra)
 # ---------------------------------------------------------------------------
 
-_RAW_DTYPE_RE = re.compile(r"^r\d+$")
 _FILL_BY_DTYPE: dict[str, Any] = {
     "bool": BoolFillValue,
     "int8": Int8FillValue,
