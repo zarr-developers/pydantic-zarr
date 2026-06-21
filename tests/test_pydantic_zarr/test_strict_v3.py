@@ -718,3 +718,73 @@ def test_extra_create_with_sharding() -> None:
         fill_value=0,
     )
     assert spec.codecs[0]["name"] == "sharding_indexed"
+
+
+# ---------------------------------------------------------------------------
+# Internal validator rejection tests (Task 11)
+# AfterValidator on codecs/chunk_grid must fire during pydantic validation of
+# a parsed-from-dict strict spec, catching codec/grid configuration errors.
+# ---------------------------------------------------------------------------
+
+
+def test_core_union_rejects_non_permutation_transpose() -> None:
+    """A transpose codec with a non-permutation order must be rejected via the union."""
+    doc = {
+        "zarr_format": 3,
+        "node_type": "array",
+        "data_type": "int32",
+        "fill_value": 0,
+        "shape": (4, 4),
+        "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (4, 4)}},
+        "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
+        # order [0, 0] is not a permutation of range(2)
+        "codecs": ({"name": "transpose", "configuration": {"order": [0, 0]}},),
+        "attributes": {},
+    }
+    with pytest.raises(ValidationError):
+        TypeAdapter(AnyCoreArraySpec).validate_python(doc)
+
+
+def test_core_union_rejects_blosc_out_of_range_clevel() -> None:
+    """A blosc codec with clevel outside [0, 9] must be rejected via the union."""
+    doc = {
+        "zarr_format": 3,
+        "node_type": "array",
+        "data_type": "int32",
+        "fill_value": 0,
+        "shape": (4,),
+        "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (4,)}},
+        "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
+        "codecs": (
+            {
+                "name": "blosc",
+                "configuration": {
+                    "cname": "lz4",
+                    "clevel": 99,
+                    "shuffle": "noshuffle",
+                    "blocksize": 0,
+                },
+            },
+        ),
+        "attributes": {},
+    }
+    with pytest.raises(ValidationError):
+        TypeAdapter(AnyCoreArraySpec).validate_python(doc)
+
+
+def test_core_union_rejects_non_positive_chunk_shape() -> None:
+    """A regular chunk_grid with a zero dimension must be rejected via the union."""
+    doc = {
+        "zarr_format": 3,
+        "node_type": "array",
+        "data_type": "int32",
+        "fill_value": 0,
+        "shape": (4,),
+        # chunk_shape with 0 dimension
+        "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (0,)}},
+        "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
+        "codecs": ({"name": "bytes", "configuration": {"endian": "little"}},),
+        "attributes": {},
+    }
+    with pytest.raises(ValidationError):
+        TypeAdapter(AnyCoreArraySpec).validate_python(doc)

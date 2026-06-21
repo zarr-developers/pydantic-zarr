@@ -22,23 +22,13 @@ from typing import Annotated, Any, ClassVar, Literal, Self, Union
 
 from pydantic import AfterValidator, BeforeValidator, Field, TypeAdapter, model_validator
 from zarr_metadata import (
-    BloscCodecMetadata,
-    BloscCodecName,
     BoolDataTypeName,
-    BytesCodecMetadata,
-    BytesCodecName,
-    CastValueCodecMetadata,
-    CastValueCodecName,
     Complex64DataTypeName,
     Complex128DataTypeName,
-    Crc32cCodecMetadata,
-    Crc32cCodecName,
     DefaultChunkKeyEncodingMetadata,
     Float16DataTypeName,
     Float32DataTypeName,
     Float64DataTypeName,
-    GzipCodecMetadata,
-    GzipCodecName,
     Int8DataTypeName,
     Int16DataTypeName,
     Int32DataTypeName,
@@ -47,19 +37,11 @@ from zarr_metadata import (
     RawBytesDataTypeName,
     RectilinearChunkGridMetadata,
     RegularChunkGridMetadata,
-    ScaleOffsetCodecMetadata,
-    ScaleOffsetCodecName,
-    ShardingIndexedCodecMetadata,
-    ShardingIndexedCodecName,
-    TransposeCodecMetadata,
-    TransposeCodecName,
     Uint8DataTypeName,
     Uint16DataTypeName,
     Uint32DataTypeName,
     Uint64DataTypeName,
     V2ChunkKeyEncodingMetadata,
-    ZstdCodecMetadata,
-    ZstdCodecName,
 )
 
 from pydantic_zarr._strict_fill import (
@@ -80,6 +62,8 @@ from pydantic_zarr._strict_fill import (
     StrictUint64Fill,
 )
 from pydantic_zarr.core import ensure_key_no_path
+from pydantic_zarr.strict.v3.chunk_grid import GRID_VALIDATE
+from pydantic_zarr.strict.v3.codec import CODEC_VALIDATE, _CoreCodec, _ExtraCodec
 from pydantic_zarr.v3 import NodeSpec, _BaseArraySpec
 
 # ---------------------------------------------------------------------------
@@ -200,46 +184,42 @@ def _resolve_strict_init(
 
 
 # ---------------------------------------------------------------------------
-# Codec vocabulary
+# Internal validators: run per-element validate_<x> during pydantic parsing
 # ---------------------------------------------------------------------------
 
-_CoreCodec = (
-    BloscCodecMetadata
-    | BytesCodecMetadata
-    | Crc32cCodecMetadata
-    | GzipCodecMetadata
-    | ShardingIndexedCodecMetadata
-    | TransposeCodecMetadata
-    | ZstdCodecMetadata
-    | BloscCodecName
-    | BytesCodecName
-    | Crc32cCodecName
-    | GzipCodecName
-    | ShardingIndexedCodecName
-    | TransposeCodecName
-    | ZstdCodecName
-)
 
-_ExtraCodec = (
-    BloscCodecMetadata
-    | BytesCodecMetadata
-    | CastValueCodecMetadata
-    | Crc32cCodecMetadata
-    | GzipCodecMetadata
-    | ScaleOffsetCodecMetadata
-    | ShardingIndexedCodecMetadata
-    | TransposeCodecMetadata
-    | ZstdCodecMetadata
-    | BloscCodecName
-    | BytesCodecName
-    | CastValueCodecName
-    | Crc32cCodecName
-    | GzipCodecName
-    | ScaleOffsetCodecName
-    | ShardingIndexedCodecName
-    | TransposeCodecName
-    | ZstdCodecName
-)
+def _validate_codec_internal(codec: Any) -> Any:
+    if isinstance(codec, str):
+        name: str | None = codec
+    elif isinstance(codec, dict):
+        raw = codec.get("name")
+        name = raw if isinstance(raw, str) else None
+    else:
+        name = None
+    if name is not None:
+        fn = CODEC_VALIDATE.get(name)
+        if fn is not None and isinstance(codec, dict):
+            fn(codec)
+    return codec
+
+
+def _validate_grid_internal(grid: Any) -> Any:
+    if isinstance(grid, dict):
+        raw = grid.get("name")
+        name: str | None = raw if isinstance(raw, str) else None
+    else:
+        name = None
+    if name is not None:
+        fn = GRID_VALIDATE.get(name)
+        if fn is not None:
+            fn(grid)
+    return grid
+
+
+# ---------------------------------------------------------------------------
+# Codec vocabulary (imported from per-element package; _CoreCodec, _ExtraCodec
+# defined there — identical membership, kept in sync)
+# ---------------------------------------------------------------------------
 
 _ChunkKeyEncoding = DefaultChunkKeyEncodingMetadata | V2ChunkKeyEncodingMetadata
 
@@ -250,9 +230,9 @@ _ChunkKeyEncoding = DefaultChunkKeyEncodingMetadata | V2ChunkKeyEncodingMetadata
 
 class _CoreBase(_BaseArraySpec[Mapping[str, object]]):
     attributes: Mapping[str, object] = {}
-    chunk_grid: RegularChunkGridMetadata
+    chunk_grid: Annotated[RegularChunkGridMetadata, AfterValidator(_validate_grid_internal)]
     chunk_key_encoding: _ChunkKeyEncoding
-    codecs: tuple[_CoreCodec, ...]
+    codecs: tuple[Annotated[_CoreCodec, AfterValidator(_validate_codec_internal)], ...]
 
     @classmethod
     def create(
@@ -354,9 +334,12 @@ class _CoreBase(_BaseArraySpec[Mapping[str, object]]):
 
 class _ExtraBase(_BaseArraySpec[Mapping[str, object]]):
     attributes: Mapping[str, object] = {}
-    chunk_grid: RegularChunkGridMetadata | RectilinearChunkGridMetadata
+    chunk_grid: Annotated[
+        RegularChunkGridMetadata | RectilinearChunkGridMetadata,
+        AfterValidator(_validate_grid_internal),
+    ]
     chunk_key_encoding: _ChunkKeyEncoding
-    codecs: tuple[_ExtraCodec, ...]
+    codecs: tuple[Annotated[_ExtraCodec, AfterValidator(_validate_codec_internal)], ...]
 
     @classmethod
     def create(
