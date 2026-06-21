@@ -9,8 +9,10 @@ from pydantic_zarr.v3 import AnyCoreArraySpec, AnyExtraArraySpec
 
 from .strict_oracle import (
     is_valid_codec,
+    is_valid_codec_internal,
     is_valid_fill,
     is_valid_grid,
+    is_valid_ndim_match,
 )
 
 
@@ -204,3 +206,102 @@ def test_extra_codec_matches_oracle(codec: object) -> None:
     adapter: TypeAdapter = TypeAdapter(AnyExtraArraySpec)
     accepts = _accepts_field(adapter, codecs=_codec_pipeline_for(codec))
     assert accepts == is_valid_codec("extra", codec)
+
+
+# ---------------------------------------------------------------------------
+# Internal-validity property tests
+# ---------------------------------------------------------------------------
+
+# Strategy: generate lists of small ints that are sometimes valid permutations,
+# sometimes not.  A pure permutation of range(n) is a specific subset — mixing
+# in duplicates or out-of-range values exercises the non-permutation branch.
+_SMALL_INTS = st.integers(min_value=0, max_value=5)
+_ORDER_LISTS = st.one_of(
+    # valid permutations of range(n) for n in 1..4
+    st.permutations([0]),
+    st.permutations([0, 1]),
+    st.permutations([0, 1, 2]),
+    st.permutations([0, 1, 2, 3]),
+    # potentially-invalid: arbitrary short lists of small ints (may repeat / skip)
+    st.lists(_SMALL_INTS, min_size=1, max_size=4),
+)
+
+_BYTES_CODEC = {"name": "bytes", "configuration": {"endian": "little"}}
+
+
+@given(order=_ORDER_LISTS)
+def test_transpose_internal_matches_oracle(order: list[int]) -> None:
+    """TypeAdapter accepts transpose iff order is a valid permutation."""
+    ndim = len(order)
+    # shape and chunk_shape must match the transpose ndim
+    shape = tuple(4 for _ in range(ndim))
+    chunk_shape = tuple(4 for _ in range(ndim))
+    chunk_grid = {"name": "regular", "configuration": {"chunk_shape": chunk_shape}}
+    transpose_codec = {"name": "transpose", "configuration": {"order": order}}
+    # pipeline: transpose (array->array) then bytes (array->bytes)
+    pipeline = (transpose_codec, _BYTES_CODEC)
+    doc = {
+        **_BASE,
+        "shape": shape,
+        "chunk_grid": chunk_grid,
+        "data_type": "int64",
+        "fill_value": 0,
+        "codecs": pipeline,
+    }
+    try:
+        TypeAdapter(AnyCoreArraySpec).validate_python(doc)
+        accepted = True
+    except Exception:
+        accepted = False
+    oracle_ok = is_valid_codec_internal("transpose", transpose_codec)
+    assert accepted == oracle_ok, f"order={order}: accepted={accepted} but oracle says {oracle_ok}"
+
+
+# Strategy: generate clevel values in and around the valid [0, 9] range
+_BLOSC_CLEVELS = st.integers(min_value=-3, max_value=12)
+
+
+@given(clevel=_BLOSC_CLEVELS)
+def test_blosc_clevel_matches_oracle(clevel: int) -> None:
+    """TypeAdapter accepts blosc iff clevel is in [0, 9]."""
+    adapter: TypeAdapter = TypeAdapter(AnyCoreArraySpec)
+    blosc_codec = {
+        "name": "blosc",
+        "configuration": {
+            "cname": "lz4",
+            "clevel": clevel,
+            "shuffle": "noshuffle",
+            "blocksize": 0,
+        },
+    }
+    # blosc is bytes_bytes; pipeline = bytes (array->bytes) then blosc (bytes->bytes)
+    pipeline = (_BYTES_CODEC, blosc_codec)
+    accepted = _accepts_field(adapter, codecs=pipeline)
+    oracle_ok = is_valid_codec_internal("blosc", blosc_codec)
+    assert accepted == oracle_ok, (
+        f"clevel={clevel}: accepted={accepted} but oracle says {oracle_ok}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Dimensionality-matching property tests
+# ---------------------------------------------------------------------------
+
+# We vary the chunk_shape ndim independently of the array shape ndim.
+_NDIMS = st.integers(min_value=1, max_value=4)
+
+
+@given(array_ndim=_NDIMS, chunk_ndim=_NDIMS)
+def test_regular_grid_ndim_matches_oracle(array_ndim: int, chunk_ndim: int) -> None:
+    """TypeAdapter accepts regular grid iff array ndim == chunk_grid ndim."""
+    adapter: TypeAdapter = TypeAdapter(AnyCoreArraySpec)
+    shape = tuple(4 for _ in range(array_ndim))
+    chunk_shape = tuple(4 for _ in range(chunk_ndim))
+    chunk_grid = {"name": "regular", "configuration": {"chunk_shape": chunk_shape}}
+    # codec must match the array ndim (use bytes which is ndim-agnostic)
+    accepted = _accepts_field(adapter, shape=shape, chunk_grid=chunk_grid)
+    oracle_ok = is_valid_ndim_match(shape, chunk_grid)
+    assert accepted == oracle_ok, (
+        f"array_ndim={array_ndim} chunk_ndim={chunk_ndim}: "
+        f"accepted={accepted} but oracle says {oracle_ok}"
+    )

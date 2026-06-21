@@ -104,3 +104,84 @@ def is_valid_grid(family: str, grid: object) -> bool:
     if name == "rectilinear":
         return family == "extra"
     return False
+
+
+def is_valid_codec_internal(name: str, meta: object) -> bool:
+    """Return True iff the codec's own configuration is internally valid.
+
+    Rules encoded from the spec, independently of pydantic-zarr source:
+    - ``transpose``: ``order`` must be a permutation of ``range(len(order))``
+    - ``blosc``: ``clevel`` must be in [0, 9]
+    - ``gzip``: ``level`` must be in [0, 9]
+    - ``regular`` (chunk grid) or ``sharding_indexed``: ``chunk_shape`` must be
+      all-positive integers
+    - All other recognised codec names: True (no extra internal rule)
+
+    *meta* is expected to be a dict with at least a ``"configuration"`` key when
+    the codec carries configuration; if the key is absent the function returns
+    True (no configuration → nothing to validate internally).
+    """
+    if not isinstance(meta, dict):
+        # bare string name — no configuration to validate
+        return True
+    config = meta.get("configuration")
+    if not isinstance(config, dict):
+        return True
+
+    if name == "transpose":
+        order = config.get("order")
+        if not isinstance(order, (list, tuple)):
+            return False
+        order_list = list(order)
+        return sorted(order_list) == list(range(len(order_list)))
+
+    if name == "blosc":
+        clevel = config.get("clevel")
+        if not isinstance(clevel, int) or isinstance(clevel, bool):
+            return False
+        return 0 <= clevel <= 9
+
+    if name == "gzip":
+        level = config.get("level")
+        if not isinstance(level, int) or isinstance(level, bool):
+            return False
+        return 0 <= level <= 9
+
+    if name in ("sharding_indexed",):
+        chunk_shape = config.get("chunk_shape")
+        if not isinstance(chunk_shape, (list, tuple)):
+            return False
+        return all(isinstance(d, int) and not isinstance(d, bool) and d > 0 for d in chunk_shape)
+
+    # regular chunk_grid is not a codec but may be checked via the same predicate
+    if name == "regular":
+        chunk_shape = config.get("chunk_shape")
+        if not isinstance(chunk_shape, (list, tuple)):
+            return False
+        return all(isinstance(d, int) and not isinstance(d, bool) and d > 0 for d in chunk_shape)
+
+    return True
+
+
+def is_valid_ndim_match(shape: object, chunk_grid: object) -> bool:
+    """Return True iff the array shape ndim equals the chunk_grid ndim.
+
+    Only inspects the ``regular`` grid (the only one with an unambiguous
+    per-dimension chunk_shape in the core spec).  For all other grid names
+    the predicate returns True (nothing to check from this oracle).
+    """
+    if not isinstance(shape, (list, tuple)):
+        return False
+    ndim = len(shape)
+    if not isinstance(chunk_grid, dict):
+        return True  # can't determine — not our check
+    name = chunk_grid.get("name")
+    if name != "regular":
+        return True
+    config = chunk_grid.get("configuration")
+    if not isinstance(config, dict):
+        return True
+    chunk_shape = config.get("chunk_shape")
+    if not isinstance(chunk_shape, (list, tuple)):
+        return True
+    return len(chunk_shape) == ndim
