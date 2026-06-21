@@ -251,7 +251,7 @@ def test_transpose_internal_matches_oracle(order: list[int]) -> None:
     try:
         TypeAdapter(AnyCoreArraySpec).validate_python(doc)
         accepted = True
-    except Exception:
+    except ValidationError:
         accepted = False
     oracle_ok = is_valid_codec_internal("transpose", transpose_codec)
     assert accepted == oracle_ok, f"order={order}: accepted={accepted} but oracle says {oracle_ok}"
