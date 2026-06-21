@@ -143,7 +143,17 @@ def test_extra_fill_matches_oracle(data_type: str, fill: object) -> None:
 # fields (e.g. cname/clevel for blosc) are absent — a rejection unrelated to the
 # name-validity question the oracle tests.  Short strings avoid that noise.
 _CODECS = st.sampled_from(
-    ["blosc", "bytes", "zstd", "scale_offset", "cast_value", "made_up", "garbage"]
+    [
+        "blosc",
+        "bytes",
+        "zstd",
+        "scale_offset",
+        "cast_value",
+        "made_up",
+        "garbage",
+        "transpose",
+        "sharding_indexed",
+    ]
 )
 _GRIDS = st.sampled_from(
     [

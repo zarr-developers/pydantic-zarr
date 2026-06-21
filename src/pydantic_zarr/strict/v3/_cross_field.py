@@ -28,7 +28,7 @@ def check_array_consistency(
 
     for c in codecs or ():
         cname = _name(c)
-        if cname in CODEC_NDIM_OF:
+        if cname in CODEC_NDIM_OF and isinstance(c, dict):
             cnd = CODEC_NDIM_OF[cname](c)
             if cnd is not None and cnd != ndim:
                 errs.append(f"codec {cname} ndim {cnd} != array ndim {ndim}")
@@ -40,7 +40,7 @@ def check_array_consistency(
     if gname == "regular":
         outer = tuple(chunk_grid["configuration"]["chunk_shape"])
         for c in codecs or ():
-            if _name(c) == "sharding_indexed":
+            if _name(c) == "sharding_indexed" and isinstance(c, dict):
                 inner = tuple(c["configuration"]["chunk_shape"])
                 if len(inner) != len(outer):
                     errs.append(f"sharding inner ndim {len(inner)} != outer ndim {len(outer)}")
