@@ -62,6 +62,8 @@ from pydantic_zarr._strict_fill import (
     StrictUint64Fill,
 )
 from pydantic_zarr.core import ensure_key_no_path
+from pydantic_zarr.strict.v3._cross_field import check_array_consistency
+from pydantic_zarr.strict.v3._pipeline import validate_pipeline
 from pydantic_zarr.strict.v3.chunk_grid import GRID_VALIDATE
 from pydantic_zarr.strict.v3.codec import CODEC_VALIDATE, _CoreCodec, _ExtraCodec
 from pydantic_zarr.v3 import NodeSpec, _BaseArraySpec
@@ -165,7 +167,7 @@ def _resolve_strict_init(
         "attributes": {} if attributes is AUTO else attributes,
         "fill_value": (_DEFAULT_FILL_BY_DTYPE.get(dt, 0) if fill_value is AUTO else fill_value),
         "chunk_grid": (
-            {"name": "regular", "configuration": {"chunk_shape": shape_v or (1,)}}
+            {"name": "regular", "configuration": {"chunk_shape": shape_v}}
             if chunk_grid is AUTO
             else chunk_grid
         ),
@@ -233,6 +235,20 @@ class _CoreBase(_BaseArraySpec[Mapping[str, object]]):
     chunk_grid: Annotated[RegularChunkGridMetadata, AfterValidator(_validate_grid_internal)]
     chunk_key_encoding: _ChunkKeyEncoding
     codecs: tuple[Annotated[_CoreCodec, AfterValidator(_validate_codec_internal)], ...]
+
+    @model_validator(mode="after")
+    def _validate_array_consistency(self) -> Self:
+        errs = check_array_consistency(
+            shape=self.shape,
+            chunk_grid=self.chunk_grid,
+            codecs=self.codecs,
+            dimension_names=self.dimension_names,
+        )
+        dt: Any = getattr(self, "data_type", "")
+        errs += validate_pipeline(dt if isinstance(dt, str) else "", self.codecs)
+        if errs:
+            raise ValueError("; ".join(errs))
+        return self
 
     @classmethod
     def create(
@@ -340,6 +356,20 @@ class _ExtraBase(_BaseArraySpec[Mapping[str, object]]):
     ]
     chunk_key_encoding: _ChunkKeyEncoding
     codecs: tuple[Annotated[_ExtraCodec, AfterValidator(_validate_codec_internal)], ...]
+
+    @model_validator(mode="after")
+    def _validate_array_consistency(self) -> Self:
+        errs = check_array_consistency(
+            shape=self.shape,
+            chunk_grid=self.chunk_grid,
+            codecs=self.codecs,
+            dimension_names=self.dimension_names,
+        )
+        dt: Any = getattr(self, "data_type", "")
+        errs += validate_pipeline(dt if isinstance(dt, str) else "", self.codecs)
+        if errs:
+            raise ValueError("; ".join(errs))
+        return self
 
     @classmethod
     def create(

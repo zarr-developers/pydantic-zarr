@@ -173,19 +173,34 @@ def test_extra_grid_matches_oracle(grid: object) -> None:
     assert _accepts_field(adapter, chunk_grid=grid) == is_valid_grid("extra", grid)
 
 
+def _codec_pipeline_for(codec: object) -> tuple[object, ...]:
+    """Build a minimal valid pipeline around *codec* for the pipeline-count check.
+
+    If the candidate codec is itself an array->bytes codec (e.g. ``"bytes"``),
+    the pipeline is just ``(codec,)``.  Otherwise a ``bytes`` codec is appended
+    so that the pipeline has exactly one array->bytes step.
+    """
+    _ARRAY_BYTES_NAMES = {"bytes", "sharding_indexed"}
+    name = (
+        codec
+        if isinstance(codec, str)
+        else (codec.get("name") if isinstance(codec, dict) else None)
+    )
+    if name in _ARRAY_BYTES_NAMES:
+        return (codec,)
+    bytes_codec = {"name": "bytes", "configuration": {"endian": "little"}}
+    return (codec, bytes_codec)
+
+
 @given(codec=_CODECS)
 def test_core_codec_matches_oracle(codec: object) -> None:
     adapter: TypeAdapter = TypeAdapter(AnyCoreArraySpec)
-    # a bytes codec is always needed; put the candidate first
-    bytes_codec = {"name": "bytes", "configuration": {"endian": "little"}}
-    accepts = _accepts_field(adapter, codecs=(codec, bytes_codec))
+    accepts = _accepts_field(adapter, codecs=_codec_pipeline_for(codec))
     assert accepts == is_valid_codec("core", codec)
 
 
 @given(codec=_CODECS)
 def test_extra_codec_matches_oracle(codec: object) -> None:
     adapter: TypeAdapter = TypeAdapter(AnyExtraArraySpec)
-    # a bytes codec is always needed; put the candidate first
-    bytes_codec = {"name": "bytes", "configuration": {"endian": "little"}}
-    accepts = _accepts_field(adapter, codecs=(codec, bytes_codec))
+    accepts = _accepts_field(adapter, codecs=_codec_pipeline_for(codec))
     assert accepts == is_valid_codec("extra", codec)

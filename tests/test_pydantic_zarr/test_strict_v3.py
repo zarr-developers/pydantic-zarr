@@ -122,7 +122,8 @@ def test_core_union_routes_to_float64_class() -> None:
 
 def test_core_accepts_known_codec_name_string() -> None:
     doc = _doc("int32", 0)
-    doc["codecs"] = ("blosc",)
+    # blosc is bytes->bytes; needs an array->bytes codec (bytes) to complete the pipeline
+    doc["codecs"] = ({"name": "bytes", "configuration": {"endian": "little"}}, "blosc")
     CORE_ADAPTER.validate_python(doc)
 
 
@@ -147,7 +148,8 @@ def test_core_rejects_unknown_codec_object() -> None:
 
 def test_extra_accepts_known_codec_name_string() -> None:
     doc = _doc("int32", 0)
-    doc["codecs"] = ("blosc",)
+    # blosc is bytes->bytes; needs an array->bytes codec (bytes) to complete the pipeline
+    doc["codecs"] = ({"name": "bytes", "configuration": {"endian": "little"}}, "blosc")
     EXTRA_ADAPTER.validate_python(doc)
 
 
@@ -188,7 +190,11 @@ def test_core_rejects_scale_offset_codec() -> None:
 
 def test_extra_accepts_scale_offset_codec() -> None:
     doc = _doc("float32", 0.0)
-    doc["codecs"] = ({"name": "scale_offset", "configuration": {"scale": 1.0, "offset": 0.0}},)
+    # scale_offset is array->array; needs an array->bytes codec to complete the pipeline
+    doc["codecs"] = (
+        {"name": "scale_offset", "configuration": {"scale": 1.0, "offset": 0.0}},
+        {"name": "bytes", "configuration": {"endian": "little"}},
+    )
     EXTRA_ADAPTER.validate_python(doc)
 
 
@@ -201,7 +207,8 @@ def test_core_rejects_scale_offset_codec_name_string() -> None:
 
 def test_extra_accepts_scale_offset_codec_name_string() -> None:
     doc = _doc("float32", 0.0)
-    doc["codecs"] = ("scale_offset",)
+    # scale_offset is array->array; needs an array->bytes codec to complete the pipeline
+    doc["codecs"] = ("scale_offset", {"name": "bytes", "configuration": {"endian": "little"}})
     EXTRA_ADAPTER.validate_python(doc)
 
 
