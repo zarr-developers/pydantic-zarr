@@ -309,9 +309,10 @@ The Extra family accepts `rectilinear` chunk grids and extension codecs such as 
 Core rejects them:
 
 ```python {group="strict-v3"}
+# chunk_shapes has one entry per array dimension; COMMON uses shape=(100,), so one entry here
 rectilinear = {
     "name": "rectilinear",
-    "configuration": {"kind": "inline", "chunk_shapes": (5, 5, 5, 5)},
+    "configuration": {"kind": "inline", "chunk_shapes": (5,)},
 }
 
 # Extra accepts a rectilinear chunk grid; Core rejects it
@@ -351,3 +352,75 @@ except ValidationError:
 
 > **Note:** Strict classes do not support generic attributes. The `attributes` field is
 > `Mapping[str, object]`; if you need typed attributes, use the loose `ArraySpec[MyAttrs]`.
+
+## Building codec and chunk-grid metadata
+
+The `pydantic_zarr.strict.v3` package ships per-element *builder* functions that construct
+codec and chunk-grid metadata dicts with typed arguments and validate them at build time.
+Every builder returns a plain `dict` (a `TypedDict`-shaped mapping) that is ready to drop into
+any `codecs` list or `chunk_grid` field.
+
+```python {group="builders"}
+from pydantic_zarr.strict.v3.chunk_grid.regular import regular
+from pydantic_zarr.strict.v3.codec.blosc import blosc
+from pydantic_zarr.strict.v3.codec.sharding_indexed import sharding_indexed
+from pydantic_zarr.strict.v3.codec.transpose import transpose
+
+# regular chunk grid — a plain dict ready for any ArraySpec
+chunk_grid = regular((10, 10))
+print(chunk_grid)
+#> {'name': 'regular', 'configuration': {'chunk_shape': (10, 10)}}
+
+# transpose codec (axes permutation)
+txp = transpose((1, 0))
+print(txp)
+#> {'name': 'transpose', 'configuration': {'order': (1, 0)}}
+
+# blosc codec (cname, clevel, shuffle, blocksize)
+bl = blosc("zstd", 5, "shuffle", 0)
+print(bl)
+"""
+{
+    'name': 'blosc',
+    'configuration': {
+        'cname': 'zstd',
+        'clevel': 5,
+        'shuffle': 'shuffle',
+        'blocksize': 0,
+    },
+}
+"""
+
+# sharding_indexed — inner chunk shape; defaults to (bytes,) inner codecs + (bytes, crc32c) index
+shard = sharding_indexed((4, 4))
+print(shard)
+"""
+{
+    'name': 'sharding_indexed',
+    'configuration': {
+        'chunk_shape': (4, 4),
+        'codecs': ({'name': 'bytes', 'configuration': {'endian': 'little'}},),
+        'index_codecs': (
+            {'name': 'bytes', 'configuration': {'endian': 'little'}},
+            {'name': 'crc32c'},
+        ),
+    },
+}
+"""
+```
+
+Builders validate at construction time — invalid arguments raise `ValueError` immediately:
+
+```python {group="builders"}
+try:
+    transpose((0, 0))          # (0, 0) is not a permutation of range(2)
+except ValueError:
+    print("invalid transpose order rejected")
+    #> invalid transpose order rejected
+
+try:
+    blosc("zstd", 99, "shuffle", 0)   # clevel must be in [0, 9]
+except ValueError:
+    print("invalid clevel rejected")
+    #> invalid clevel rejected
+```
