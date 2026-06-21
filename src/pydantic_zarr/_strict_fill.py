@@ -9,9 +9,10 @@ their integer/bool/raw members impose no range or type discipline. These
 
 from __future__ import annotations
 
+import re
 from typing import Annotated, Any
 
-from pydantic import BeforeValidator
+from pydantic import BeforeValidator, TypeAdapter, ValidationError
 from zarr_metadata import (
     BoolFillValue,
     Complex64FillValue,
@@ -147,3 +148,37 @@ def _check_raw(value: Any) -> Any:
 
 
 StrictRawFill = Annotated[RawBytesFillValue, BeforeValidator(_check_raw)]
+
+# map dtype string -> the tightened fill type (reuse the Strict*Fill defined above)
+_FILL_TYPE_BY_DTYPE: dict[str, Any] = {
+    "bool": StrictBoolFill,
+    "int8": StrictInt8Fill,
+    "int16": StrictInt16Fill,
+    "int32": StrictInt32Fill,
+    "int64": StrictInt64Fill,
+    "uint8": StrictUint8Fill,
+    "uint16": StrictUint16Fill,
+    "uint32": StrictUint32Fill,
+    "uint64": StrictUint64Fill,
+    "float16": StrictFloat16Fill,
+    "float32": StrictFloat32Fill,
+    "float64": StrictFloat64Fill,
+    "complex64": StrictComplex64Fill,
+    "complex128": StrictComplex128Fill,
+}
+_RAW_DTYPE_RE = re.compile(r"^r\d+$")
+
+
+def is_valid_fill(data_type: str, value: object) -> bool:
+    """True iff `value` is a spec-valid fill value for `data_type` (strict rules)."""
+    ft = _FILL_TYPE_BY_DTYPE.get(data_type)
+    if ft is None:
+        if not _RAW_DTYPE_RE.match(data_type):
+            return False
+        ft = StrictRawFill
+    try:
+        TypeAdapter(ft).validate_python(value)
+    except ValidationError:
+        return False
+    else:
+        return True

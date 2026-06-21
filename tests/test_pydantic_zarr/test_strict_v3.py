@@ -5,11 +5,26 @@ from __future__ import annotations
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from pydantic_zarr._strict_fill import StrictFloat64Fill, StrictInt8Fill, StrictUint8Fill
+from pydantic_zarr._strict_fill import (
+    StrictFloat64Fill,
+    StrictInt8Fill,
+    StrictUint8Fill,
+    is_valid_fill,
+)
 from pydantic_zarr.v3 import AnyCoreArraySpec, AnyExtraArraySpec
 
 CORE_ADAPTER = TypeAdapter(AnyCoreArraySpec)
 EXTRA_ADAPTER = TypeAdapter(AnyExtraArraySpec)
+
+
+def test_is_valid_fill_helper() -> None:
+    assert is_valid_fill("float64", "NaN") is True
+    assert is_valid_fill("float64", "garbage") is False
+    assert is_valid_fill("int8", 5) is True
+    assert is_valid_fill("int8", 999) is False
+    assert is_valid_fill("r8", (1,)) is True
+    assert is_valid_fill("unknown_dtype", 0) is False
+
 
 _REGULAR_GRID = {"name": "regular", "configuration": {"chunk_shape": (4,)}}
 _RECTILINEAR_GRID = {
