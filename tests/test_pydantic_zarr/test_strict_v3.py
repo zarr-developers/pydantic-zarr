@@ -490,14 +490,14 @@ def test_strict_complex64_fill_rejects(bad: object) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("good", [(1, 2, 3), (0, 255), ()])
+@pytest.mark.parametrize("good", [(1, 2, 3), (0, 255), (), [1, 2], [0, 128, 255]])
 def test_strict_raw_fill_accepts(good: object) -> None:
     from pydantic_zarr._strict_fill import StrictRawFill
 
     TypeAdapter(StrictRawFill).validate_python(good)
 
 
-@pytest.mark.parametrize("bad", [(1, 999), (-1, 0), [1, 2], ("a",)])
+@pytest.mark.parametrize("bad", [(1, 999), (-1, 0), ("a",), [1, 999], [-1, 0]])
 def test_strict_raw_fill_rejects(bad: object) -> None:
     from pydantic_zarr._strict_fill import StrictRawFill
 

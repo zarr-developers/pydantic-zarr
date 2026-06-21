@@ -33,7 +33,7 @@ from .strict_oracle import (
         ("complex64", ("garbage", 1.0), False),
         ("r8", (255,), True),
         ("r8", (256,), False),
-        ("r8", [1], False),
+        ("r8", [1], True),
     ],
 )
 def test_oracle_fill(dt: str, val: object, ok: bool) -> None:
@@ -100,6 +100,8 @@ _FILLS = st.one_of(
     st.tuples(st.sampled_from(["NaN", 1.0, "garbage"]), st.sampled_from(["NaN", 2.0])),
     st.tuples(st.integers(min_value=-5, max_value=300)),
     st.tuples(st.integers(min_value=-5, max_value=300), st.integers(min_value=-5, max_value=300)),
+    # list variants mirror tuple variants — JSON arrays deserialise as lists
+    st.lists(st.integers(min_value=-5, max_value=300), min_size=1, max_size=2),
 )
 
 _BASE = {

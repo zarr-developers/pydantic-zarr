@@ -61,7 +61,7 @@ def is_valid_fill(data_type: str, value: object) -> bool:
     if data_type in _COMPLEX_COMPONENT:
         comp = _COMPLEX_COMPONENT[data_type]
         return (
-            isinstance(value, tuple)
+            isinstance(value, (tuple, list))
             and len(value) == 2
             and all(_valid_float(comp, c) for c in value)
         )
@@ -69,7 +69,7 @@ def is_valid_fill(data_type: str, value: object) -> bool:
     if m:
         nbytes = int(m.group(1)) // 8
         return (
-            isinstance(value, tuple)
+            isinstance(value, (tuple, list))
             and len(value) == nbytes
             and all(isinstance(b, int) and not isinstance(b, bool) and 0 <= b <= 255 for b in value)
         )

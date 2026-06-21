@@ -135,9 +135,11 @@ StrictComplex128Fill = Annotated[
 
 
 def _check_raw(value: Any) -> Any:
-    # BeforeValidator: require a real tuple of in-range, non-bool ints on the RAW input.
-    if not isinstance(value, tuple):
-        raise ValueError(f"raw fill must be a tuple, got {value!r}")  # noqa: TRY004
+    # BeforeValidator: require a real tuple or list of in-range, non-bool ints on the RAW
+    # input.  JSON arrays deserialise as lists (json.loads) so both forms are valid; pydantic
+    # will coerce the list → tuple when it validates the underlying RawBytesFillValue type.
+    if not isinstance(value, (tuple, list)):
+        raise ValueError(f"raw fill must be a tuple or list, got {value!r}")  # noqa: TRY004
     for b in value:
         if isinstance(b, bool) or not isinstance(b, int) or not (0 <= b <= 255):
             raise ValueError(f"raw fill byte out of range [0, 255]: {b!r}")

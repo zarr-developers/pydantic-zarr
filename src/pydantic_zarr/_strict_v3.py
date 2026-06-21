@@ -127,6 +127,12 @@ def _check_divides(outer: tuple[int, ...], inner: tuple[int, ...]) -> None:
             f"inner_chunk_shape {inner} has rank {len(inner)} but outer_chunk_shape "
             f"{outer} has rank {len(outer)}; ranks must match"
         )
+    non_positive = [i for i in range(len(inner)) if inner[i] <= 0]
+    if non_positive:
+        raise ValueError(
+            f"inner_chunk_shape {inner} contains non-positive dimension(s) at indices "
+            f"{non_positive}; all dimensions must be positive"
+        )
     bad = [i for i in range(len(outer)) if outer[i] % inner[i] != 0]
     if bad:
         raise ValueError(
