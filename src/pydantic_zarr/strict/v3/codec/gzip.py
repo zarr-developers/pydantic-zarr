@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
+from zarr_metadata.v3.codec.gzip import GzipCodecObject
+
+from pydantic_zarr.strict.v3.codec._spec import CodecSpec
+
 if TYPE_CHECKING:
     from zarr_metadata import GzipCodecMetadata
 
@@ -27,10 +31,6 @@ def ndim_of(meta: GzipCodecMetadata) -> int | None:
 def dtype_out(meta: GzipCodecMetadata, input_dtype: str) -> str:
     return input_dtype
 
-
-from zarr_metadata.v3.codec.gzip import GzipCodecObject  # noqa: E402
-
-from pydantic_zarr.strict.v3.codec._spec import CodecSpec  # noqa: E402
 
 SPEC = CodecSpec(
     name="gzip",

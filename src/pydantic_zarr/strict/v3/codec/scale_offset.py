@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
+from zarr_metadata.v3.codec.scale_offset import ScaleOffsetCodecObject
+
+from pydantic_zarr.strict.v3.codec._spec import CodecSpec
+
 if TYPE_CHECKING:
     from zarr_metadata import JSONValue, ScaleOffsetCodecMetadata
 
@@ -29,10 +33,6 @@ def ndim_of(meta: ScaleOffsetCodecMetadata) -> int | None:
 def dtype_out(meta: ScaleOffsetCodecMetadata, input_dtype: str) -> str:
     return input_dtype
 
-
-from zarr_metadata.v3.codec.scale_offset import ScaleOffsetCodecObject  # noqa: E402
-
-from pydantic_zarr.strict.v3.codec._spec import CodecSpec  # noqa: E402
 
 SPEC = CodecSpec(
     name="scale_offset",

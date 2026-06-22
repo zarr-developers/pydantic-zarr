@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
+from zarr_metadata.v3.codec.transpose import TransposeCodecObject
+
+from pydantic_zarr.strict.v3.codec._spec import CodecSpec
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -30,10 +34,6 @@ def ndim_of(meta: TransposeCodecMetadata) -> int | None:
 def dtype_out(meta: TransposeCodecMetadata, input_dtype: str) -> str:
     return input_dtype
 
-
-from zarr_metadata.v3.codec.transpose import TransposeCodecObject  # noqa: E402
-
-from pydantic_zarr.strict.v3.codec._spec import CodecSpec  # noqa: E402
 
 SPEC = CodecSpec(
     name="transpose",

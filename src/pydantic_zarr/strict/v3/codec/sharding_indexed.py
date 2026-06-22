@@ -2,14 +2,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
 
+from zarr_metadata.v3.codec.sharding_indexed import ShardingIndexedCodecObject
+
+from pydantic_zarr.strict.v3.codec._spec import CodecSpec
+from pydantic_zarr.strict.v3.codec.bytes import bytes_codec
+from pydantic_zarr.strict.v3.codec.crc32c import crc32c
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from zarr_metadata import ShardingIndexedCodecMetadata
     from zarr_metadata.v3.codec.sharding_indexed import ShardingIndexLocation
-
-from pydantic_zarr.strict.v3.codec.bytes import bytes_codec
-from pydantic_zarr.strict.v3.codec.crc32c import crc32c
 
 kind: Literal["array_bytes"] = "array_bytes"
 
@@ -52,10 +55,6 @@ def dtype_out(meta: ShardingIndexedCodecMetadata, input_dtype: str) -> str:
     """Identity transformation; array->bytes terminates dtype flow."""
     return input_dtype
 
-
-from zarr_metadata.v3.codec.sharding_indexed import ShardingIndexedCodecObject  # noqa: E402
-
-from pydantic_zarr.strict.v3.codec._spec import CodecSpec  # noqa: E402
 
 SPEC = CodecSpec(
     name="sharding_indexed",

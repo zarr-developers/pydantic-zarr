@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
+from zarr_metadata.v3.codec.blosc import BloscCodecObject
+
+from pydantic_zarr.strict.v3.codec._spec import CodecSpec
+
 if TYPE_CHECKING:
     from zarr_metadata import BloscCodecMetadata
     from zarr_metadata.v3.codec.blosc import BloscCName, BloscShuffle
@@ -43,10 +47,6 @@ def ndim_of(meta: BloscCodecMetadata) -> int | None:
 def dtype_out(meta: BloscCodecMetadata, input_dtype: str) -> str:
     return input_dtype
 
-
-from zarr_metadata.v3.codec.blosc import BloscCodecObject  # noqa: E402
-
-from pydantic_zarr.strict.v3.codec._spec import CodecSpec  # noqa: E402
 
 SPEC = CodecSpec(
     name="blosc",

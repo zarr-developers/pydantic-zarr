@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
+from zarr_metadata.v3.codec.crc32c import Crc32cCodecObject
+
+from pydantic_zarr.strict.v3.codec._spec import CodecSpec
+
 if TYPE_CHECKING:
     from zarr_metadata import Crc32cCodecMetadata
 
@@ -23,10 +27,6 @@ def ndim_of(meta: Crc32cCodecMetadata) -> int | None:
 def dtype_out(meta: Crc32cCodecMetadata, input_dtype: str) -> str:
     return input_dtype
 
-
-from zarr_metadata.v3.codec.crc32c import Crc32cCodecObject  # noqa: E402
-
-from pydantic_zarr.strict.v3.codec._spec import CodecSpec  # noqa: E402
 
 SPEC = CodecSpec(
     name="crc32c",

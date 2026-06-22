@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
+from zarr_metadata.v3.codec.cast_value import CastValueCodecObject
+
+from pydantic_zarr.strict.v3.codec._spec import CodecSpec
+
 if TYPE_CHECKING:
     from zarr_metadata import CastValueCodecMetadata, MetadataV3
     from zarr_metadata.v3.codec.cast_value import CastOutOfRangeMode, CastRoundingMode, ScalarMap
@@ -39,10 +43,6 @@ def dtype_out(meta: CastValueCodecMetadata, input_dtype: str) -> str:
     dt = meta["configuration"]["data_type"]
     return dt if isinstance(dt, str) else input_dtype  # named-config target -> keep flowing dtype
 
-
-from zarr_metadata.v3.codec.cast_value import CastValueCodecObject  # noqa: E402
-
-from pydantic_zarr.strict.v3.codec._spec import CodecSpec  # noqa: E402
 
 SPEC = CodecSpec(
     name="cast_value",
