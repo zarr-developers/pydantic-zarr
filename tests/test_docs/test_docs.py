@@ -41,7 +41,17 @@ def test_docstrings(example: CodeExample, eval_example: EvalExample) -> None:
     eval_example.run_print_check(example)
 
 
-@pytest.mark.parametrize("example", tuple(find_examples("docs")), ids=str)
+def _published_doc_examples() -> tuple[CodeExample, ...]:
+    """Doc examples from the published docs, excluding the gitignored ``docs/superpowers``
+    working area (design specs / implementation plans whose code blocks are illustrative
+    pseudocode, not runnable examples)."""
+    superpowers = (Path("docs") / "superpowers").resolve()
+    return tuple(
+        ex for ex in find_examples("docs") if superpowers not in Path(ex.path).resolve().parents
+    )
+
+
+@pytest.mark.parametrize("example", _published_doc_examples(), ids=str)
 def test_docs_examples(example: CodeExample, eval_example: EvalExample) -> None:
     pytest.importorskip("zarr")
 
