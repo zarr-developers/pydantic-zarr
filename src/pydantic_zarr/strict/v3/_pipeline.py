@@ -3,15 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from pydantic_zarr._strict_fill import is_valid_fill
-from pydantic_zarr.strict.v3.codec import CODEC_DTYPE_OUT, CODEC_KIND
-
-
-def _name(x: Any) -> str | None:
-    if isinstance(x, str):
-        return x
-    if isinstance(x, dict):
-        return x.get("name")
-    return None
+from pydantic_zarr.strict.v3.codec import codec_spec_for
 
 
 def _check_cast_value(meta: Any, current_dtype: str, errs: list[str]) -> None:
@@ -37,13 +29,14 @@ def validate_pipeline(array_data_type: str, codecs: tuple[Any, ...]) -> list[str
     current = array_data_type
     n_array_bytes = 0
     for c in codecs or ():
-        name = _name(c)
-        kind = CODEC_KIND.get(name) if name is not None else None
-        if name == "cast_value" and isinstance(c, dict):
+        spec = codec_spec_for(c)
+        if spec is None:
+            continue
+        if spec.has_dtype_dependent_config and isinstance(c, dict):
             _check_cast_value(c, current, errs)
-        if kind in ("array_array", "array_bytes") and isinstance(c, dict) and name is not None:
-            current = CODEC_DTYPE_OUT[name](c, current)
-        if kind == "array_bytes":
+        if spec.kind in ("array_array", "array_bytes") and isinstance(c, dict):
+            current = spec.dtype_out(c, current)
+        if spec.kind == "array_bytes":
             n_array_bytes += 1
     if n_array_bytes != 1:
         errs.append(
