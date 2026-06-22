@@ -1,4 +1,5 @@
 from pydantic_zarr.strict.v3._registry import config_required
+from pydantic_zarr.strict.v3.chunk_grid import GRIDS
 from pydantic_zarr.strict.v3.codec import CODECS
 
 # Ground-truth table from the spec.
@@ -35,4 +36,19 @@ def test_codec_spec_facts_match_table() -> None:
 def test_codec_metadata_type_is_typeddict() -> None:
     for spec in CODECS.values():
         # *Object TypedDicts expose __optional_keys__; unions do not
+        assert hasattr(spec.metadata_type, "__optional_keys__")
+
+
+_GRID_FACTS = {"regular": True, "rectilinear": True}  # config_required
+
+
+def test_grids_registry_complete() -> None:
+    assert set(GRIDS) == set(_GRID_FACTS)
+
+
+def test_grid_spec_facts_match_table() -> None:
+    for name, cfg_req in _GRID_FACTS.items():
+        spec = GRIDS[name]
+        assert spec.name == name
+        assert config_required(spec.metadata_type) is cfg_req
         assert hasattr(spec.metadata_type, "__optional_keys__")

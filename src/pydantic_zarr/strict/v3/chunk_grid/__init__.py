@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from zarr_metadata import RectilinearChunkGridMetadata, RegularChunkGridMetadata
 
+from pydantic_zarr.strict.v3._registry import element_name
+from pydantic_zarr.strict.v3.chunk_grid._spec import GridSpec
+
 from . import rectilinear, regular
 
 # Re-export builders
@@ -12,20 +15,21 @@ rectilinear_grid = rectilinear.rectilinear
 _RegularChunkGrid = RegularChunkGridMetadata
 _RectilinearChunkGrid = RectilinearChunkGridMetadata
 
-# Module dispatch maps
-_MODULES = {
-    "regular": regular,
-    "rectilinear": rectilinear,
-}
+_MODULES = (regular, rectilinear)
+GRIDS: dict[str, GridSpec] = {m.SPEC.name: m.SPEC for m in _MODULES}
 
-GRID_NDIM_OF = {n: m.ndim_of for n, m in _MODULES.items()}
-GRID_VALIDATE = {n: getattr(m, f"validate_{n}") for n, m in _MODULES.items()}
+
+def grid_spec_for(g: object) -> GridSpec | None:
+    name = element_name(g)
+    return GRIDS.get(name) if name is not None else None
+
 
 __all__ = [
-    "GRID_NDIM_OF",
-    "GRID_VALIDATE",
+    "GRIDS",
+    "GridSpec",
     "_RectilinearChunkGrid",
     "_RegularChunkGrid",
+    "grid_spec_for",
     "rectilinear_grid",
     "regular_grid",
 ]

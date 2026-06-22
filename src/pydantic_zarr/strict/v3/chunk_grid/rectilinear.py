@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from zarr_metadata.v3.chunk_grid.rectilinear import RectilinearChunkGridObject
+
+from pydantic_zarr.strict.v3.chunk_grid._spec import GridSpec
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -37,3 +41,11 @@ def validate_rectilinear(meta: RectilinearChunkGridMetadata) -> None:
 
 def ndim_of(meta: RectilinearChunkGridMetadata) -> int | None:
     return len(meta["configuration"]["chunk_shapes"])
+
+
+SPEC = GridSpec(
+    name="rectilinear",
+    metadata_type=RectilinearChunkGridObject,
+    validate=validate_rectilinear,
+    ndim_of=ndim_of,
+)
