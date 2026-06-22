@@ -35,7 +35,7 @@ changed some field *types* and validation behavior. If you use the loose specs (
 | --- | --- | --- | --- |
 | Sequence fields on the model | `list` | `tuple` | v2 `ArraySpec.filters` and v3 `chunk_grid`'s `chunk_shape` are now tuples on the model and in `model_dump()`, making the parsed spec immutable. Code reading `spec.filters` as a mutable list (`.append(...)`, `isinstance(x, list)`) must adjust. |
 | `to_json()` output | JSON arrays | JSON arrays | **Unchanged** — both lists and tuples serialize to JSON arrays, so the on-disk `zarr.json` / `.zarray` is byte-compatible. |
-| Bare-string named-configs (v3) | rejected | accepted | `chunk_grid`, `chunk_key_encoding`, and `codecs` now accept the bare-string short form (e.g. `chunk_grid="regular"`) as well as the `{name, configuration}` object form. |
+| Named-config field types (v3) | narrow per-field unions | generic `str \| NamedConfigV3` | `chunk_grid`, `chunk_key_encoding`, and `codecs` are now typed with `zarr-metadata`'s generic metadata type. The loose specs validate these as *syntax only* — any well-formed name-or-`{name, configuration}` value is accepted, with no check of whether the name is spec-valid or its configuration well-formed. Use `CoreArraySpec` / `ExtraArraySpec` for spec-conformant validation. |
 | `fill_value` / `dtype` type | narrow unions | `zarr_metadata.JSONValue` / zarr-metadata dtype types | Loose specs still validate these as syntax only. For dtype-aware `fill_value` validation, use `CoreArraySpec` / `ExtraArraySpec`. |
 
 ## New features in this release
