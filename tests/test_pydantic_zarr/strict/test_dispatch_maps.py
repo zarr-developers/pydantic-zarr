@@ -1,11 +1,7 @@
 from __future__ import annotations
 
-from pydantic_zarr.strict.v3.chunk_grid import GRID_NDIM_OF
-from pydantic_zarr.strict.v3.codec import (
-    CODEC_DTYPE_OUT,
-    CODEC_KIND,
-    CODEC_NDIM_OF,
-)
+from pydantic_zarr.strict.v3.chunk_grid import GRIDS
+from pydantic_zarr.strict.v3.codec import CODECS
 
 
 def test_codec_maps_cover_all() -> None:
@@ -20,12 +16,11 @@ def test_codec_maps_cover_all() -> None:
         "scale_offset",
         "cast_value",
     }
-    assert set(CODEC_NDIM_OF) == expected
-    assert set(CODEC_KIND) == expected
-    assert CODEC_KIND["transpose"] == "array_array"
-    assert CODEC_KIND["bytes"] == "array_bytes"
+    assert set(CODECS) == expected
+    assert CODECS["transpose"].kind == "array_array"
+    assert CODECS["bytes"].kind == "array_bytes"
     assert (
-        CODEC_DTYPE_OUT["cast_value"](
+        CODECS["cast_value"].dtype_out(
             {"name": "cast_value", "configuration": {"data_type": "float64"}}, "int32"
         )
         == "float64"
@@ -33,4 +28,4 @@ def test_codec_maps_cover_all() -> None:
 
 
 def test_grid_maps() -> None:
-    assert set(GRID_NDIM_OF) == {"regular", "rectilinear"}
+    assert set(GRIDS) == {"regular", "rectilinear"}

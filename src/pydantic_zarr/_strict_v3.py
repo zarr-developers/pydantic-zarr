@@ -25,7 +25,6 @@ from zarr_metadata import (
     BoolDataTypeName,
     Complex64DataTypeName,
     Complex128DataTypeName,
-    DefaultChunkKeyEncodingMetadata,
     Float16DataTypeName,
     Float32DataTypeName,
     Float64DataTypeName,
@@ -41,7 +40,6 @@ from zarr_metadata import (
     Uint16DataTypeName,
     Uint32DataTypeName,
     Uint64DataTypeName,
-    V2ChunkKeyEncodingMetadata,
 )
 
 from pydantic_zarr._strict_fill import (
@@ -64,8 +62,9 @@ from pydantic_zarr._strict_fill import (
 from pydantic_zarr.core import ensure_key_no_path
 from pydantic_zarr.strict.v3._cross_field import check_array_consistency
 from pydantic_zarr.strict.v3._pipeline import validate_pipeline
-from pydantic_zarr.strict.v3.chunk_grid import GRID_VALIDATE
-from pydantic_zarr.strict.v3.codec import CODEC_VALIDATE, _CoreCodec, _ExtraCodec
+from pydantic_zarr.strict.v3.chunk_grid import grid_spec_for
+from pydantic_zarr.strict.v3.chunk_key_encoding import _ChunkKeyEncoding, key_encoding_spec_for
+from pydantic_zarr.strict.v3.codec import _CoreCodec, _ExtraCodec, codec_spec_for
 from pydantic_zarr.v3 import NodeSpec, _BaseArraySpec
 
 # ---------------------------------------------------------------------------
@@ -191,39 +190,25 @@ def _resolve_strict_init(
 
 
 def _validate_codec_internal(codec: Any) -> Any:
-    if isinstance(codec, str):
-        name: str | None = codec
-    elif isinstance(codec, dict):
-        raw = codec.get("name")
-        name = raw if isinstance(raw, str) else None
-    else:
-        name = None
-    if name is not None:
-        fn = CODEC_VALIDATE.get(name)
-        if fn is not None and isinstance(codec, dict):
-            fn(codec)
+    spec = codec_spec_for(codec)
+    if spec is not None and isinstance(codec, dict):
+        spec.validate(codec)
     return codec
 
 
 def _validate_grid_internal(grid: Any) -> Any:
-    if isinstance(grid, dict):
-        raw = grid.get("name")
-        name: str | None = raw if isinstance(raw, str) else None
-    else:
-        name = None
-    if name is not None:
-        fn = GRID_VALIDATE.get(name)
-        if fn is not None:
-            fn(grid)
+    spec = grid_spec_for(grid)
+    if spec is not None and isinstance(grid, dict):
+        spec.validate(grid)
     return grid
 
 
-# ---------------------------------------------------------------------------
-# Codec vocabulary (imported from per-element package; _CoreCodec, _ExtraCodec
-# defined there — identical membership, kept in sync)
-# ---------------------------------------------------------------------------
+def _validate_key_encoding_internal(cke: Any) -> Any:
+    spec = key_encoding_spec_for(cke)
+    if spec is not None and isinstance(cke, dict):
+        spec.validate(cke)
+    return cke
 
-_ChunkKeyEncoding = DefaultChunkKeyEncodingMetadata | V2ChunkKeyEncodingMetadata
 
 # ---------------------------------------------------------------------------
 # Family base classes
@@ -233,7 +218,9 @@ _ChunkKeyEncoding = DefaultChunkKeyEncodingMetadata | V2ChunkKeyEncodingMetadata
 class _CoreBase(_BaseArraySpec[Mapping[str, object]]):
     attributes: Mapping[str, object] = {}
     chunk_grid: Annotated[RegularChunkGridMetadata, AfterValidator(_validate_grid_internal)]
-    chunk_key_encoding: _ChunkKeyEncoding
+    chunk_key_encoding: Annotated[
+        _ChunkKeyEncoding, AfterValidator(_validate_key_encoding_internal)
+    ]
     codecs: tuple[Annotated[_CoreCodec, AfterValidator(_validate_codec_internal)], ...]
 
     @model_validator(mode="after")
@@ -354,7 +341,9 @@ class _ExtraBase(_BaseArraySpec[Mapping[str, object]]):
         RegularChunkGridMetadata | RectilinearChunkGridMetadata,
         AfterValidator(_validate_grid_internal),
     ]
-    chunk_key_encoding: _ChunkKeyEncoding
+    chunk_key_encoding: Annotated[
+        _ChunkKeyEncoding, AfterValidator(_validate_key_encoding_internal)
+    ]
     codecs: tuple[Annotated[_ExtraCodec, AfterValidator(_validate_codec_internal)], ...]
 
     @model_validator(mode="after")
