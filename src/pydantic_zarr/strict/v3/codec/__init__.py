@@ -1,25 +1,14 @@
 from __future__ import annotations
 
-from zarr_metadata import (
-    BloscCodecMetadata,
-    BloscCodecName,
-    BytesCodecMetadata,
-    BytesCodecName,
-    CastValueCodecMetadata,
-    CastValueCodecName,
-    Crc32cCodecMetadata,
-    Crc32cCodecName,
-    GzipCodecMetadata,
-    GzipCodecName,
-    ScaleOffsetCodecMetadata,
-    ScaleOffsetCodecName,
-    ShardingIndexedCodecMetadata,
-    ShardingIndexedCodecName,
-    TransposeCodecMetadata,
-    TransposeCodecName,
-    ZstdCodecMetadata,
-    ZstdCodecName,
-)
+from zarr_metadata.v3.codec.blosc import BloscCodecObject
+from zarr_metadata.v3.codec.bytes import BytesCodecName, BytesCodecObject
+from zarr_metadata.v3.codec.cast_value import CastValueCodecObject
+from zarr_metadata.v3.codec.crc32c import Crc32cCodecName, Crc32cCodecObject
+from zarr_metadata.v3.codec.gzip import GzipCodecObject
+from zarr_metadata.v3.codec.scale_offset import ScaleOffsetCodecName, ScaleOffsetCodecObject
+from zarr_metadata.v3.codec.sharding_indexed import ShardingIndexedCodecObject
+from zarr_metadata.v3.codec.transpose import TransposeCodecObject
+from zarr_metadata.v3.codec.zstd import ZstdCodecObject
 
 from pydantic_zarr.strict.v3._registry import element_name
 from pydantic_zarr.strict.v3.codec._spec import CodecSpec
@@ -58,43 +47,33 @@ def codec_spec_for(c: object) -> CodecSpec | None:
     return CODECS.get(name) if name is not None else None
 
 
-# Unions MOVED from _strict_v3.py (identical membership)
+# bare *CodecName members ONLY for config-optional codecs (config_required is False);
+# every codec contributes its *CodecObject. Asserted against config_required in the tests.
 _CoreCodec = (
-    BloscCodecMetadata
-    | BytesCodecMetadata
-    | Crc32cCodecMetadata
-    | GzipCodecMetadata
-    | ShardingIndexedCodecMetadata
-    | TransposeCodecMetadata
-    | ZstdCodecMetadata
-    | BloscCodecName
-    | BytesCodecName
-    | Crc32cCodecName
-    | GzipCodecName
-    | ShardingIndexedCodecName
-    | TransposeCodecName
-    | ZstdCodecName
+    BytesCodecObject
+    | Crc32cCodecObject
+    | GzipCodecObject
+    | ZstdCodecObject
+    | BloscCodecObject
+    | TransposeCodecObject
+    | ShardingIndexedCodecObject
+    | BytesCodecName  # bytes: config optional -> bare allowed
+    | Crc32cCodecName  # crc32c: config optional -> bare allowed
 )
 
 _ExtraCodec = (
-    BloscCodecMetadata
-    | BytesCodecMetadata
-    | CastValueCodecMetadata
-    | Crc32cCodecMetadata
-    | GzipCodecMetadata
-    | ScaleOffsetCodecMetadata
-    | ShardingIndexedCodecMetadata
-    | TransposeCodecMetadata
-    | ZstdCodecMetadata
-    | BloscCodecName
-    | BytesCodecName
-    | CastValueCodecName
-    | Crc32cCodecName
-    | GzipCodecName
-    | ScaleOffsetCodecName
-    | ShardingIndexedCodecName
-    | TransposeCodecName
-    | ZstdCodecName
+    BytesCodecObject
+    | Crc32cCodecObject
+    | GzipCodecObject
+    | ZstdCodecObject
+    | BloscCodecObject
+    | TransposeCodecObject
+    | ShardingIndexedCodecObject
+    | ScaleOffsetCodecObject
+    | CastValueCodecObject
+    | BytesCodecName  # config optional -> bare allowed
+    | Crc32cCodecName  # config optional -> bare allowed
+    | ScaleOffsetCodecName  # config optional -> bare allowed
 )
 
 __all__ = [

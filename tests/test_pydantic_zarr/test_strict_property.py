@@ -138,21 +138,37 @@ def test_extra_fill_matches_oracle(data_type: str, fill: object) -> None:
     assert _accepts(adapter, data_type, fill) == is_valid_fill(data_type, fill)
 
 
-# Restrict to short-string (name-only) form so the only variable is name-vocabulary.
-# Object forms like {"name": "blosc"} are structurally rejected when required config
-# fields (e.g. cname/clevel for blosc) are absent — a rejection unrelated to the
-# name-validity question the oracle tests.  Short strings avoid that noise.
+# Codec candidates for the name-vocabulary oracle tests.
+# Config-optional codecs (bytes, crc32c, scale_offset) appear as bare strings since
+# the union accepts both bare-string and object forms for them.
+# Config-required codecs (blosc, zstd, cast_value, transpose, sharding_indexed) appear
+# as minimal valid object forms: the union now rejects bare config-required names, so
+# using object forms keeps the oracle test focused on name-vocabulary, not form.
+# Unknown names appear as bare strings (will be rejected by both oracle and union).
 _CODECS = st.sampled_from(
     [
-        "blosc",
+        {
+            "name": "blosc",
+            "configuration": {"cname": "lz4", "clevel": 5, "shuffle": "noshuffle", "blocksize": 0},
+        },
         "bytes",
-        "zstd",
+        {"name": "zstd", "configuration": {"level": 3, "checksum": False}},
         "scale_offset",
-        "cast_value",
+        {"name": "cast_value", "configuration": {"data_type": "int32"}},
         "made_up",
         "garbage",
-        "transpose",
-        "sharding_indexed",
+        {"name": "transpose", "configuration": {"order": [0]}},
+        {
+            "name": "sharding_indexed",
+            "configuration": {
+                "chunk_shape": (4,),
+                "codecs": ({"name": "bytes", "configuration": {"endian": "little"}},),
+                "index_codecs": (
+                    {"name": "bytes", "configuration": {"endian": "little"}},
+                    {"name": "crc32c"},
+                ),
+            },
+        },
     ]
 )
 _GRIDS = st.sampled_from(

@@ -122,8 +122,9 @@ def test_core_union_routes_to_float64_class() -> None:
 
 def test_core_accepts_known_codec_name_string() -> None:
     doc = _doc("int32", 0)
-    # blosc is bytes->bytes; needs an array->bytes codec (bytes) to complete the pipeline
-    doc["codecs"] = ({"name": "bytes", "configuration": {"endian": "little"}}, "blosc")
+    # crc32c is config-optional; bare string form is accepted for it.
+    # (blosc is config-required; only the object form is valid post-fix.)
+    doc["codecs"] = ({"name": "bytes", "configuration": {"endian": "little"}}, "crc32c")
     CORE_ADAPTER.validate_python(doc)
 
 
@@ -148,8 +149,9 @@ def test_core_rejects_unknown_codec_object() -> None:
 
 def test_extra_accepts_known_codec_name_string() -> None:
     doc = _doc("int32", 0)
-    # blosc is bytes->bytes; needs an array->bytes codec (bytes) to complete the pipeline
-    doc["codecs"] = ({"name": "bytes", "configuration": {"endian": "little"}}, "blosc")
+    # crc32c is config-optional; bare string form is accepted for it.
+    # (blosc is config-required; only the object form is valid post-fix.)
+    doc["codecs"] = ({"name": "bytes", "configuration": {"endian": "little"}}, "crc32c")
     EXTRA_ADAPTER.validate_python(doc)
 
 
