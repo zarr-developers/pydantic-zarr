@@ -355,29 +355,34 @@ except ValidationError:
 
 ## Building codec and chunk-grid metadata
 
-The `pydantic_zarr.strict.v3` package ships per-element *builder* functions that construct
-codec and chunk-grid metadata dicts with typed arguments and validate them at build time.
-Every builder returns a plain `dict` (a `TypedDict`-shaped mapping) that is ready to drop into
-any `codecs` list or `chunk_grid` field.
+`pydantic_zarr.v3` exports per-element *builder* functions that construct codec, chunk-grid, and
+chunk-key-encoding metadata dicts with typed arguments and validate them at build time. Every
+builder returns a plain `dict` (a `TypedDict`-shaped mapping) that is ready to drop into any
+`codecs` list, `chunk_grid`, or `chunk_key_encoding` field. The codec builders are named
+`*_codec` (`bytes_codec`, `blosc_codec`, `transpose_codec`, `sharding_indexed_codec`, …), the grid
+builders `*_grid` (`regular_grid`, `rectilinear_grid`), and the chunk-key-encoding builders
+`default_chunk_key_encoding` / `v2_chunk_key_encoding`.
 
 ```python {group="builders"}
-from pydantic_zarr.strict.v3.chunk_grid.regular import regular
-from pydantic_zarr.strict.v3.codec.blosc import blosc
-from pydantic_zarr.strict.v3.codec.sharding_indexed import sharding_indexed
-from pydantic_zarr.strict.v3.codec.transpose import transpose
+from pydantic_zarr.v3 import (
+    blosc_codec,
+    regular_grid,
+    sharding_indexed_codec,
+    transpose_codec,
+)
 
 # regular chunk grid — a plain dict ready for any ArraySpec
-chunk_grid = regular((10, 10))
+chunk_grid = regular_grid((10, 10))
 print(chunk_grid)
 #> {'name': 'regular', 'configuration': {'chunk_shape': (10, 10)}}
 
 # transpose codec (axes permutation)
-txp = transpose((1, 0))
+txp = transpose_codec((1, 0))
 print(txp)
 #> {'name': 'transpose', 'configuration': {'order': (1, 0)}}
 
 # blosc codec (cname, clevel, shuffle, blocksize)
-bl = blosc("zstd", 5, "shuffle", 0)
+bl = blosc_codec("zstd", 5, "shuffle", 0)
 print(bl)
 """
 {
@@ -392,7 +397,7 @@ print(bl)
 """
 
 # sharding_indexed — inner chunk shape; defaults to (bytes,) inner codecs + (bytes, crc32c) index
-shard = sharding_indexed((4, 4))
+shard = sharding_indexed_codec((4, 4))
 print(shard)
 """
 {
@@ -413,14 +418,123 @@ Builders validate at construction time — invalid arguments raise `ValueError` 
 
 ```python {group="builders"}
 try:
-    transpose((0, 0))          # (0, 0) is not a permutation of range(2)
-except ValueError:
-    print("invalid transpose order rejected")
-    #> invalid transpose order rejected
+    transpose_codec((0, 0))          # (0, 0) is not a permutation of range(2)
+except ValueError as e:
+    print(e)
+    #> transpose order (0, 0) is not a permutation of range(2)
 
 try:
-    blosc("zstd", 99, "shuffle", 0)   # clevel must be in [0, 9]
-except ValueError:
-    print("invalid clevel rejected")
-    #> invalid clevel rejected
+    blosc_codec("zstd", 99, "shuffle", 0)   # clevel must be in [0, 9]
+except ValueError as e:
+    print(e)
+    #> blosc clevel 99 out of range [0, 9]
+```
+
+## Validation errors strict mode catches
+
+Strict specs validate three things a loose `ArraySpec` does not: each codec/grid is internally
+consistent, the codec pipeline is structurally valid and dimensionally agrees with the array, and
+the codec data-type flow is correct. The checks fire whether you build a spec in Python or validate
+a parsed `zarr.json` dict. Each raises one clear message; read it from `exc.errors()[0]["msg"]`.
+
+```python {group="strict-errors"}
+from pydantic import TypeAdapter, ValidationError
+
+from pydantic_zarr.v3 import (
+    AnyCoreArraySpec,
+    CoreArraySpec,
+    ExtraArraySpec,
+    bytes_codec,
+    cast_value_codec,
+    sharding_indexed_codec,
+    transpose_codec,
+)
+
+
+def reason(exc: ValidationError) -> str:
+    # the strict checks raise one ValueError; pydantic prefixes it with "Value error, "
+    return exc.errors()[0]["msg"].removeprefix("Value error, ")
+
+
+# every example below varies one field of this valid 2-D baseline
+COMMON = {
+    "shape": (8, 8),
+    "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (8, 8)}},
+    "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
+    "attributes": {},
+}
+BYTES = bytes_codec()  # the array->bytes codec every pipeline needs
+
+
+# 1. dimensionality — the chunk grid's rank must match the array's rank
+try:
+    CoreArraySpec(
+        data_type="int32",
+        fill_value=0,
+        codecs=[BYTES],
+        **{**COMMON, "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (8,)}}},
+    )
+except ValidationError as e:
+    print(reason(e))
+    #> chunk_grid ndim 1 != array ndim 2
+
+
+# 2. sharding — the inner chunk shape must evenly divide the outer chunk grid
+try:
+    CoreArraySpec(data_type="int32", fill_value=0, codecs=[sharding_indexed_codec((3, 3))], **COMMON)
+except ValidationError as e:
+    print(reason(e))
+    #> sharding inner (3, 3) does not evenly divide outer (8, 8)
+
+
+# 3. pipeline — exactly one array->bytes codec is required (transpose alone leaves zero)
+try:
+    CoreArraySpec(data_type="int32", fill_value=0, codecs=[transpose_codec((1, 0))], **COMMON)
+except ValidationError as e:
+    print(reason(e))
+    #> codec pipeline must have exactly one array->bytes codec, found 0
+
+
+# 4. cast_value (extra family) — scalars must be valid for the dtype at that pipeline position.
+#    Here the array is int32, so the encode input scalar "NaN" is not a valid int32 value.
+try:
+    ExtraArraySpec(
+        data_type="int32",
+        fill_value=0,
+        codecs=[cast_value_codec("float64", scalar_map={"encode": [("NaN", 0.0)]}), BYTES],
+        **COMMON,
+    )
+except ValidationError as e:
+    print(reason(e))
+    #> cast_value encode input scalar 'NaN' invalid for dtype 'int32'
+```
+
+The same checks run when you validate a raw `dict` parsed from a `zarr.json` file. Strict mode also
+rejects the bare-string short form for any codec whose configuration is required — `transpose` needs
+an `order`, so `"transpose"` on its own is invalid (only `bytes`, `crc32c`, and `scale_offset` may
+appear as bare strings):
+
+```python {group="strict-errors"}
+adapter = TypeAdapter(AnyCoreArraySpec)
+
+# a bare-string "transpose" is rejected — transpose requires a configuration
+try:
+    adapter.validate_python(
+        {"data_type": "int32", "fill_value": 0, "codecs": ["transpose", BYTES], **COMMON}
+    )
+except ValidationError:
+    print("bare 'transpose' rejected (configuration required)")
+    #> bare 'transpose' rejected (configuration required)
+
+# the object form, with the required configuration, validates
+ok = adapter.validate_python(
+    {
+        "data_type": "int32",
+        "fill_value": 0,
+        "codecs": [transpose_codec((1, 0)), BYTES],
+        **COMMON,
+    }
+)
+print(type(ok).__name__)
+#> CoreInt32ArraySpec
 ```

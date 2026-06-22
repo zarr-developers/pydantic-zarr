@@ -1106,3 +1106,22 @@ from pydantic_zarr._strict_v3 import (  # noqa: E402, I001
     ExtraUint64ArraySpec as ExtraUint64ArraySpec,
     ExtraUint8ArraySpec as ExtraUint8ArraySpec,
 )
+
+# Typed builders for strict v3 codec / chunk-grid / chunk-key-encoding metadata. Each returns
+# the plain metadata dict (validated at build time), so you can construct a strict spec's
+# ``codecs`` / ``chunk_grid`` / ``chunk_key_encoding`` without hand-writing nested dicts.
+from pydantic_zarr.strict.v3.chunk_grid import (  # noqa: E402
+    rectilinear_grid as rectilinear_grid,
+    regular_grid as regular_grid,
+)
+from pydantic_zarr.strict.v3.codec import (  # noqa: E402
+    blosc_codec as blosc_codec,
+    bytes_codec as bytes_codec,
+    cast_value_codec as cast_value_codec,
+    crc32c_codec as crc32c_codec,
+    gzip_codec as gzip_codec,
+    scale_offset_codec as scale_offset_codec,
+    sharding_indexed_codec as sharding_indexed_codec,
+    transpose_codec as transpose_codec,
+    zstd_codec as zstd_codec,
+)
