@@ -1,5 +1,6 @@
 from pydantic_zarr.strict.v3._registry import config_required
 from pydantic_zarr.strict.v3.chunk_grid import GRIDS
+from pydantic_zarr.strict.v3.chunk_key_encoding import KEY_ENCODINGS
 from pydantic_zarr.strict.v3.codec import CODECS
 
 # Ground-truth table from the spec.
@@ -49,6 +50,21 @@ def test_grids_registry_complete() -> None:
 def test_grid_spec_facts_match_table() -> None:
     for name, cfg_req in _GRID_FACTS.items():
         spec = GRIDS[name]
+        assert spec.name == name
+        assert config_required(spec.metadata_type) is cfg_req
+        assert hasattr(spec.metadata_type, "__optional_keys__")
+
+
+_CKE_FACTS = {"default": False, "v2": False}  # config_required
+
+
+def test_key_encodings_registry_complete() -> None:
+    assert set(KEY_ENCODINGS) == set(_CKE_FACTS)
+
+
+def test_key_encoding_spec_facts_match_table() -> None:
+    for name, cfg_req in _CKE_FACTS.items():
+        spec = KEY_ENCODINGS[name]
         assert spec.name == name
         assert config_required(spec.metadata_type) is cfg_req
         assert hasattr(spec.metadata_type, "__optional_keys__")
