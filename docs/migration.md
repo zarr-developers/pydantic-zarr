@@ -25,6 +25,19 @@ symbol and its replacement.
 | `DimensionSeparator` | `zarr_metadata.ArrayDimensionSeparatorV2` |
 | `CodecDict` | `zarr_metadata.CodecMetadataV2` |
 
+## Loose-spec behavioral changes
+
+The loose `ArraySpec`/`GroupSpec` keep the same field *names*, but adopting `zarr-metadata`
+changed some field *types* and validation behavior. If you use the loose specs (not the new
+`Core`/`Extra` strict families), check these:
+
+| Change | Before | After | What to do |
+| --- | --- | --- | --- |
+| Sequence fields on the model | `list` | `tuple` | v2 `ArraySpec.filters` and v3 `chunk_grid`'s `chunk_shape` are now tuples on the model and in `model_dump()`. Code reading `spec.filters` as a mutable list (`.append(...)`, `isinstance(x, list)`) must adjust. |
+| `to_json()` output | JSON arrays | JSON arrays | **Unchanged** — `to_json()` still emits lists, so the on-disk `zarr.json` / `.zarray` is byte-compatible. |
+| Bare-string named-configs (v3) | rejected | accepted | `chunk_grid`, `chunk_key_encoding`, and `codecs` now accept the bare-string short form (e.g. `chunk_grid="regular"`) as well as the `{name, configuration}` object form. |
+| `fill_value` / `dtype` type | narrow unions | `zarr_metadata.JSONValue` / zarr-metadata dtype types | Loose specs still validate these as syntax only. For dtype-aware `fill_value` validation, use `CoreArraySpec` / `ExtraArraySpec`. |
+
 ## New features in this release
 
 ### `ArraySpec.to_json()` and `GroupSpec.to_json()`
