@@ -163,6 +163,27 @@ def is_valid_codec_internal(name: str, meta: object) -> bool:
     return True
 
 
+# Elements whose configuration is REQUIRED -> bare-string short form is NOT permitted.
+# Hand-encoded from the Zarr v3 spec (independent of pydantic_zarr / zarr_metadata).
+_CONFIG_REQUIRED_NAMES = frozenset(
+    {
+        "gzip",
+        "zstd",
+        "blosc",
+        "transpose",
+        "sharding_indexed",
+        "cast_value",
+        "regular",
+        "rectilinear",
+    }
+)
+
+
+def bare_string_allowed(name: str) -> bool:
+    """A bare-string short form is permitted iff the element's configuration is optional."""
+    return name not in _CONFIG_REQUIRED_NAMES
+
+
 def is_valid_ndim_match(shape: object, chunk_grid: object) -> bool:
     """Return True iff the array shape ndim equals the chunk_grid ndim.
 

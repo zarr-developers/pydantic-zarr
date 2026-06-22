@@ -8,6 +8,7 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_zarr.v3 import AnyCoreArraySpec, AnyExtraArraySpec
 
 from .strict_oracle import (
+    bare_string_allowed,
     is_valid_codec,
     is_valid_codec_internal,
     is_valid_fill,
@@ -331,3 +332,65 @@ def test_regular_grid_ndim_matches_oracle(array_ndim: int, chunk_ndim: int) -> N
         f"array_ndim={array_ndim} chunk_ndim={chunk_ndim}: "
         f"accepted={accepted} but oracle says {oracle_ok}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Bare-string accept-iff-oracle property tests
+# ---------------------------------------------------------------------------
+
+# Codec names as bare strings: known extra codecs plus unknown names.
+# This exercises the rule that bare-string form is only accepted for codecs
+# whose configuration is optional (as encoded by bare_string_allowed in the oracle).
+_CODEC_NAMES = st.sampled_from(
+    [
+        "blosc",
+        "bytes",
+        "crc32c",
+        "gzip",
+        "scale_offset",
+        "cast_value",
+        "sharding_indexed",
+        "transpose",
+        "zstd",
+        "made_up",
+        "garbage",
+    ]
+)
+
+
+@given(codec=_CODEC_NAMES)
+def test_bare_string_codec_accept_iff_oracle(codec: str) -> None:
+    """Bare-string codec accepted by AnyExtraArraySpec iff oracle allows it."""
+    # Feed the codec NAME as a bare string, completing the pipeline with a bytes codec
+    # so the only acceptance variable is the bare-string validity of `codec`.
+    adapter: TypeAdapter = TypeAdapter(AnyExtraArraySpec)
+    bc = {"name": "bytes", "configuration": {"endian": "little"}}
+    pipeline = (codec, bc) if codec != "bytes" else (codec,)
+    accepted = _accepts_field(adapter, codecs=pipeline)
+    # A bare string is acceptable only if it is a known extra codec whose config is optional.
+    oracle_ok = is_valid_codec("extra", codec) and bare_string_allowed(codec)
+    assert accepted == oracle_ok, (
+        f"bare codec {codec!r}: accepted={accepted} but oracle says {oracle_ok}"
+    )
+
+
+@given(sep=st.sampled_from(["/", "."]))
+def test_default_cke_object_and_bare_accepted(sep: str) -> None:
+    """Default chunk-key-encoding accepted in both object and bare-string forms."""
+    adapter: TypeAdapter = TypeAdapter(AnyCoreArraySpec)
+    assert _accepts_field(
+        adapter, chunk_key_encoding={"name": "default", "configuration": {"separator": sep}}
+    )
+    assert _accepts_field(
+        adapter, chunk_key_encoding="default"
+    )  # bare string allowed (config optional)
+
+
+@given(sep=st.sampled_from(["/", "."]))
+def test_v2_cke_object_and_bare_accepted(sep: str) -> None:
+    """V2 chunk-key-encoding accepted in both object and bare-string forms."""
+    adapter: TypeAdapter = TypeAdapter(AnyCoreArraySpec)
+    assert _accepts_field(
+        adapter, chunk_key_encoding={"name": "v2", "configuration": {"separator": sep}}
+    )
+    assert _accepts_field(adapter, chunk_key_encoding="v2")
