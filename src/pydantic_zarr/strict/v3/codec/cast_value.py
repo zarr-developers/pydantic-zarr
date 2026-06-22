@@ -38,3 +38,18 @@ def ndim_of(meta: CastValueCodecMetadata) -> int | None:
 def dtype_out(meta: CastValueCodecMetadata, input_dtype: str) -> str:
     dt = meta["configuration"]["data_type"]
     return dt if isinstance(dt, str) else input_dtype  # named-config target -> keep flowing dtype
+
+
+from zarr_metadata.v3.codec.cast_value import CastValueCodecObject  # noqa: E402
+
+from pydantic_zarr.strict.v3.codec._spec import CodecSpec  # noqa: E402
+
+SPEC = CodecSpec(
+    name="cast_value",
+    kind="array_array",
+    metadata_type=CastValueCodecObject,
+    has_dtype_dependent_config=True,
+    validate=validate_cast_value,
+    ndim_of=ndim_of,
+    dtype_out=dtype_out,
+)

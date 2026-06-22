@@ -28,3 +28,18 @@ def ndim_of(meta: ScaleOffsetCodecMetadata) -> int | None:
 
 def dtype_out(meta: ScaleOffsetCodecMetadata, input_dtype: str) -> str:
     return input_dtype
+
+
+from zarr_metadata.v3.codec.scale_offset import ScaleOffsetCodecObject  # noqa: E402
+
+from pydantic_zarr.strict.v3.codec._spec import CodecSpec  # noqa: E402
+
+SPEC = CodecSpec(
+    name="scale_offset",
+    kind="array_array",
+    metadata_type=ScaleOffsetCodecObject,
+    has_dtype_dependent_config=False,
+    validate=validate_scale_offset,
+    ndim_of=ndim_of,
+    dtype_out=dtype_out,
+)

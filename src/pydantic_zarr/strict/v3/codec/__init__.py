@@ -21,6 +21,9 @@ from zarr_metadata import (
     ZstdCodecName,
 )
 
+from pydantic_zarr.strict.v3._registry import element_name
+from pydantic_zarr.strict.v3.codec._spec import CodecSpec
+
 from . import blosc, cast_value, crc32c, gzip, scale_offset, sharding_indexed, transpose, zstd
 from . import bytes as _bytes
 
@@ -35,23 +38,25 @@ sharding_indexed_codec = sharding_indexed.sharding_indexed
 scale_offset_codec = scale_offset.scale_offset
 cast_value_codec = cast_value.cast_value
 
-# Module dispatch map
-_MODULES = {
-    "bytes": _bytes,
-    "crc32c": crc32c,
-    "gzip": gzip,
-    "zstd": zstd,
-    "blosc": blosc,
-    "transpose": transpose,
-    "sharding_indexed": sharding_indexed,
-    "scale_offset": scale_offset,
-    "cast_value": cast_value,
-}
+# Per-codec spec registry (replaces the old CODEC_* parallel maps)
+_MODULES = (
+    _bytes,
+    crc32c,
+    gzip,
+    zstd,
+    blosc,
+    transpose,
+    sharding_indexed,
+    scale_offset,
+    cast_value,
+)
+CODECS: dict[str, CodecSpec] = {m.SPEC.name: m.SPEC for m in _MODULES}
 
-CODEC_NDIM_OF = {n: m.ndim_of for n, m in _MODULES.items()}
-CODEC_KIND = {n: m.kind for n, m in _MODULES.items()}
-CODEC_DTYPE_OUT = {n: m.dtype_out for n, m in _MODULES.items()}
-CODEC_VALIDATE = {n: getattr(m, f"validate_{n}") for n, m in _MODULES.items()}
+
+def codec_spec_for(c: object) -> CodecSpec | None:
+    name = element_name(c)
+    return CODECS.get(name) if name is not None else None
+
 
 # Unions MOVED from _strict_v3.py (identical membership)
 _CoreCodec = (
@@ -93,15 +98,14 @@ _ExtraCodec = (
 )
 
 __all__ = [
-    "CODEC_DTYPE_OUT",
-    "CODEC_KIND",
-    "CODEC_NDIM_OF",
-    "CODEC_VALIDATE",
+    "CODECS",
+    "CodecSpec",
     "_CoreCodec",
     "_ExtraCodec",
     "blosc_codec",
     "bytes_codec",
     "cast_value_codec",
+    "codec_spec_for",
     "crc32c_codec",
     "gzip_codec",
     "scale_offset_codec",

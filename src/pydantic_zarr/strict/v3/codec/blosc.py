@@ -42,3 +42,18 @@ def ndim_of(meta: BloscCodecMetadata) -> int | None:
 
 def dtype_out(meta: BloscCodecMetadata, input_dtype: str) -> str:
     return input_dtype
+
+
+from zarr_metadata.v3.codec.blosc import BloscCodecObject  # noqa: E402
+
+from pydantic_zarr.strict.v3.codec._spec import CodecSpec  # noqa: E402
+
+SPEC = CodecSpec(
+    name="blosc",
+    kind="bytes_bytes",
+    metadata_type=BloscCodecObject,
+    has_dtype_dependent_config=False,
+    validate=validate_blosc,
+    ndim_of=ndim_of,
+    dtype_out=dtype_out,
+)

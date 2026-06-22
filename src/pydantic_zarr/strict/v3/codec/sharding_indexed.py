@@ -51,3 +51,18 @@ def ndim_of(meta: ShardingIndexedCodecMetadata) -> int:
 def dtype_out(meta: ShardingIndexedCodecMetadata, input_dtype: str) -> str:
     """Identity transformation; array->bytes terminates dtype flow."""
     return input_dtype
+
+
+from zarr_metadata.v3.codec.sharding_indexed import ShardingIndexedCodecObject  # noqa: E402
+
+from pydantic_zarr.strict.v3.codec._spec import CodecSpec  # noqa: E402
+
+SPEC = CodecSpec(
+    name="sharding_indexed",
+    kind="array_bytes",
+    metadata_type=ShardingIndexedCodecObject,
+    has_dtype_dependent_config=False,
+    validate=validate_sharding_indexed,
+    ndim_of=ndim_of,
+    dtype_out=dtype_out,
+)

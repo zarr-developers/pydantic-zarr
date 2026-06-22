@@ -26,3 +26,18 @@ def ndim_of(meta: GzipCodecMetadata) -> int | None:
 
 def dtype_out(meta: GzipCodecMetadata, input_dtype: str) -> str:
     return input_dtype
+
+
+from zarr_metadata.v3.codec.gzip import GzipCodecObject  # noqa: E402
+
+from pydantic_zarr.strict.v3.codec._spec import CodecSpec  # noqa: E402
+
+SPEC = CodecSpec(
+    name="gzip",
+    kind="bytes_bytes",
+    metadata_type=GzipCodecObject,
+    has_dtype_dependent_config=False,
+    validate=validate_gzip,
+    ndim_of=ndim_of,
+    dtype_out=dtype_out,
+)

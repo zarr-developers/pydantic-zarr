@@ -29,3 +29,18 @@ def ndim_of(meta: TransposeCodecMetadata) -> int | None:
 
 def dtype_out(meta: TransposeCodecMetadata, input_dtype: str) -> str:
     return input_dtype
+
+
+from zarr_metadata.v3.codec.transpose import TransposeCodecObject  # noqa: E402
+
+from pydantic_zarr.strict.v3.codec._spec import CodecSpec  # noqa: E402
+
+SPEC = CodecSpec(
+    name="transpose",
+    kind="array_array",
+    metadata_type=TransposeCodecObject,
+    has_dtype_dependent_config=False,
+    validate=validate_transpose,
+    ndim_of=ndim_of,
+    dtype_out=dtype_out,
+)
