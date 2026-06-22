@@ -222,6 +222,10 @@ filterwarnings = [
     # CodecMetadataV2 is a TypedDict that allows extra items; the parent model's extra='forbid'
     # is intentionally not propagated to the nested TypedDict (correct pydantic behaviour).
     "ignore:TypedDict class 'CodecMetadataV2' allows extra items:pydantic.warnings.TypedDictExtraConfigWarning",
+    # Known zarr-python <-> numpy>=2.5 interaction: DateTime64/TimeDelta64.default_scalar() returns
+    # a generic-unit np.datetime64('NaT') / np.timedelta64('NaT'), which numpy 2.5 deprecates. The
+    # test fixtures exercise these dtypes; the warning originates in zarr-python, not pydantic-zarr.
+    "ignore:The 'generic' unit for NumPy timedelta is deprecated:DeprecationWarning",
 ]
 
 [tool.repo-review]
