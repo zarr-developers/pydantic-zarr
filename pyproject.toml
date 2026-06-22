@@ -21,7 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: Implementation :: CPython",
 ]
-dependencies = ["pydantic>=2.10", "numpy>=2.0.0", "packaging>=21.0"]
+dependencies = ["pydantic>=2.10", "numpy>=2.0.0", "packaging>=21.0", "zarr-metadata>=0.3.0"]
 
 [project.urls]
 Documentation = "https://pydantic-zarr.readthedocs.io/"
@@ -37,6 +37,7 @@ test-base = [
     "pytest==9.1.0",
     "pytest-cov",
     "pytest-examples",
+    "hypothesis",
     "xarray==2025.10.0",
     "dask==2025.11.0",
 ]
@@ -217,7 +218,14 @@ filterwarnings = [
     "ignore:The `order` keyword argument has no effect for Zarr format 3 arrays:RuntimeWarning",
     # Because AsyncArray.config is only present in zarr >= 3.1.0, ignore the warning until our
     # zarr min version is 3.1.0
-    "ignore:Use AsyncArray.config instead"
+    "ignore:Use AsyncArray.config instead",
+    # CodecMetadataV2 is a TypedDict that allows extra items; the parent model's extra='forbid'
+    # is intentionally not propagated to the nested TypedDict (correct pydantic behaviour).
+    "ignore:TypedDict class 'CodecMetadataV2' allows extra items:pydantic.warnings.TypedDictExtraConfigWarning",
+    # Known zarr-python <-> numpy>=2.5 interaction: DateTime64/TimeDelta64.default_scalar() returns
+    # a generic-unit np.datetime64('NaT') / np.timedelta64('NaT'), which numpy 2.5 deprecates. The
+    # test fixtures exercise these dtypes; the warning originates in zarr-python, not pydantic-zarr.
+    "ignore:The 'generic' unit for NumPy timedelta is deprecated:DeprecationWarning",
 ]
 
 [tool.repo-review]

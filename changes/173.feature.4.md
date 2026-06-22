@@ -1,0 +1,1 @@
+Strict `Core`/`Extra` v3 array specs gain `create_with_sharding(outer_chunk_shape=..., inner_chunk_shape=...)`, which builds a sharded spec by wrapping the inner codecs in a `sharding_indexed` codec (with sensible `index_codecs` defaults) and validates that the inner chunk shape evenly divides the outer shard shape.

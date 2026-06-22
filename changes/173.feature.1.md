@@ -1,0 +1,1 @@
+Added `to_json()` to v2 and v3 `ArraySpec` and `GroupSpec`, returning spec-conformant metadata dicts. Added `to_store_json()` to v2 `ArraySpec` and `GroupSpec`, returning the on-disk `.zarray`/`.zattrs` and `.zgroup`/`.zattrs` document pairs.

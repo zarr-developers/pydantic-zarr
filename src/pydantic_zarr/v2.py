@@ -24,6 +24,18 @@ import numpy.typing as npt
 from packaging.version import Version
 from pydantic import AfterValidator, BaseModel, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
+from zarr_metadata import (
+    ArrayDimensionSeparatorV2,
+    ArrayMetadataV2,
+    ArrayOrderV2,
+    CodecMetadataV2,
+    DataTypeMetadataV2,
+    GroupMetadataV2,
+    JSONValue,
+    ZArrayMetadata,
+    ZAttrsMetadata,
+    ZGroupMetadata,
+)
 
 from pydantic_zarr.core import (
     IncEx,
@@ -51,20 +63,6 @@ TItem = TypeVar("TItem", bound=TBaseItem)
 
 DtypeStr = Annotated[str, BeforeValidator(parse_dtype_v2)]
 
-BoolFillValue = bool
-IntFillValue = int
-# todo: introduce a type that represents hexadecimal representations of floats
-FloatFillValue = Literal["Infinity", "-Infinity", "NaN"] | float
-ComplexFillValue = tuple[FloatFillValue, FloatFillValue]
-RawFillValue = tuple[int, ...]
-
-FillValue = (
-    BoolFillValue | IntFillValue | FloatFillValue | ComplexFillValue | RawFillValue | str | None
-)
-
-DimensionSeparator = Literal[".", "/"]
-MemoryOrder = Literal["C", "F"]
-
 
 def dictify_codec(value: dict[str, Any] | Codec) -> dict[str, Any]:
     """
@@ -91,7 +89,7 @@ def dictify_codec(value: dict[str, Any] | Codec) -> dict[str, Any]:
     return value
 
 
-def parse_dimension_separator(data: Any) -> DimensionSeparator:
+def parse_dimension_separator(data: Any) -> ArrayDimensionSeparatorV2:
     """
     Parse the dimension_separator metadata as per the Zarr version 2 specification.
     If the input is `None`, this returns ".".
@@ -109,12 +107,12 @@ def parse_dimension_separator(data: Any) -> DimensionSeparator:
     """
     if data is None:
         return "."
-    if data in get_args(DimensionSeparator):
-        return cast("DimensionSeparator", data)
+    if data in get_args(ArrayDimensionSeparatorV2):
+        return cast("ArrayDimensionSeparatorV2", data)
     raise ValueError(f'Invalid data, expected one of ("/", ".", None), got {data}')
 
 
-CodecDict = Annotated[dict[str, Any], BeforeValidator(dictify_codec)]
+CodecDict = Annotated[CodecMetadataV2, BeforeValidator(dictify_codec)]
 
 
 class NodeSpec(StrictBase):
@@ -151,7 +149,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         The memory order of this array. Must be either "C", which designates "C order",
         AKA lexicographic ordering or "F", which designates "F order", AKA colexicographic ordering.
         The default is "C".
-    fill_value: FillValue, default = 0
+    fill_value: JSONValue, default = 0
         The fill value for this array. The default is 0.
     compressor: CodecDict | None
         A JSON-serializable representation of a compression codec, or None. The default is None.
@@ -167,20 +165,20 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     attributes: TAttr
     shape: tuple[int, ...]
     chunks: tuple[int, ...]
-    dtype: DtypeStr | list[tuple[Any, ...]]
-    fill_value: FillValue = 0
-    order: MemoryOrder = "C"
-    filters: list[CodecDict] | None = None
+    dtype: DtypeStr | DataTypeMetadataV2
+    fill_value: JSONValue = 0
+    order: ArrayOrderV2 = "C"
+    filters: tuple[CodecDict, ...] | None = None
     dimension_separator: Annotated[
-        DimensionSeparator, BeforeValidator(parse_dimension_separator)
+        ArrayDimensionSeparatorV2, BeforeValidator(parse_dimension_separator)
     ] = "/"
     compressor: CodecDict | None = None
 
     @field_validator("filters", mode="after")
     @classmethod
-    def validate_filters(cls, value: list[CodecDict] | None) -> list[CodecDict] | None:
-        # Make sure filters is never an empty list
-        if value == []:
+    def validate_filters(cls, value: tuple[CodecDict, ...] | None) -> tuple[CodecDict, ...] | None:
+        # Make sure filters is never an empty tuple
+        if value == ():
             return None
         return value
 
@@ -204,9 +202,9 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         chunks: Literal["auto"] | tuple[int, ...] = "auto",
         attributes: Literal["auto"] | TAttr = "auto",
         fill_value: Literal["auto"] | float | None = "auto",
-        order: Literal["auto"] | MemoryOrder = "auto",
-        filters: Literal["auto"] | list[CodecDict] | None = "auto",
-        dimension_separator: Literal["auto"] | DimensionSeparator = "auto",
+        order: Literal["auto"] | ArrayOrderV2 = "auto",
+        filters: Literal["auto"] | list[CodecDict] | tuple[CodecDict, ...] | None = "auto",
+        dimension_separator: Literal["auto"] | ArrayDimensionSeparatorV2 = "auto",
         compressor: Literal["auto"] | CodecDict | None = "auto",
     ) -> Self:
         """
@@ -228,7 +226,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             User-defined metadata associated with this array. Should be JSON-serializable. The default is "auto", which means that `array.attributes` will be used,
             with a fallback value of the empty dict `{}`.
         fill_value : "auto" | int | float | None, default = "auto"
-            The fill value for this array. Either "auto" or FillValue. The default is "auto", which means that `array.fill_value` will be used if that attribute exists, with a fallback value of 0.
+            The fill value for this array. Either "auto" or JSONValue. The default is "auto", which means that `array.fill_value` will be used if that attribute exists, with a fallback value of 0.
         order : "auto" | "C" | "F", default = "auto"
             The memory order of the `ArraySpec`. One of "auto", "C", or "F". The default is "auto", which means that, if present, `array.order`
             will be used, falling back to "C" if `array` does not have an `order` attribute.
@@ -280,6 +278,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         else:
             compressor_actual = compressor
 
+        filters_actual: list[Any] | tuple[CodecDict, ...] | None
         if filters == "auto":
             filters_actual = auto_filters(array)
         else:
@@ -466,6 +465,19 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             other_parsed = other  # type: ignore[assignment]
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
+
+    def to_json(self) -> ArrayMetadataV2:
+        """Serialize to the inline v2 array metadata form (attributes folded in)."""
+        return cast("ArrayMetadataV2", self.model_dump(mode="json"))
+
+    def to_store_json(self) -> Mapping[str, ZArrayMetadata | ZAttrsMetadata]:
+        """Serialize to the on-disk `.zarray` + `.zattrs` document pair."""
+        full = self.model_dump(mode="json")
+        attributes = full.pop("attributes", {})
+        return {
+            ".zarray": cast("ZArrayMetadata", full),
+            ".zattrs": cast("ZAttrsMetadata", attributes),
+        }
 
 
 class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
@@ -687,6 +699,19 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
             other_parsed = other  # type: ignore[assignment]
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
+
+    def to_json(self) -> GroupMetadataV2:
+        """Serialize to the inline v2 group metadata form (members excluded)."""
+        return cast("GroupMetadataV2", self.model_dump(mode="json", exclude={"members"}))
+
+    def to_store_json(self) -> Mapping[str, ZGroupMetadata | ZAttrsMetadata]:
+        """Serialize to the on-disk `.zgroup` + `.zattrs` document pair."""
+        full = self.model_dump(mode="json", exclude={"members"})
+        attributes = full.pop("attributes", {})
+        return {
+            ".zgroup": cast("ZGroupMetadata", full),
+            ".zattrs": cast("ZAttrsMetadata", attributes),
+        }
 
     def to_flat(self, root_path: str = "") -> dict[str, AnyArraySpec | AnyGroupSpec]:
         """
@@ -1082,27 +1107,29 @@ def auto_filters(data: Any) -> list[Codec] | None:
     return None
 
 
-def auto_order(data: Any) -> MemoryOrder:
+def auto_order(data: Any) -> ArrayOrderV2:
     """
     Guess array order from an input with an `order` attribute, returning "C" otherwise.
     """
     if hasattr(data, "order"):
-        if data.order in get_args(MemoryOrder):
-            return cast("MemoryOrder", data.order)
+        if data.order in get_args(ArrayOrderV2):
+            return cast("ArrayOrderV2", data.order)
         else:
-            raise ValueError(f"Order attribute not in {get_args(MemoryOrder)}")
+            raise ValueError(f"Order attribute not in {get_args(ArrayOrderV2)}")
     return "C"
 
 
-def auto_dimension_separator(data: Any) -> DimensionSeparator:
+def auto_dimension_separator(data: Any) -> ArrayDimensionSeparatorV2:
     """
     Guess dimension separator from an input with a `dimension_separator` attribute, returning "/" otherwise.
     """
     if hasattr(data, "dimension_separator"):
-        if data.dimension_separator in get_args(DimensionSeparator):
-            return cast("DimensionSeparator", data.dimension_separator)
+        if data.dimension_separator in get_args(ArrayDimensionSeparatorV2):
+            return cast("ArrayDimensionSeparatorV2", data.dimension_separator)
         else:
-            raise ValueError(f"Dimension separator attribute not in {get_args(DimensionSeparator)}")
+            raise ValueError(
+                f"Dimension separator attribute not in {get_args(ArrayDimensionSeparatorV2)}"
+            )
     return "/"
 
 

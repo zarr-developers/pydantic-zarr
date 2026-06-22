@@ -97,6 +97,51 @@ print(ArraySpec.from_array(np.arange(10)).model_dump())
 """
 ```
 
+## Serializing to JSON (`to_json` and `to_store_json`)
+
+Both `ArraySpec` and `GroupSpec` provide two serialization methods:
+
+- `to_json()` — returns the metadata as a single `dict` (attributes included).
+- `to_store_json()` — returns a `dict` whose keys are the on-disk document names.
+  For arrays this is `{".zarray": ..., ".zattrs": ...}`.
+  For groups this is `{".zgroup": ..., ".zattrs": ...}`.
+
+```python
+from pydantic_zarr.v2 import ArraySpec, GroupSpec
+
+arr = ArraySpec(
+    shape=(100,),
+    dtype="float64",
+    chunks=(10,),
+    fill_value=0.0,
+    attributes={"units": "meters"},
+)
+
+# to_json folds attributes into the metadata dict
+arr_doc = arr.to_json()
+print(arr_doc["dtype"])
+#> <f8
+print(arr_doc["attributes"])
+#> {'units': 'meters'}
+
+# to_store_json splits into .zarray and .zattrs
+store_docs = arr.to_store_json()
+print(list(store_docs.keys()))
+#> ['.zarray', '.zattrs']
+print(store_docs[".zattrs"])
+#> {'units': 'meters'}
+print(store_docs[".zarray"]["dtype"])
+#> <f8
+
+# GroupSpec works the same way, splitting into .zgroup and .zattrs
+grp = GroupSpec(attributes={"created_by": "pydantic-zarr"})
+grp_store_docs = grp.to_store_json()
+print(list(grp_store_docs.keys()))
+#> ['.zgroup', '.zattrs']
+print(grp_store_docs[".zattrs"])
+#> {'created_by': 'pydantic-zarr'}
+```
+
 ### Flattening and unflattening Zarr hierarchies
 
 In the previous section we built a model of a Zarr hierarchy by defining `GroupSpec` and `ArraySpec`
@@ -234,6 +279,52 @@ print(GroupSpec.from_flat(tree).model_dump())
     },
 }
 """
+```
+
+## Using generic types
+
+`GroupSpec` and `ArraySpec` are both generic Pydantic models. `ArraySpec` takes one type
+parameter that specializes the type of its `attributes` field. `GroupSpec` takes two type
+parameters: the first specializes `GroupSpec.attributes`, and the second specializes the type of
+the *values* of `GroupSpec.members`.
+
+This lets you encode domain-specific metadata in a type-safe way:
+
+```python
+from pydantic import BaseModel
+
+from pydantic_zarr.v2 import ArraySpec, GroupSpec
+
+
+class ArrayAttrs(BaseModel):
+    units: str
+    resolution: float
+
+
+class GroupAttrs(BaseModel):
+    author: str
+
+
+# ArraySpec with typed attributes
+arr = ArraySpec[ArrayAttrs](
+    shape=(100,),
+    dtype="float64",
+    chunks=(10,),
+    fill_value=0.0,
+    attributes=ArrayAttrs(units="meters", resolution=0.5),
+)
+print(type(arr.attributes).__name__)
+#> ArrayAttrs
+print(arr.attributes.units)
+#> meters
+
+# GroupSpec with typed attributes
+grp = GroupSpec[GroupAttrs, ArraySpec[ArrayAttrs]](
+    attributes=GroupAttrs(author="me"),
+    members={"arr": arr},
+)
+print(grp.attributes.author)
+#> me
 ```
 
 ## Comparing `GroupSpec` and `ArraySpec` models

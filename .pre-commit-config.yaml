@@ -32,6 +32,7 @@ repos:
           - numpy
           - zarr>=3.1.0
           - numcodecs
+          - zarr-metadata>=0.3.0
   - repo: https://github.com/scientific-python/cookie
     rev: 2025.01.22
     hooks:

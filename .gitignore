@@ -170,3 +170,7 @@ uv.lock
 
 # osx metadata
 .DS_Store
+
+# Superpowers workflow artifacts (specs, plans, SDD ledger) — not part of the project
+docs/superpowers/
+.superpowers/

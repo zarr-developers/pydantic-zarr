@@ -10,7 +10,6 @@ from typing import (
     Any,
     Generic,
     Literal,
-    NotRequired,
     Self,
     TypeVar,
     Union,
@@ -22,7 +21,7 @@ import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
 from pydantic import AfterValidator, BaseModel, BeforeValidator, model_validator
-from typing_extensions import TypedDict
+from zarr_metadata import ArrayMetadataV3, GroupMetadataV3, JSONValue, MetadataV3, NamedConfigV3
 
 from pydantic_zarr.core import (
     IncEx,
@@ -56,76 +55,7 @@ TItem = TypeVar("TItem", bound=TBaseItem)
 
 NodeType = Literal["group", "array"]
 
-BoolFillValue = bool
-IntFillValue = int
-# todo: introduce a type that represents hexadecimal representations of floats
-FloatFillValue = Literal["Infinity", "-Infinity", "NaN"] | float
-ComplexFillValue = tuple[FloatFillValue, FloatFillValue]
-RawFillValue = tuple[int, ...]
-StructFillValue = Mapping[str, object]
-
-FillValue = (
-    BoolFillValue
-    | IntFillValue
-    | FloatFillValue
-    | ComplexFillValue
-    | RawFillValue
-    | str
-    | StructFillValue
-)
-
-TName = TypeVar("TName", bound=str)
-TConfig = TypeVar("TConfig", bound=Mapping[str, object])
-
-
-class NamedConfig(TypedDict, Generic[TName, TConfig]):
-    """
-    A Zarr V3 metadata object.
-
-    This class is parametrized by two type parameters: `TName` and `TConfig`.
-
-    Attributes
-    ----------
-    name: TName
-        The name of the metadata object.
-    configuration: NotRequired[TConfig]
-        The configuration of the metadata object.
-    """
-
-    name: TName
-    configuration: NotRequired[TConfig]
-
-
-class AnyNamedConfig(NamedConfig[str, Mapping[str, object]]):
-    """
-    This class models any Zarr metadata object that takes the form of a
-    {"name": ..., "configuration": ...} dict, where the "configuration" key is not required.
-    """
-
-
-CodecLike = str | AnyNamedConfig
-"""A type modelling the permissible declarations for codecs"""
-
-
-class RegularChunkingConfig(TypedDict):
-    chunk_shape: tuple[int, ...]
-
-
-RegularChunking = NamedConfig[Literal["regular"], RegularChunkingConfig]
-
-
-class DefaultChunkKeyEncodingConfig(TypedDict):
-    separator: Literal[".", "/"]
-
-
-DefaultChunkKeyEncoding = NamedConfig[Literal["default"], DefaultChunkKeyEncodingConfig]
-
-
-class V2ChunkKeyEncodingConfig(TypedDict):
-    separator: Literal[".", "/"]
-
-
-V2ChunkKeyEncoding = NamedConfig[Literal["v2"], V2ChunkKeyEncodingConfig]
+type CodecLike = str | NamedConfigV3
 
 
 class NodeSpec(StrictBase):
@@ -181,13 +111,17 @@ def parse_dtype_v3(dtype: npt.DTypeLike | Mapping[str, object]) -> Mapping[str, 
 
 
 DTypeStr = Annotated[str, BeforeValidator(parse_dtype_v3)]
-DTypeLike = DTypeStr | AnyNamedConfig
-CodecTuple = Annotated[tuple[CodecLike, ...], BeforeValidator(ensure_multiple)]
+type DTypeLike = DTypeStr | NamedConfigV3
+CodecTuple = Annotated[tuple[str | NamedConfigV3, ...], BeforeValidator(ensure_multiple)]
 
 
-class ArraySpec(NodeSpec, Generic[TAttr]):
+class _BaseArraySpec(NodeSpec, Generic[TAttr]):
     """
-    A model of a Zarr Version 3 Array.
+    Behavior-only base class shared by all Zarr v3 array spec variants.
+
+    Holds all shared fields and methods. The variant fields (data_type,
+    chunk_grid, chunk_key_encoding, fill_value, codecs) are declared by
+    concrete subclasses (e.g. ArraySpec).
 
     Attributes
     ----------
@@ -198,18 +132,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         User-defined metadata associated with this array.
     shape: Sequence[int]
         The shape of this array.
-    data_type: str
-        The data type of this array.
-    chunk_grid: NamedConfig
-        A `NamedConfig` object defining the chunk shape of this array.
-    chunk_key_encoding: NamedConfig
-        A `NamedConfig` object defining the chunk_key_encoding for the array.
-    fill_value: FillValue
-        The fill value for this array.
-    codecs: Sequence[NamedConfig]
-        The sequence of codecs for this array.
-    storage_transformers: Optional[Sequence[NamedConfig]]
-        An optional sequence of `NamedConfig` objects that define the storage
+    storage_transformers: Optional[Sequence[MetadataV3]]
+        An optional sequence of `MetadataV3` values (name strings or `{name, configuration}` mappings) that define the storage
         transformers for this array.
     dimension_names: Optional[Sequence[str]]
         An optional sequence of strings that gives names to each axis of the array.
@@ -218,14 +142,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     node_type: Literal["array"] = "array"
     attributes: TAttr
     shape: tuple[int, ...]
-    data_type: DTypeLike
-    chunk_grid: RegularChunking  # todo: validate this against shape
-    chunk_key_encoding: (
-        DefaultChunkKeyEncoding | V2ChunkKeyEncoding
-    )  # todo: validate this against shape
-    fill_value: FillValue  # todo: validate this against the data type
-    codecs: CodecTuple
-    storage_transformers: tuple[AnyNamedConfig, ...] = ()
+    storage_transformers: tuple[NamedConfigV3, ...] = ()
     dimension_names: tuple[str | None, ...] | None = None  # todo: validate this against shape
 
     @model_validator(mode="after")
@@ -254,17 +171,31 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             d.pop("dimension_names", None)
         return d
 
+    def to_json(self) -> ArrayMetadataV3:
+        """Serialize to a spec-defined Zarr v3 array metadata document (`zarr.json`)."""
+        return cast("ArrayMetadataV3", self.model_dump(mode="json"))
+
+
+class ArraySpec(_BaseArraySpec[TAttr], Generic[TAttr]):
+    """Loose Zarr v3 array spec: codecs/dtype validated as syntax only."""
+
+    data_type: DTypeLike
+    chunk_grid: MetadataV3  # todo: validate this against shape
+    chunk_key_encoding: MetadataV3  # todo: validate this against shape
+    fill_value: JSONValue  # syntax only; strict mode validates against the data type
+    codecs: CodecTuple
+
     @classmethod
     def from_array(
         cls,
         array: npt.NDArray[Any] | zarr.Array,
         *,
         attributes: Literal["auto"] | TAttr = "auto",
-        chunk_grid: Literal["auto"] | AnyNamedConfig = "auto",
-        chunk_key_encoding: Literal["auto"] | AnyNamedConfig = "auto",
-        fill_value: Literal["auto"] | FillValue = "auto",
+        chunk_grid: Literal["auto"] | NamedConfigV3 = "auto",
+        chunk_key_encoding: Literal["auto"] | NamedConfigV3 = "auto",
+        fill_value: Literal["auto"] | JSONValue = "auto",
         codecs: Literal["auto"] | Sequence[CodecLike] = "auto",
-        storage_transformers: Literal["auto"] | Sequence[AnyNamedConfig] = "auto",
+        storage_transformers: Literal["auto"] | Sequence[NamedConfigV3] = "auto",
         dimension_names: Literal["auto"] | Sequence[str | None] = "auto",
     ) -> Self:
         """
@@ -293,7 +224,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         else:
             chunk_grid_actual = chunk_grid
 
-        chunk_key_actual: AnyNamedConfig
+        chunk_key_actual: NamedConfigV3
         if chunk_key_encoding == "auto":
             chunk_key_actual = {"name": "default", "configuration": {"separator": "/"}}
         else:
@@ -309,7 +240,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             codecs_actual = auto_codecs(array)
         else:
             codecs_actual = tuple(codecs)
-        storage_transformers_actual: Sequence[AnyNamedConfig]
+        storage_transformers_actual: Sequence[NamedConfigV3]
         if storage_transformers == "auto":
             storage_transformers_actual = auto_storage_transformers(array)
         else:
@@ -323,14 +254,14 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
         return cls(
             shape=array.shape,
+            attributes=attributes_actual,
+            storage_transformers=tuple(storage_transformers_actual),
+            dimension_names=dimension_names_actual,
             data_type=str(array.dtype),
             chunk_grid=chunk_grid_actual,
-            attributes=attributes_actual,
             chunk_key_encoding=chunk_key_actual,
             fill_value=fill_value_actual,
             codecs=tuple(codecs_actual),
-            storage_transformers=tuple(storage_transformers_actual),
-            dimension_names=dimension_names_actual,
         )
 
     @classmethod
@@ -379,13 +310,13 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         return cls(
             attributes=meta_json["attributes"],
             shape=array.shape,
+            storage_transformers=meta_json["storage_transformers"],
+            dimension_names=meta_json.get("dimension_names", None),
             data_type=meta_json["data_type"],
             chunk_grid=meta_json["chunk_grid"],
             chunk_key_encoding=meta_json["chunk_key_encoding"],
             fill_value=meta_json["fill_value"],
             codecs=meta_json["codecs"],
-            storage_transformers=meta_json["storage_transformers"],
-            dimension_names=meta_json.get("dimension_names", None),
         )
 
     def to_zarr(
@@ -447,7 +378,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
     def like(
         self,
-        other: ArraySpec | zarr.Array,
+        other: AnyArraySpec | zarr.Array,
         *,
         include: IncEx = None,
         exclude: IncEx = None,
@@ -496,7 +427,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         True
         """
 
-        other_parsed: ArraySpec
+        other_parsed: AnyArraySpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Array):
             other_parsed = ArraySpec.from_zarr(other)
         else:
@@ -524,6 +455,10 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
     node_type: Literal["group"] = "group"
     attributes: TAttr
     members: Annotated[Mapping[str, TItem] | None, AfterValidator(ensure_key_no_path)] = {}
+
+    def to_json(self) -> GroupMetadataV3:
+        """Serialize to a spec-defined Zarr v3 group metadata document (`zarr.json`)."""
+        return cast("GroupMetadataV3", self.model_dump(mode="json", exclude={"members"}))
 
     @classmethod
     def from_flat(cls, data: Mapping[str, AnyArraySpec | AnyGroupSpec]) -> Self:
@@ -1022,7 +957,7 @@ def auto_attributes(data: object) -> Mapping[str, object]:
     return {}
 
 
-def auto_chunk_grid(data: object) -> AnyNamedConfig:
+def auto_chunk_grid(data: object) -> NamedConfigV3:
     if hasattr(data, "chunk_shape"):
         return {"name": "regular", "configuration": {"chunk_shape": tuple(data.chunk_shape)}}
     elif hasattr(data, "shape"):
@@ -1030,13 +965,13 @@ def auto_chunk_grid(data: object) -> AnyNamedConfig:
     raise ValueError("Cannot get chunk grid from object without .shape or .chunk_shape attribute")
 
 
-def auto_chunk_key_encoding(data: object) -> AnyNamedConfig:
+def auto_chunk_key_encoding(data: object) -> NamedConfigV3:
     if hasattr(data, "metadata") and hasattr(data.metadata, "chunk_key_encoding"):
         return data.metadata.to_dict()["chunk_key_encoding"]
     return {"name": "default", "configuration": {"separator": "/"}}
 
 
-def auto_fill_value(data: object) -> FillValue:
+def auto_fill_value(data: object) -> JSONValue:
     if hasattr(data, "fill_value"):
         return data.fill_value
     elif hasattr(data, "dtype"):
@@ -1064,7 +999,7 @@ def auto_codecs(data: object) -> tuple[CodecLike, ...]:
     return ({"name": "bytes"},)
 
 
-def auto_storage_transformers(data: object) -> tuple[AnyNamedConfig, ...]:
+def auto_storage_transformers(data: object) -> tuple[NamedConfigV3, ...]:
     if hasattr(data, "storage_transformers"):
         return tuple(data.storage_transformers)
     return ()
@@ -1131,3 +1066,62 @@ def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, Array
     result[root_path] = model_copy
     # sort by increasing key length
     return dict(sorted(result.items(), key=lambda v: len(v[0])))
+
+
+from pydantic_zarr._strict_v3 import (  # noqa: E402, I001
+    AnyCoreArraySpec as AnyCoreArraySpec,
+    AnyExtraArraySpec as AnyExtraArraySpec,
+    CoreArraySpec as CoreArraySpec,
+    CoreBoolArraySpec as CoreBoolArraySpec,
+    CoreComplex128ArraySpec as CoreComplex128ArraySpec,
+    CoreComplex64ArraySpec as CoreComplex64ArraySpec,
+    CoreFloat16ArraySpec as CoreFloat16ArraySpec,
+    CoreFloat32ArraySpec as CoreFloat32ArraySpec,
+    CoreFloat64ArraySpec as CoreFloat64ArraySpec,
+    CoreGroupSpec as CoreGroupSpec,
+    CoreInt16ArraySpec as CoreInt16ArraySpec,
+    CoreInt32ArraySpec as CoreInt32ArraySpec,
+    CoreInt64ArraySpec as CoreInt64ArraySpec,
+    CoreInt8ArraySpec as CoreInt8ArraySpec,
+    CoreRawArraySpec as CoreRawArraySpec,
+    CoreUint16ArraySpec as CoreUint16ArraySpec,
+    CoreUint32ArraySpec as CoreUint32ArraySpec,
+    CoreUint64ArraySpec as CoreUint64ArraySpec,
+    CoreUint8ArraySpec as CoreUint8ArraySpec,
+    ExtraArraySpec as ExtraArraySpec,
+    ExtraBoolArraySpec as ExtraBoolArraySpec,
+    ExtraComplex128ArraySpec as ExtraComplex128ArraySpec,
+    ExtraComplex64ArraySpec as ExtraComplex64ArraySpec,
+    ExtraFloat16ArraySpec as ExtraFloat16ArraySpec,
+    ExtraFloat32ArraySpec as ExtraFloat32ArraySpec,
+    ExtraFloat64ArraySpec as ExtraFloat64ArraySpec,
+    ExtraGroupSpec as ExtraGroupSpec,
+    ExtraInt16ArraySpec as ExtraInt16ArraySpec,
+    ExtraInt32ArraySpec as ExtraInt32ArraySpec,
+    ExtraInt64ArraySpec as ExtraInt64ArraySpec,
+    ExtraInt8ArraySpec as ExtraInt8ArraySpec,
+    ExtraRawArraySpec as ExtraRawArraySpec,
+    ExtraUint16ArraySpec as ExtraUint16ArraySpec,
+    ExtraUint32ArraySpec as ExtraUint32ArraySpec,
+    ExtraUint64ArraySpec as ExtraUint64ArraySpec,
+    ExtraUint8ArraySpec as ExtraUint8ArraySpec,
+)
+
+# Typed builders for strict v3 codec / chunk-grid / chunk-key-encoding metadata. Each returns
+# the plain metadata dict (validated at build time), so you can construct a strict spec's
+# ``codecs`` / ``chunk_grid`` / ``chunk_key_encoding`` without hand-writing nested dicts.
+from pydantic_zarr.strict.v3.chunk_grid import (  # noqa: E402
+    rectilinear_grid as rectilinear_grid,
+    regular_grid as regular_grid,
+)
+from pydantic_zarr.strict.v3.codec import (  # noqa: E402
+    blosc_codec as blosc_codec,
+    bytes_codec as bytes_codec,
+    cast_value_codec as cast_value_codec,
+    crc32c_codec as crc32c_codec,
+    gzip_codec as gzip_codec,
+    scale_offset_codec as scale_offset_codec,
+    sharding_indexed_codec as sharding_indexed_codec,
+    transpose_codec as transpose_codec,
+    zstd_codec as zstd_codec,
+)
