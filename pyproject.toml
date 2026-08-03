@@ -74,7 +74,7 @@ list-env = "pip list"
 
 [[tool.hatch.envs.test.matrix]]
 python = ["3.12", "3.13", "3.14"]
-zarr = ["3.0.10", "3.1.0"]
+zarr = ["3.0.10", "3.1.0", "3.3.0"]
 
 [tool.hatch.envs.test-base]
 dependency-groups = ["test-base"]

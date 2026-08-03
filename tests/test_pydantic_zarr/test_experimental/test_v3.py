@@ -194,7 +194,7 @@ def test_arrayspec_to_zarr(
     data_type = dtype_example.name
     fill_value = dtype_example.fill_value
 
-    codecs = ({"name": "bytes", "configuration": {}},)
+    codecs = ({"name": "bytes", "configuration": {"endian": "little"}},)
     if data_type == "variable_length_bytes":
         codecs = ({"name": "vlen-bytes"},)
 

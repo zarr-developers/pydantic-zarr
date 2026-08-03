@@ -160,7 +160,7 @@ def test_arrayspec_to_zarr(
     data_type = dtype_example.name
     fill_value = dtype_example.fill_value
 
-    codecs = ({"name": "bytes", "configuration": {}},)
+    codecs = ({"name": "bytes", "configuration": {"endian": "little"}},)
     if data_type == "variable_length_bytes":
         codecs = ({"name": "vlen-bytes"},)
 
@@ -237,7 +237,7 @@ class TestGroupSpec:
     @staticmethod
     def test_from_zarr_depth() -> None:
         zarr = pytest.importorskip("zarr")
-        codecs = ({"name": "bytes", "configuration": {}},)
+        codecs = ({"name": "bytes", "configuration": {"endian": "little"}},)
         tree: dict[str, AnyGroupSpec | AnyArraySpec] = {
             "": GroupSpec(members=None, attributes={"level": 0, "type": "group"}),
             "/1": GroupSpec(members=None, attributes={"level": 1, "type": "group"}),

@@ -1061,6 +1061,9 @@ def auto_codecs(data: object) -> tuple[CodecLike, ...]:
     if hasattr(data, "codecs"):
         # todo: type check
         return tuple(data.codecs)
+    if hasattr(data, "dtype") and np.dtype(data.dtype).itemsize > 1:
+        # the zarr v3 spec requires the ``endian`` configuration for multi-byte data types
+        return ({"name": "bytes", "configuration": {"endian": "little"}},)
     return ({"name": "bytes"},)
 
 
