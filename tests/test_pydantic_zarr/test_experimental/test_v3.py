@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import asdict
+from typing import Any
 
 import numpy as np
 import pytest
+from packaging.version import Version
 from pydantic import ValidationError
 from typing_extensions import TypedDict
 
@@ -13,6 +15,7 @@ from pydantic_zarr.experimental.core import json_eq
 from pydantic_zarr.experimental.v3 import (
     ArraySpec,
     BaseGroupSpec,
+    CodecLike,
     DefaultChunkKeyEncoding,
     DefaultChunkKeyEncodingConfig,
     GroupSpec,
@@ -23,7 +26,7 @@ from pydantic_zarr.experimental.v3 import (
     parse_dtype_v3,
 )
 
-from ..conftest import DTYPE_EXAMPLES_V3, ZARR_AVAILABLE, DTypeExample
+from ..conftest import DTYPE_EXAMPLES_V3, ZARR_AVAILABLE, ZARR_PYTHON_VERSION, DTypeExample
 
 
 @pytest.fixture
@@ -139,6 +142,57 @@ def test_from_array() -> None:
     assert np.array_equal(arr_out[:], array)
 
 
+@pytest.mark.filterwarnings("ignore:The data type :FutureWarning")
+@pytest.mark.parametrize(
+    ("dtype", "expected_codecs"),
+    [
+        (np.dtype("uint8"), ({"name": "bytes"},)),
+        (np.dtype("bool"), ({"name": "bytes"},)),
+        (np.dtype("int64"), ({"name": "bytes", "configuration": {"endian": "little"}},)),
+        (np.dtype("float32"), ({"name": "bytes", "configuration": {"endian": "little"}},)),
+        # for structured data types, itemsize is the total bytes per element, including padding
+        (
+            np.dtype([("a", "<i4"), ("b", "<f2")]),
+            ({"name": "bytes", "configuration": {"endian": "little"}},),
+        ),
+        (
+            np.dtype([("a", "i1"), ("b", "u1")]),
+            ({"name": "bytes", "configuration": {"endian": "little"}},),
+        ),
+        (np.dtype([("a", "i1")]), ({"name": "bytes"},)),
+        (
+            np.dtype([("a", "i1"), ("b", "<f8")], align=True),
+            ({"name": "bytes", "configuration": {"endian": "little"}},),
+        ),
+    ],
+    ids=str,
+)
+def test_auto_codecs(dtype: np.dtype[Any], expected_codecs: tuple[CodecLike, ...]) -> None:
+    """
+    Test that auto_codecs emits a bytes codec with an explicit little-endian configuration
+    exactly when the data type is multi-byte, including structured data types, and that zarr
+    accepts the generated codecs when creating an array with that data type.
+    """
+    array = np.zeros((3,), dtype=dtype)
+    assert auto_codecs(array) == expected_codecs
+
+    if not ZARR_AVAILABLE or ZARR_PYTHON_VERSION < Version("3.1.0"):
+        return
+    from zarr.core.dtype import get_data_type_from_native_dtype
+
+    zdt = get_data_type_from_native_dtype(dtype)
+    spec = ArraySpec(
+        attributes={},
+        shape=array.shape,
+        data_type=zdt.to_json(zarr_format=3),
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": array.shape}},
+        chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
+        codecs=auto_codecs(array),
+        fill_value=zdt.to_json_scalar(zdt.default_scalar(), zarr_format=3),
+    )
+    spec.to_zarr(store={}, path="")  # type: ignore[arg-type]
+
+
 def test_arrayspec_no_empty_codecs(arrayspec: ArraySpec) -> None:
     """
     Ensure that it is not possible to create an ArraySpec with no codecs
@@ -194,7 +248,7 @@ def test_arrayspec_to_zarr(
     data_type = dtype_example.name
     fill_value = dtype_example.fill_value
 
-    codecs = ({"name": "bytes", "configuration": {}},)
+    codecs = ({"name": "bytes", "configuration": {"endian": "little"}},)
     if data_type == "variable_length_bytes":
         codecs = ({"name": "vlen-bytes"},)
 
