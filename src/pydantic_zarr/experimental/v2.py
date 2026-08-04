@@ -895,15 +895,15 @@ class GroupSpec(BaseGroupSpec):
         return to_flat(self, root_path=root_path)
 
     @classmethod
-    def from_flat(cls, data: Mapping[str, ArraySpec | GroupSpec]) -> Self:
+    def from_flat(cls, data: Mapping[str, ArraySpec | BaseGroupSpec]) -> Self:
         """
         Create a `GroupSpec` from a flat hierarchy representation. The flattened hierarchy is a
         `dict` with the following constraints: keys must be valid paths; values must
-        be `ArraySpec` or `GroupSpec` instances.
+        be `ArraySpec` or `BaseGroupSpec` instances.
 
         Parameters
         ----------
-        data : Dict[str, ArraySpec | GroupSpec]
+        data : Dict[str, ArraySpec | BaseGroupSpec]
             A flattened representation of a Zarr hierarchy.
 
         Returns
@@ -929,11 +929,11 @@ class GroupSpec(BaseGroupSpec):
 
 
 @overload
-def from_zarr(element: zarr.Array, depth: int) -> ArraySpec: ...
+def from_zarr(element: zarr.Array, depth: int = ...) -> ArraySpec: ...
 
 
 @overload
-def from_zarr(element: zarr.Group, depth: int) -> GroupSpec: ...
+def from_zarr(element: zarr.Group, depth: int = ...) -> GroupSpec: ...
 
 
 def from_zarr(element: zarr.Array | zarr.Group, depth: int = -1) -> ArraySpec | GroupSpec:

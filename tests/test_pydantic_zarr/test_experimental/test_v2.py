@@ -8,7 +8,7 @@ import json
 import re
 from collections.abc import Mapping  # noqa: TC003
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import dask.array as da
 import pytest
@@ -21,7 +21,11 @@ from pydantic_zarr.experimental.core import json_eq
 from ..conftest import DTYPE_EXAMPLES_V2, ZARR_AVAILABLE, ZARR_PYTHON_VERSION, DTypeExample
 
 if TYPE_CHECKING:
+    # Imported under an alias so it is not shadowed by the function-local
+    # `zarr = pytest.importorskip("zarr")` bindings used throughout this module.
+    import zarr as zarr_mod
     from numcodecs.abc import Codec
+    from zarr.abc.store import Store
 
 from typing import TypedDict
 
@@ -92,7 +96,7 @@ def test_array_spec(
         _filters = tuple(numcodecs.get_codec(f) for f in filters)
     else:
         _filters = None
-    store = {}
+    store: dict[str, Any] = {}
 
     array = zarr.create_array(
         shape=shape,
@@ -137,7 +141,8 @@ def test_arrayspec_to_zarr(overwrite: bool, path: str, config: dict[str, object]
 
     if config not in (None, {}):
         assert stored._async_array._config == ArrayConfig(
-            order=config["order"], write_empty_chunks=config["write_empty_chunks"]
+            order=cast("MemoryOrder", config["order"]),
+            write_empty_chunks=cast("bool", config["write_empty_chunks"]),
         )
 
     assert json_eq(ArraySpec.from_zarr(stored).model_dump(), spec.model_dump())
@@ -184,7 +189,7 @@ def test_array_spec_from_array(
     compressor: str | dict[str, object],
 ) -> None:
     auto_options = ("omit", "auto")
-    kwargs_out: dict[str, object] = {}
+    kwargs_out: dict[str, Any] = {}
 
     kwargs_out["chunks"] = chunks
     kwargs_out["attributes"] = attributes
@@ -198,8 +203,10 @@ def test_array_spec_from_array(
     kwargs_out = dict(filter(lambda kvp: kvp[1] != "omit", kwargs_out.items()))
 
     spec = ArraySpec.from_array(array, **kwargs_out)
-    # arrayspec should round-trip from_array with no arguments
-    assert spec.from_array(spec) == spec
+    # arrayspec should round-trip from_array with no arguments.
+    # `from_array` is annotated for ndarray/zarr.Array but documents that it only needs
+    # `shape` and `dtype`, which `ArraySpec` supplies.
+    assert spec.from_array(spec) == spec  # type: ignore[arg-type]
 
     assert spec.dtype == array.dtype.str
     assert np.dtype(spec.dtype) == array.dtype
@@ -227,7 +234,10 @@ def test_array_spec_from_array(
         assert spec.order == order
 
     if filters in auto_options:
-        assert spec.filters == auto_filters(array)
+        # `spec.filters` is a tuple, while `auto_filters` returns the raw (list) value it
+        # found on `array`, so normalise before comparing.
+        expected_filters = auto_filters(array)
+        assert spec.filters == (None if expected_filters is None else tuple(expected_filters))
     else:
         assert spec.filters is None
 
@@ -412,14 +422,17 @@ def test_validation() -> None:
     GroupA.from_zarr(groupAMat)
     GroupB.from_zarr(groupBMat)
 
-    ArrayA.from_zarr(groupAMat["a"])
-    ArrayB.from_zarr(groupBMat["a"])
+    memberA = cast("zarr_mod.Array", groupAMat["a"])
+    memberB = cast("zarr_mod.Array", groupBMat["a"])
+
+    ArrayA.from_zarr(memberA)
+    ArrayB.from_zarr(memberB)
 
     with pytest.raises(ValidationError):
-        ArrayA.from_zarr(groupBMat["a"])
+        ArrayA.from_zarr(memberB)
 
     with pytest.raises(ValidationError):
-        ArrayB.from_zarr(groupAMat["a"])
+        ArrayB.from_zarr(memberA)
 
     with pytest.raises(ValidationError):
         GroupB.from_zarr(groupAMat)
@@ -481,7 +494,7 @@ def test_flatten_unflatten(
 
 # todo: parametrize
 def test_array_like() -> None:
-    a = ArraySpec.from_array(np.arange(10))  # type: ignore[var-annotated]
+    a = ArraySpec.from_array(np.arange(10))
     assert a.like(a)
 
     b = a.model_copy(update={"dtype": "uint8"})
@@ -515,7 +528,7 @@ def test_group_like() -> None:
         "/b": ArraySpec.from_array(np.arange(10), attributes={"path": "/b"}),
         "/a/b": ArraySpec.from_array(np.arange(10), attributes={"path": "/a/b"}),
     }
-    group = GroupSpec.from_flat(tree)  # type: ignore[var-annotated]
+    group = GroupSpec.from_flat(tree)
     assert group.like(group)
     assert not group.like(group.model_copy(update={"attributes": {}}))
     assert group.like(group.model_copy(update={"attributes": {}}), exclude={"attributes"})
@@ -535,23 +548,29 @@ def test_from_zarr_depth() -> None:
 
     store = zarr.storage.MemoryStore()
     group_out = GroupSpec.from_flat(tree).to_zarr(store, path="test")
-    group_in_0 = GroupSpec.from_zarr(group_out, depth=0)  # type: ignore[var-annotated]
+    group_in_0 = GroupSpec.from_zarr(group_out, depth=0)
     assert group_in_0.attributes == tree[""].attributes
 
-    group_in_1 = GroupSpec.from_zarr(group_out, depth=1)  # type: ignore[var-annotated]
-    assert group_in_1.attributes == tree[""].attributes  # type: ignore[attr-defined]
+    group_in_1 = GroupSpec.from_zarr(group_out, depth=1)
+    assert group_in_1.attributes == tree[""].attributes
     assert group_in_1.members["1"].attributes == tree["/1"].attributes
 
-    group_in_2 = GroupSpec.from_zarr(group_out, depth=2)  # type: ignore[var-annotated]
-    assert group_in_2.members["1"].members["2"].attributes == tree["/1/2"].attributes
-    assert group_in_2.attributes == tree[""].attributes  # type: ignore[attr-defined]
-    assert group_in_2.members["1"].attributes == tree["/1"].attributes  # type: ignore[attr-defined]
+    group_in_2 = GroupSpec.from_zarr(group_out, depth=2)
+    member_1 = group_in_2.members["1"]
+    assert isinstance(member_1, GroupSpec)
+    assert member_1.members["2"].attributes == tree["/1/2"].attributes
+    assert group_in_2.attributes == tree[""].attributes
+    assert member_1.attributes == tree["/1"].attributes
 
-    group_in_3 = GroupSpec.from_zarr(group_out, depth=3)  # type: ignore[var-annotated]
-    assert group_in_3.members["1"].members["2"].members["1"].attributes == tree["/1/2/1"].attributes
-    assert group_in_3.attributes == tree[""].attributes  # type: ignore[attr-defined]
-    assert group_in_3.members["1"].attributes == tree["/1"].attributes  # type: ignore[attr-defined]
-    assert group_in_3.members["1"].members["2"].attributes == tree["/1/2"].attributes  # type: ignore[attr-defined]
+    group_in_3 = GroupSpec.from_zarr(group_out, depth=3)
+    member_1 = group_in_3.members["1"]
+    assert isinstance(member_1, GroupSpec)
+    member_2 = member_1.members["2"]
+    assert isinstance(member_2, GroupSpec)
+    assert member_2.members["1"].attributes == tree["/1/2/1"].attributes
+    assert group_in_3.attributes == tree[""].attributes
+    assert member_1.attributes == tree["/1"].attributes
+    assert member_2.attributes == tree["/1/2"].attributes
 
 
 @pytest.mark.parametrize(("dtype_example"), DTYPE_EXAMPLES_V2, ids=str)
@@ -560,7 +579,7 @@ def test_arrayspec_from_zarr(dtype_example: DTypeExample) -> None:
     Test that deserializing an ArraySpec from a zarr python store works as expected.
     """
     zarr = pytest.importorskip("zarr")
-    store = {}
+    store: dict[str, Any] = {}
     data_type = dtype_example.name
     if ZARR_PYTHON_VERSION >= Version("3.1.0") and data_type == "|O":
         pytest.skip(reason="Data type inference with an object dtype will fail in zarr>=3.1.0")
@@ -584,14 +603,14 @@ def test_arrayspec_from_zarr(dtype_example: DTypeExample) -> None:
 def test_mix_v3_v2_fails() -> None:
     from pydantic_zarr.v3 import ArraySpec as ArraySpecv3
 
-    members_flat = {"/a": ArraySpecv3.from_array(np.ones(1))}
+    members_flat: dict[str, Any] = {"/a": ArraySpecv3.from_array(np.ones(1))}
     with pytest.raises(
         ValueError,
         match=re.escape(
             "Value at '/a' is not a v2 ArraySpec or GroupSpec (got type(value)=<class 'pydantic_zarr.v3.ArraySpec'>)"
         ),
     ):
-        GroupSpec.from_flat(members_flat)  # type: ignore[arg-type]
+        GroupSpec.from_flat(members_flat)
 
 
 @pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr-python is not installed")
@@ -613,16 +632,18 @@ def test_typed_members() -> None:
         y: ArraySpec
 
     class DatasetGroup(GroupSpec):
-        members: DatasetMembers
+        # Narrowing `members` to a TypedDict is the point of this test; mypy treats it as an
+        # incompatible override of the base `Mapping[str, ArraySpec | GroupSpec]` field.
+        members: DatasetMembers  # type: ignore[assignment]
 
     class ExpectedMembers(TypedDict):
         r10m: DatasetGroup
         r20m: DatasetGroup
 
     class ExpectedGroup(GroupSpec):
-        members: ExpectedMembers
+        members: ExpectedMembers  # type: ignore[assignment]
 
-    flat = {
+    flat: dict[str, ArraySpec | BaseGroupSpec] = {
         "": BaseGroupSpec(attributes={}),
         "/r10m": BaseGroupSpec(attributes={}),
         "/r20m": BaseGroupSpec(attributes={}),
@@ -632,7 +653,7 @@ def test_typed_members() -> None:
         "/r20m/y": array1d,
     }
 
-    zg = GroupSpec.from_flat(flat).to_zarr({}, path="")
+    zg = GroupSpec.from_flat(flat).to_zarr(cast("Store", {}), path="")
     ExpectedGroup.from_zarr(zg)
 
 
