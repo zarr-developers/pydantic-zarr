@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 import pytest
 
 from pydantic_zarr.core import ensure_member_name, json_eq, model_like, tuplify_json
 from pydantic_zarr.v2 import GroupSpec as GroupSpecV2
 from pydantic_zarr.v3 import GroupSpec as GroupSpecV3
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 @pytest.mark.parametrize("data", ["/", "///", "a/b/", "a/b/vc"])
@@ -23,7 +28,7 @@ def test_parse_str_no_path(data: str) -> None:
         ([], ()),
     ],
 )
-def test_tuplify_json(input_obj: object, expected_output: object) -> None:
+def test_tuplify_json(input_obj: Mapping[str, Any] | list[Any], expected_output: object) -> None:
     """
     Test that tuplify_json converts lists to tuples, with recursion inside sequences
     and dictionaries.

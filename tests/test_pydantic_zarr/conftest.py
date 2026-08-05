@@ -4,6 +4,7 @@ import warnings
 from dataclasses import dataclass
 from importlib.metadata import version
 from importlib.util import find_spec
+from typing import Any
 
 from packaging.version import Version
 
@@ -75,18 +76,20 @@ else:
         RawBytes,
         Structured,
         TimeDelta64,
+        ZDType,
         data_type_registry,
     )
 
     v2_examples: list[DTypeExample] = []
     v3_examples: list[DTypeExample] = []
+    dt: ZDType[Any, Any]
     for dtype_cls in data_type_registry.contents.values():
         if dtype_cls in (DateTime64, TimeDelta64):
             dt = dtype_cls(unit="s", scale_factor=10)
         elif dtype_cls in (FixedLengthUTF32, RawBytes, NullTerminatedBytes):
             dt = dtype_cls(length=10)
         elif issubclass(dtype_cls, Structured):
-            dt = dtype_cls(fields=[("a", Int32()), ("b", Float16())])
+            dt = dtype_cls(fields=(("a", Int32()), ("b", Float16())))
         else:
             dt = dtype_cls()
 

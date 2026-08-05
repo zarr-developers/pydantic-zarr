@@ -97,7 +97,8 @@ deploy = "mkdocs gh-deploy"
 test = "pytest tests/test_docs"
 
 [tool.hatch.envs.types]
-extra-dependencies = ["mypy>=1.0.0", "pydantic"]
+dependency-groups = ["test"]
+extra-dependencies = ["mypy==2.3.0"]
 [tool.hatch.envs.types.scripts]
 check = "mypy --install-types --non-interactive {args:src/pydantic_zarr tests}"
 
@@ -226,6 +227,7 @@ filterwarnings = [
 [tool.repo-review]
 ignore = [
     "PC111",  # black formatting for docs, not sure if want,
+    "PC140",  # mypy runs via the `types` hatch env and the typecheck CI job, not pre-commit
     "PC180",  # markdown formatter, no thanks
     "RTD100", # read the docs, no thanks,
     "RTD101", # read the docs, no thanks
