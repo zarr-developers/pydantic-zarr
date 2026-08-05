@@ -21,17 +21,10 @@ repos:
     hooks:
     - id: check-yaml
     - id: trailing-whitespace
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.15.0
-    hooks:
-      - id: mypy
-        files: src
-        additional_dependencies:
-          - pytest
-          - pydantic>2.0.0
-          - numpy
-          - zarr>=3.1.0
-          - numcodecs
+  # NOTE: mypy is deliberately not a pre-commit hook. Type checking runs via the `types`
+  # hatch environment (`hatch run types:check`, or `just typecheck`), which is also what the
+  # `typecheck` CI job runs. Keeping a single entry point means the mypy version and the
+  # dependencies being type-checked against cannot drift from what the tests actually use.
   - repo: https://github.com/scientific-python/cookie
     rev: 2025.01.22
     hooks:
