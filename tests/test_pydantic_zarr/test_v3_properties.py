@@ -17,15 +17,19 @@ between the implementations, not correctness against hand-written answers.
 from __future__ import annotations
 
 import importlib.util
+import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
+from packaging.version import Version
 from pydantic import ValidationError
 
 from pydantic_zarr.core import tuplify_json
 from pydantic_zarr.v3 import ArraySpec, GroupSpec
+
+from .conftest import ZARR_PYTHON_VERSION
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -35,6 +39,10 @@ ZARR_AVAILABLE = importlib.util.find_spec("zarr") is not None
 PROPERTY_SETTINGS = settings(
     max_examples=75,
     deadline=None,
+    # one deterministic run per test: every CI matrix cell checks the same
+    # examples, so a failure reproduces everywhere instead of depending on
+    # which cell drew the failing seed
+    derandomize=True,
     # the strategies are module-level and stateless; the suppression keeps
     # hypothesis from flagging slow first-example data generation on CI
     suppress_health_check=[HealthCheck.too_slow],
@@ -124,7 +132,14 @@ def test_zarr_generated_metadata_accepted(data: st.DataObject) -> None:
     from zarr.testing.strategies import array_metadata
 
     meta = data.draw(array_metadata(zarr_formats=st.just(3)))
-    document = tuplify_json(meta.to_dict())
+    if ZARR_PYTHON_VERSION < Version("3.1.0"):
+        # zarr 3.0's to_dict returns non-JSON values (e.g. the DataType enum
+        # for data_type); encode through its JSON encoder, as from_zarr does
+        from zarr.core.metadata.v3 import V3JsonEncoder
+
+        document = tuplify_json(json.loads(json.dumps(meta.to_dict(), cls=V3JsonEncoder)))
+    else:
+        document = tuplify_json(meta.to_dict())
     spec: ArraySpec[Any] = ArraySpec(**document)
     assert ArraySpec(**spec.model_dump()) == spec
     assert spec.like(spec)

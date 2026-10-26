@@ -160,7 +160,12 @@ def parse_dtype_v3(dtype: npt.DTypeLike | Mapping[str, object]) -> Mapping[str, 
     """
     if isinstance(dtype, str | Mapping):
         return dtype
-    parsed = np.dtype(dtype)
+    try:
+        parsed = np.dtype(dtype)
+    except TypeError as e:
+        # raise ValueError so pydantic reports this as a validation error
+        # instead of letting numpy's TypeError escape the validator
+        raise ValueError(f"Unsupported dtype: {dtype!r}") from e
     if parsed.kind in ("M", "m"):
         # numpy time dtypes take the named-configuration form in Zarr V3. These are
         # handled outside the match statement because numpy's stubs reject the
