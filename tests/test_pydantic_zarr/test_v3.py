@@ -766,42 +766,53 @@ def test_typevar_defaults() -> None:
 
 
 @pytest.mark.parametrize(
-    ("method", "value", "field"),
+    ("field", "value"),
     [
-        ("with_attributes", {"new": True}, "attributes"),
-        ("with_shape", (8, 8), "shape"),
+        ("attributes", {"new": True}),
+        ("shape", (8, 8)),
         # float64 keeps the base spec's "NaN" fill value valid for the new dtype
-        ("with_data_type", "float64", "data_type"),
-        (
-            "with_chunk_grid",
-            {"name": "regular", "configuration": {"chunk_shape": (4, 4)}},
-            "chunk_grid",
-        ),
-        (
-            "with_chunk_key_encoding",
-            {"name": "v2", "configuration": {"separator": "."}},
-            "chunk_key_encoding",
-        ),
-        ("with_fill_value", "Infinity", "fill_value"),
-        ("with_codecs", ({"name": "bytes", "configuration": {"endian": "big"}},), "codecs"),
-        ("with_storage_transformers", (), "storage_transformers"),
-        ("with_dimension_names", ("y", "x"), "dimension_names"),
+        ("data_type", "float64"),
+        ("chunk_grid", {"name": "regular", "configuration": {"chunk_shape": (4, 4)}}),
+        ("chunk_key_encoding", {"name": "v2", "configuration": {"separator": "."}}),
+        ("fill_value", "Infinity"),
+        # the endian configuration keeps the bytes codec valid for a multi-byte dtype
+        ("codecs", ({"name": "bytes", "configuration": {"endian": "big"}},)),
+        ("storage_transformers", ()),
+        ("dimension_names", ("y", "x")),
     ],
 )
-def test_with_builders(method: str, value: object, field: str) -> None:
-    """Every `with_*` builder returns a revalidated copy with the one new field."""
+def test_update(field: str, value: object) -> None:
+    """`update` returns a revalidated copy with the new field, everything else unchanged."""
     spec: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
-    built = getattr(spec, method)(value)
+    built = spec.update(**{field: value})  # type: ignore[arg-type]
     assert getattr(built, field) == value
-    # everything else is unchanged
     assert built.model_dump(exclude={field}) == spec.model_dump(exclude={field})
 
 
-def test_with_builders_revalidate() -> None:
-    """A `with_*` builder revalidates: an invalid new field is refused."""
+def test_update_atomic() -> None:
+    """Correlated fields change together in one validation pass."""
+    spec: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
+    built = spec.update(
+        shape=(8, 8, 8),
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (2, 2, 2)}},
+        dimension_names=("z", "y", "x"),
+    )
+    assert built.shape == (8, 8, 8)
+    assert built.dimension_names == ("z", "y", "x")
+
+
+def test_update_revalidates() -> None:
+    """`update` revalidates: an invalid change is refused."""
     spec: AnyArraySpec = ArraySpec(**_v3_array_kwargs(dimension_names=("a", "b")))
     with pytest.raises(ValidationError, match="dimension names"):
-        spec.with_shape((1, 2, 3))
+        spec.update(shape=(1, 2, 3))
+
+
+def test_update_unknown_field() -> None:
+    """A change naming a field the model does not have is refused."""
+    spec: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
+    with pytest.raises(ValidationError, match="bogus"):
+        spec.update(bogus=1)  # type: ignore[call-arg]
 
 
 def test_base_group_spec() -> None:
@@ -825,7 +836,7 @@ def test_base_group_spec() -> None:
     base = BaseGroupSpec(attributes={"a": 1})
     assert base.like(outer)  # members do not participate
     assert not base.like(GroupSpec(attributes={"a": 2}, members={}))
-    assert base.with_attributes({"a": 2}).attributes == {"a": 2}
+    assert base.update(attributes={"a": 2}).attributes == {"a": 2}
 
 
 @pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr is required for this test")

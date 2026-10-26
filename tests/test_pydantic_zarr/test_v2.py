@@ -723,30 +723,30 @@ def test_typevar_defaults_v2() -> None:
 
 
 @pytest.mark.parametrize(
-    ("method", "value", "field"),
+    ("field", "value"),
     [
-        ("with_attributes", {"new": True}, "attributes"),
-        ("with_shape", (8,), "shape"),
-        ("with_chunks", (4,), "chunks"),
-        ("with_fill_value", 1, "fill_value"),
-        ("with_order", "F", "order"),
-        ("with_filters", None, "filters"),
-        ("with_dimension_separator", ".", "dimension_separator"),
-        ("with_compressor", None, "compressor"),
+        ("attributes", {"new": True}),
+        ("shape", (8,)),
+        ("chunks", (4,)),
+        ("fill_value", 1),
+        ("order", "F"),
+        ("filters", None),
+        ("dimension_separator", "."),
+        ("compressor", None),
     ],
 )
-def test_with_builders_v2(method: str, value: object, field: str) -> None:
-    """Every v2 `with_*` builder returns a revalidated copy with the one new field."""
+def test_update_v2(field: str, value: object) -> None:
+    """The v2 `update` returns a revalidated copy with the new field, everything else unchanged."""
     spec: AnyArraySpec = ArraySpec(shape=(4,), dtype="uint8", chunks=(2,), attributes={})
-    built = getattr(spec, method)(value)
+    built = spec.update(**{field: value})  # type: ignore[arg-type]
     assert getattr(built, field) == value
     assert built.model_dump(exclude={field}) == spec.model_dump(exclude={field})
 
 
-def test_with_dtype_v2() -> None:
-    """`with_dtype` routes through parse_dtype_v2, accepting numpy dtypes."""
+def test_update_dtype_v2() -> None:
+    """A dtype change routes through parse_dtype_v2, accepting numpy dtypes."""
     spec: AnyArraySpec = ArraySpec(shape=(4,), dtype="uint8", chunks=(2,), attributes={})
-    assert spec.with_dtype(np.dtype("float64")).dtype == "<f8"
+    assert spec.update(dtype=np.dtype("float64")).dtype == "<f8"
 
 
 def test_base_group_spec_v2() -> None:
