@@ -775,3 +775,17 @@ def test_narrowing_helpers_v2() -> None:
     assert is_base_group_spec(base)
     assert is_base_group_spec(group)
     assert not is_base_group_spec(array)
+
+
+def test_member_name_validation_survives_narrowing_v2() -> None:
+    """
+    The v2 member-name check is a model validator, so a subclass that narrows
+    the `members` annotation cannot drop it.
+    """
+
+    class Narrowed(GroupSpec):
+        members: dict[str, ArraySpec]  # type: ignore[assignment]
+
+    array: AnyArraySpec = ArraySpec(shape=(4,), dtype="uint8", chunks=(2,), attributes={})
+    with pytest.raises(ValidationError, match="/"):
+        Narrowed(attributes={}, members={"a/b": array})

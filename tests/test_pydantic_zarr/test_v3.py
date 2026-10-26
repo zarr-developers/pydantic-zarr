@@ -870,3 +870,43 @@ def test_narrowing_helpers() -> None:
     assert is_base_group_spec(base)
     assert is_base_group_spec(group)
     assert not is_base_group_spec(array)
+
+
+def test_typed_members() -> None:
+    """
+    A subclass can declare its members as a closed `TypedDict` of specs, so
+    the shape of the hierarchy is enforced: member values are validated into
+    specs, an undeclared member name is refused, and a missing required
+    member is refused.
+    """
+    from typing_extensions import TypedDict
+
+    array: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
+
+    class Members(TypedDict, closed=True):
+        r10m: ArraySpec
+        r20m: ArraySpec
+
+    class Measurements(GroupSpec):
+        members: Members  # type: ignore[assignment]
+
+    group = Measurements(attributes={}, members={"r10m": array, "r20m": array.model_dump()})
+    assert isinstance(group.members["r20m"], ArraySpec)
+    with pytest.raises(ValidationError, match="extra"):
+        Measurements(attributes={}, members={"r10m": array, "r20m": array, "extra": array})
+    with pytest.raises(ValidationError, match="r20m"):
+        Measurements(attributes={}, members={"r10m": array})
+
+
+def test_member_name_validation_survives_narrowing() -> None:
+    """
+    Member names are validated by a model validator, so a subclass that
+    narrows the `members` annotation cannot drop the node-name rules.
+    """
+
+    class Narrowed(GroupSpec):
+        members: dict[str, ArraySpec]  # type: ignore[assignment]
+
+    array: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
+    with pytest.raises(ValidationError, match="member name"):
+        Narrowed(attributes={}, members={"__reserved": array})

@@ -23,7 +23,7 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
-from pydantic import AfterValidator, BaseModel, BeforeValidator, ValidationInfo, model_validator
+from pydantic import BaseModel, BeforeValidator, ValidationInfo, model_validator
 from typing_extensions import TypedDict, TypeIs, TypeVar
 from zarr_metadata import (
     DefaultChunkKeyEncodingMetadata,
@@ -767,7 +767,19 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         must inherit from either ArraySpec or GroupSpec.
     """
 
-    members: Annotated[Mapping[str, TItem] | None, AfterValidator(ensure_member_names_v3)] = {}
+    members: Mapping[str, TItem] | None = {}
+
+    @model_validator(mode="after")
+    def validate_member_names(self) -> Self:
+        """
+        Validate member names as Zarr V3 node names.
+
+        This runs as a model validator rather than field metadata so that a
+        subclass narrowing the `members` annotation (for example to a closed
+        `TypedDict` of members) cannot drop it.
+        """
+        ensure_member_names_v3(self.members)
+        return self
 
     @override
     def update(self, **changes: Unpack[GroupSpecUpdate]) -> Self:  # type: ignore[override]

@@ -23,7 +23,7 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
-from pydantic import AfterValidator, BaseModel, field_validator, model_validator
+from pydantic import BaseModel, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
 from typing_extensions import TypedDict, TypeIs, TypeVar
 from zarr_metadata import ZarrV2ArrayDimensionSeparator, ZarrV2ArrayOrder
@@ -614,7 +614,19 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         are either `ArraySpec` or `GroupSpec`.
     """
 
-    members: Annotated[Mapping[str, TItem] | None, AfterValidator(ensure_key_no_path)] = {}
+    members: Mapping[str, TItem] | None = {}
+
+    @model_validator(mode="after")
+    def validate_member_names(self) -> Self:
+        """
+        Validate member names (no ``"/"``, not empty, not ``"."``/``".."``).
+
+        This runs as a model validator rather than field metadata so that a
+        subclass narrowing the `members` annotation (for example to a closed
+        `TypedDict` of members) cannot drop it.
+        """
+        ensure_key_no_path(self.members)
+        return self
 
     @override
     def update(self, **changes: Unpack[GroupSpecUpdate]) -> Self:  # type: ignore[override]
