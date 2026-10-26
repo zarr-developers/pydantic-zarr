@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
 from collections.abc import Mapping
 from importlib.metadata import version
@@ -21,9 +22,13 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
-from pydantic import AfterValidator, BaseModel, BeforeValidator, model_validator
+from pydantic import AfterValidator, BaseModel, BeforeValidator, ValidationInfo, model_validator
 from typing_extensions import TypedDict
+from zarr_metadata import MetadataValidationError
+from zarr_metadata.model import ZarrV3ArrayMetadata as ZarrV3ArrayMetadataModel
 
+from pydantic_zarr._metadata import CONTEXT_KEY as CONTEXT_KEY
+from pydantic_zarr._metadata import format_problems, scope_from_context
 from pydantic_zarr.core import (
     IncEx,
     StrictBase,
@@ -41,6 +46,7 @@ if TYPE_CHECKING:
     import zarr
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
+    from zarr_metadata.v3.definition import ZarrV3Context
 
 
 type TBaseAttr = Mapping[str, object] | BaseModel
@@ -144,12 +150,29 @@ class NodeSpec(StrictBase):
 
 def parse_dtype_v3(dtype: npt.DTypeLike | Mapping[str, object]) -> Mapping[str, object] | str:
     """
-    Todo: refactor this when the zarr python dtypes work is released
+    Convert a numpy data type to its Zarr V3 metadata form.
+
+    Strings and mappings pass through unchanged; they are validated later as
+    part of the whole metadata document. A numpy data type maps to its Zarr V3
+    name, or, for ``datetime64`` / ``timedelta64``, to the named configuration
+    object the Zarr V3 form of those data types requires.
     """
     if isinstance(dtype, str | Mapping):
         return dtype
+    parsed = np.dtype(dtype)
+    if parsed.kind in ("M", "m"):
+        # numpy time dtypes take the named-configuration form in Zarr V3. These are
+        # handled outside the match statement because numpy's stubs reject the
+        # DateTime64DType / TimeDelta64DType classes in class patterns.
+        unit, scale_factor = np.datetime_data(
+            cast("np.dtype[np.datetime64 | np.timedelta64]", parsed)
+        )
+        name = "numpy.datetime64" if parsed.kind == "M" else "numpy.timedelta64"
+        return {"name": name, "configuration": {"unit": unit, "scale_factor": scale_factor}}
     else:
-        match np.dtype(dtype):
+        match parsed:
+            case np.dtypes.BoolDType():
+                return "bool"
             case np.dtypes.Int8DType():
                 return "int8"
             case np.dtypes.Int16DType():
@@ -178,6 +201,27 @@ def parse_dtype_v3(dtype: npt.DTypeLike | Mapping[str, object]) -> Mapping[str, 
                 return "complex128"
             case _:
                 raise ValueError(f"Unsupported dtype: {dtype}")
+
+
+def canonicalize_fill_value(fill_value: object) -> object:
+    """
+    Normalize a fill value to the form the Zarr V3 spec writes in JSON.
+
+    Numpy scalars become the equivalent Python scalars, and non-finite floats
+    become the string forms the spec requires (``"NaN"``, ``"Infinity"``,
+    ``"-Infinity"``), since a metadata document holds only finite JSON numbers.
+    Sequences (complex pairs, raw byte values) are normalized element-wise.
+    Everything else passes through unchanged.
+    """
+    if isinstance(fill_value, np.generic):
+        fill_value = fill_value.item()
+    if isinstance(fill_value, float) and not math.isfinite(fill_value):
+        if math.isnan(fill_value):
+            return "NaN"
+        return "Infinity" if fill_value > 0 else "-Infinity"
+    if isinstance(fill_value, (tuple, list)):
+        return tuple(canonicalize_fill_value(item) for item in fill_value)
+    return fill_value
 
 
 DTypeStr = Annotated[str, BeforeValidator(parse_dtype_v3)]
@@ -219,14 +263,12 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     attributes: TAttr
     shape: tuple[int, ...]
     data_type: DTypeLike
-    chunk_grid: RegularChunking  # todo: validate this against shape
-    chunk_key_encoding: (
-        DefaultChunkKeyEncoding | V2ChunkKeyEncoding
-    )  # todo: validate this against shape
-    fill_value: FillValue  # todo: validate this against the data type
+    chunk_grid: RegularChunking
+    chunk_key_encoding: DefaultChunkKeyEncoding | V2ChunkKeyEncoding
+    fill_value: Annotated[FillValue, BeforeValidator(canonicalize_fill_value)]
     codecs: CodecTuple
     storage_transformers: tuple[AnyNamedConfig, ...] = ()
-    dimension_names: tuple[str | None, ...] | None = None  # todo: validate this against shape
+    dimension_names: tuple[str | None, ...] | None = None
 
     @model_validator(mode="after")
     def validate_dimension_names(self) -> Self:
@@ -238,6 +280,42 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             )
             raise ValueError(msg)
         return self
+
+    @model_validator(mode="after")
+    def validate_metadata_document(self, info: ValidationInfo) -> Self:
+        """
+        Validate this spec as a Zarr V3 array metadata document, via `zarr-metadata`.
+
+        The document assembled from this spec's fields is read in a scope:
+        the fill value is judged against the data type, the chunk grid against
+        the shape, and the codecs as a pipeline, each extension point by the
+        definition that claims its name. A name nothing in the scope claims is
+        left unjudged, so unknown extensions pass; a claimed name with an
+        invalid configuration is refused. The scope comes from the pydantic
+        validation context (a `zarr_metadata` `ZarrV3Context`, directly or
+        under the key `pydantic_zarr.v3.CONTEXT_KEY`), and defaults to
+        `zarr_metadata`'s `CORE_AND_EXTENSIONS`.
+
+        The `attributes` field is not part of this check: its type and
+        contents are governed by this class's `TAttr` parameter alone.
+        """
+        self._canonical_document(context=scope_from_context(info.context))
+        return self
+
+    def _canonical_document(
+        self, *, context: ZarrV3Context | None = None
+    ) -> ZarrV3ArrayMetadataModel:
+        """
+        This spec, attributes excluded, as a validated `zarr-metadata` document model.
+
+        Raises `ValueError` listing every problem when the document is invalid.
+        """
+        document = self.model_dump()
+        document["attributes"] = {}
+        try:
+            return ZarrV3ArrayMetadataModel.from_json(document, context=context)
+        except MetadataValidationError as e:
+            raise ValueError(format_problems(e)) from e
 
     def model_dump(
         self,
@@ -323,7 +401,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
         return cls(
             shape=array.shape,
-            data_type=str(array.dtype),
+            data_type=parse_dtype_v3(array.dtype),
             chunk_grid=chunk_grid_actual,
             attributes=attributes_actual,
             chunk_key_encoding=chunk_key_actual,
@@ -501,6 +579,16 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             other_parsed = ArraySpec.from_zarr(other)
         else:
             other_parsed = other  # type: ignore[assignment]
+
+        if include is None and exclude is None:
+            # Compare the metadata documents by meaning rather than spelling:
+            # `zarr-metadata` canonicalizes what it interprets, so a fill value
+            # written "NaN" equals one written "0x7fc00000", and a codec equals
+            # itself with a no-op configuration key dropped. Attributes are not
+            # interpreted, so they are compared separately, as plain fields.
+            return self._canonical_document() == other_parsed._canonical_document() and model_like(
+                self, other_parsed, include={"attributes"}
+            )
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
@@ -1041,7 +1129,7 @@ def auto_fill_value(data: object) -> FillValue:
         return data.fill_value
     elif hasattr(data, "dtype"):
         kind = np.dtype(data.dtype).kind
-        if kind == "?":
+        if kind == "b":
             return False
         elif kind in ["i", "u"]:
             return 0
@@ -1049,6 +1137,9 @@ def auto_fill_value(data: object) -> FillValue:
             return "NaN"
         elif kind == "c":
             return ("NaN", "NaN")
+        elif kind in ["M", "m"]:
+            # NaT, as the Zarr V3 spec writes it: the minimum int64 value.
+            return int(np.iinfo(np.int64).min)
         else:
             raise ValueError(f"Cannot determine default fill value for data type {kind}")
     raise ValueError("Cannot determine default data type for object without shape attribute.")

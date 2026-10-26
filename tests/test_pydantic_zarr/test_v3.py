@@ -72,7 +72,10 @@ def test_serialize_deserialize() -> None:
         data_type="float64",
         chunk_grid=NamedConfig(name="regular", configuration={"chunk_shape": [1000, 100]}),
         chunk_key_encoding=NamedConfig(name="default", configuration={"separator": "/"}),
-        codecs=[NamedConfig(name="GZip", configuration={"level": 1})],
+        codecs=[
+            NamedConfig(name="bytes", configuration={"endian": "little"}),
+            NamedConfig(name="gzip", configuration={"level": 1}),
+        ],
         fill_value="NaN",
         storage_transformers=[],
     )
@@ -378,7 +381,10 @@ def test_v2_chunk_key_encoding() -> None:
         data_type="float64",
         chunk_grid=NamedConfig(name="regular", configuration={"chunk_shape": [1000, 100]}),
         chunk_key_encoding=NamedConfig(name="v2", configuration={"separator": "."}),
-        codecs=[NamedConfig(name="GZip", configuration={"level": 1})],
+        codecs=[
+            NamedConfig(name="bytes", configuration={"endian": "little"}),
+            NamedConfig(name="gzip", configuration={"level": 1}),
+        ],
         fill_value="NaN",
         storage_transformers=[],
     )
@@ -479,3 +485,225 @@ def test_parse_dtype_v3_numpy(dtype: np.dtype, expected: str) -> None:
     causing ValueError to be raised for float64 and complex64 inputs.
     """
     assert parse_dtype_v3(dtype) == expected
+
+
+def _spec_kwargs(**overrides: object) -> dict[str, Any]:
+    """Keyword arguments for a minimal valid float32 ArraySpec, with overrides."""
+    kwargs: dict[str, Any] = {
+        "attributes": {},
+        "shape": (4, 4),
+        "data_type": "float32",
+        "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (2, 2)}},
+        "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
+        "fill_value": "NaN",
+        "codecs": ({"name": "bytes", "configuration": {"endian": "little"}},),
+    }
+    kwargs.update(overrides)
+    return kwargs
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        # a plain core document
+        {},
+        # integer dtype with an integer fill value
+        {"data_type": "int8", "fill_value": 0},
+        # a non-finite float fill value given as a float is canonicalized and accepted
+        {"fill_value": float("nan")},
+        # a hexadecimal float fill value
+        {"fill_value": "0x7fc00000"},
+        # a datetime dtype in its named-configuration form, with an integer fill value
+        {
+            "data_type": {
+                "name": "numpy.datetime64",
+                "configuration": {"unit": "ns", "scale_factor": 1},
+            },
+            "fill_value": -(2**63),
+        },
+        # a sharding codec holding a nested pipeline
+        {
+            "codecs": (
+                {
+                    "name": "sharding_indexed",
+                    "configuration": {
+                        "chunk_shape": (1, 1),
+                        "codecs": ({"name": "bytes", "configuration": {"endian": "little"}},),
+                        "index_codecs": (
+                            {"name": "bytes", "configuration": {"endian": "little"}},
+                            {"name": "crc32c"},
+                        ),
+                        "index_location": "end",
+                    },
+                },
+            )
+        },
+        # a codec name nothing in the scope claims is left unjudged
+        {
+            "codecs": (
+                {"name": "bytes", "configuration": {"endian": "little"}},
+                {"name": "a-codec-nobody-claims", "configuration": {"whatever": True}},
+            )
+        },
+    ],
+    ids=str,
+)
+def test_metadata_document_validation_accepts(overrides: dict[str, object]) -> None:
+    """
+    ArraySpec accepts specs whose fields assemble into a valid Zarr V3 metadata
+    document, across data types, fill value spellings, and codec pipelines.
+    """
+    spec: AnyArraySpec = ArraySpec(**_spec_kwargs(**overrides))
+    # the document round-trips through model validation unchanged
+    assert ArraySpec(**spec.model_dump()) == spec
+
+
+def test_metadata_document_validation_fill_value_dtype_mismatch() -> None:
+    """A fill value that the named data type refuses is a validation error."""
+    with pytest.raises(ValidationError, match="fill_value"):
+        ArraySpec(**_spec_kwargs(data_type="int8", fill_value="NaN"))
+
+
+def test_metadata_document_validation_chunk_grid_rank_mismatch() -> None:
+    """A chunk shape with the wrong number of dimensions is a validation error."""
+    with pytest.raises(ValidationError, match="chunk length per dimension"):
+        ArraySpec(
+            **_spec_kwargs(
+                chunk_grid={"name": "regular", "configuration": {"chunk_shape": (2, 2, 2)}}
+            )
+        )
+
+
+def test_metadata_document_validation_pipeline_shape() -> None:
+    """A codec pipeline with two array -> bytes codecs is a validation error."""
+    with pytest.raises(ValidationError, match="array -> bytes"):
+        ArraySpec(
+            **_spec_kwargs(
+                codecs=(
+                    {"name": "bytes", "configuration": {"endian": "little"}},
+                    {"name": "bytes", "configuration": {"endian": "little"}},
+                )
+            )
+        )
+
+
+def test_metadata_document_validation_invalid_extension_name() -> None:
+    """A codec whose name is not a legal extension name is a validation error."""
+    with pytest.raises(ValidationError, match="extension name"):
+        ArraySpec(
+            **_spec_kwargs(
+                codecs=(
+                    {"name": "bytes", "configuration": {"endian": "little"}},
+                    {"name": "Not/A/Name"},
+                )
+            )
+        )
+
+
+def test_metadata_document_validation_claimed_codec_bad_config() -> None:
+    """A codec the scope claims, with a configuration its definition refuses, is refused."""
+    with pytest.raises(ValidationError, match=r"codecs\.1\.configuration\.level"):
+        ArraySpec(
+            **_spec_kwargs(
+                codecs=(
+                    {"name": "bytes", "configuration": {"endian": "little"}},
+                    {"name": "gzip", "configuration": {"level": "very"}},
+                )
+            )
+        )
+
+
+def test_metadata_document_validation_scope_from_context() -> None:
+    """
+    The validation scope comes from the pydantic validation context: in a scope
+    that claims a codec name, an invalid configuration is refused; in one that
+    does not, the same codec is left unjudged and the spec is accepted.
+    """
+    from zarr_metadata.v3.definition import CORE, CORE_AND_EXTENSIONS
+
+    from pydantic_zarr._metadata import CONTEXT_KEY
+
+    document = {
+        "zarr_format": 3,
+        "node_type": "array",
+        **_spec_kwargs(
+            codecs=(
+                {"name": "bytes", "configuration": {"endian": "little"}},
+                # claimed by the zarr-extensions scope, with an unknown config key
+                {"name": "scale_offset", "configuration": {"bogus": 1}},
+            )
+        ),
+    }
+    # CORE does not claim scale_offset, so the field is unjudged and the spec valid
+    spec: AnyArraySpec = ArraySpec.model_validate(document, context=CORE)
+    assert spec.codecs[-1]["name"] == "scale_offset"  # type: ignore[index]
+    # the same scope travels under CONTEXT_KEY in a mapping context
+    assert ArraySpec.model_validate(document, context={CONTEXT_KEY: CORE}) == spec
+    # CORE_AND_EXTENSIONS claims it and refuses the configuration
+    with pytest.raises(ValidationError, match="scale_offset|bogus"):
+        ArraySpec.model_validate(document, context={CONTEXT_KEY: CORE_AND_EXTENSIONS})
+
+
+def test_metadata_document_validation_context_key_type_error() -> None:
+    """A validation context holding a non-scope under CONTEXT_KEY is a TypeError."""
+    from pydantic_zarr._metadata import CONTEXT_KEY
+
+    document = {"zarr_format": 3, "node_type": "array", **_spec_kwargs()}
+    with pytest.raises(TypeError, match=CONTEXT_KEY):
+        ArraySpec.model_validate(document, context={CONTEXT_KEY: "not a scope"})
+
+
+def test_like_compares_documents_canonically() -> None:
+    """
+    With no include/exclude filters, `like` compares the metadata documents by
+    meaning: two spellings of one float32 NaN fill value are alike, and specs
+    that differ only in attributes are not.
+    """
+    a: AnyArraySpec = ArraySpec(**_spec_kwargs(fill_value="NaN"))
+    b: AnyArraySpec = ArraySpec(**_spec_kwargs(fill_value="0x7fc00000"))
+    assert a.like(b)
+    assert b.like(a)
+    # attributes still participate in the comparison
+    assert not a.like(ArraySpec(**_spec_kwargs(fill_value="NaN", attributes={"x": 1})))
+    # filtered comparisons keep the literal field semantics
+    assert not a.like(b, exclude={"attributes"})
+
+
+@pytest.mark.parametrize(
+    ("dtype", "expected"),
+    [
+        (np.dtype("bool"), "bool"),
+        (
+            np.dtype("datetime64[ns]"),
+            {"name": "numpy.datetime64", "configuration": {"unit": "ns", "scale_factor": 1}},
+        ),
+        (
+            np.dtype("timedelta64[s]"),
+            {"name": "numpy.timedelta64", "configuration": {"unit": "s", "scale_factor": 1}},
+        ),
+    ],
+    ids=str,
+)
+def test_parse_dtype_v3_named_configs(
+    dtype: np.dtype[Any], expected: str | dict[str, object]
+) -> None:
+    """The bool and numpy time dtypes map to their Zarr V3 forms."""
+    assert parse_dtype_v3(dtype) == expected
+
+
+def test_from_array_time_dtype() -> None:
+    """`from_array` handles numpy time dtypes, emitting the named-configuration form."""
+    spec: AnyArraySpec = ArraySpec.from_array(np.zeros((3,), dtype="datetime64[ns]"))
+    assert spec.data_type == {
+        "name": "numpy.datetime64",
+        "configuration": {"unit": "ns", "scale_factor": 1},
+    }
+    assert spec.fill_value == -(2**63)
+
+
+def test_from_array_bool_dtype() -> None:
+    """`from_array` handles bool arrays: previously auto_fill_value checked the dtype
+    char '?' where numpy reports kind 'b', so bool arrays always raised."""
+    spec: AnyArraySpec = ArraySpec.from_array(np.zeros((3,), dtype=bool))
+    assert spec.data_type == "bool"
+    assert spec.fill_value is False
