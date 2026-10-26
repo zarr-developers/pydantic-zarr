@@ -26,13 +26,13 @@ from pydantic import AfterValidator, BaseModel, BeforeValidator, ValidationInfo,
 from typing_extensions import TypedDict
 from zarr_metadata import MetadataValidationError
 from zarr_metadata.model import ZarrV3ArrayMetadata as ZarrV3ArrayMetadataModel
+from zarr_metadata.model import validate_node_name_v3
 
 from pydantic_zarr._metadata import CONTEXT_KEY as CONTEXT_KEY
 from pydantic_zarr._metadata import format_problems, scope_from_context
 from pydantic_zarr.core import (
     IncEx,
     StrictBase,
-    ensure_key_no_path,
     ensure_multiple,
     maybe_node,
     model_like,
@@ -593,6 +593,29 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
 
+def ensure_member_names_v3(data: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+    """
+    Ensure that every key of a members mapping is a valid Zarr V3 node name.
+
+    The node-name rules of the Zarr V3 spec are judged by `zarr-metadata`'s
+    `validate_node_name_v3`: a name holds no ``"/"``, is not composed of
+    periods alone, and does not start with the reserved ``"__"`` prefix.
+    The empty string names the root node, so it is not a valid *member*
+    name and is rejected here as well.
+    """
+    if data is None:
+        return data
+    for key in data:
+        if key == "":
+            msg = 'Invalid member name "": the empty string names the root node'
+            raise ValueError(msg)
+        problems = validate_node_name_v3(key)
+        if problems:
+            msg = "Invalid member name: " + "; ".join(problem.message for problem in problems)
+            raise ValueError(msg)
+    return data
+
+
 class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
     """
     A model of a Zarr Version 3 Group.
@@ -611,7 +634,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
 
     node_type: Literal["group"] = "group"
     attributes: TAttr
-    members: Annotated[Mapping[str, TItem] | None, AfterValidator(ensure_key_no_path)] = {}
+    members: Annotated[Mapping[str, TItem] | None, AfterValidator(ensure_member_names_v3)] = {}
 
     @classmethod
     def from_flat(cls, data: Mapping[str, AnyArraySpec | AnyGroupSpec]) -> Self:

@@ -707,3 +707,27 @@ def test_from_array_bool_dtype() -> None:
     spec: AnyArraySpec = ArraySpec.from_array(np.zeros((3,), dtype=bool))
     assert spec.data_type == "bool"
     assert spec.fill_value is False
+
+
+def test_group_member_names_accepted() -> None:
+    """GroupSpec accepts member names the Zarr V3 node-name rules allow."""
+    array: AnyArraySpec = ArraySpec(**_spec_kwargs())
+    names = ("plain", "with.dots", "with spaces", "ünïcode", "_single_underscore", "0", "a..b")
+    group: AnyGroupSpec = GroupSpec(attributes={}, members=dict.fromkeys(names, array))
+    assert tuple(group.members or {}) == names
+
+
+@pytest.mark.parametrize(
+    "invalid_name",
+    ["", "a/b", ".", "..", "...", "__reserved"],
+    ids=repr,
+)
+def test_group_member_names_rejected(invalid_name: str) -> None:
+    """
+    GroupSpec rejects member names the Zarr V3 node-name rules refuse: the
+    empty string (it names the root node), names holding "/", names composed
+    of periods alone, and names starting with the reserved "__" prefix.
+    """
+    array: AnyArraySpec = ArraySpec(**_spec_kwargs())
+    with pytest.raises(ValidationError, match="member name"):
+        GroupSpec(attributes={}, members={invalid_name: array})
