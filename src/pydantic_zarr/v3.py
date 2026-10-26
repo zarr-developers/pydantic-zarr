@@ -24,9 +24,24 @@ import numpy.typing as npt
 from packaging.version import Version
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ValidationInfo, model_validator
 from typing_extensions import TypedDict
-from zarr_metadata import MetadataValidationError
+from zarr_metadata import (
+    DefaultChunkKeyEncodingMetadata,
+    JSONValue,
+    MetadataValidationError,
+    RegularChunkGridMetadata,
+    V2ChunkKeyEncodingMetadata,
+)
 from zarr_metadata.model import ZarrV3ArrayMetadata as ZarrV3ArrayMetadataModel
 from zarr_metadata.model import validate_node_name_v3
+from zarr_metadata.v3.chunk_grid.regular import RegularChunkGridConfiguration
+from zarr_metadata.v3.chunk_key_encoding.default import (
+    DefaultChunkKeyEncodingConfiguration,
+    DefaultChunkKeyEncodingObject,
+)
+from zarr_metadata.v3.chunk_key_encoding.v2 import (
+    V2ChunkKeyEncodingConfiguration,
+    V2ChunkKeyEncodingObject,
+)
 
 from pydantic_zarr._metadata import CONTEXT_KEY as CONTEXT_KEY
 from pydantic_zarr._metadata import format_problems, scope_from_context
@@ -62,23 +77,14 @@ TItem = TypeVar("TItem", bound=TBaseItem)
 
 NodeType = Literal["group", "array"]
 
-BoolFillValue = bool
-IntFillValue = int
-# todo: introduce a type that represents hexadecimal representations of floats
-FloatFillValue = Literal["Infinity", "-Infinity", "NaN"] | float
-ComplexFillValue = tuple[FloatFillValue, FloatFillValue]
-RawFillValue = tuple[int, ...]
-StructFillValue = Mapping[str, object]
-
-FillValue = (
-    BoolFillValue
-    | IntFillValue
-    | FloatFillValue
-    | ComplexFillValue
-    | RawFillValue
-    | str
-    | StructFillValue
-)
+FillValue = JSONValue
+"""
+The JSON form of a fill value. Which values are valid depends on the array's
+data type, and is judged by that data type's definition when the whole
+metadata document is validated; at the field level any JSON value is a
+fill value. `zarr-metadata` exports per-data-type fill value types
+(``Float32FillValue`` and so on) for callers that want the narrow forms.
+"""
 
 TName = TypeVar("TName", bound=str)
 TConfig = TypeVar("TConfig", bound=Mapping[str, object])
@@ -106,32 +112,27 @@ class AnyNamedConfig(NamedConfig[str, Mapping[str, object]]):
     """
     This class models any Zarr metadata object that takes the form of a
     {"name": ..., "configuration": ...} dict, where the "configuration" key is not required.
+
+    `zarr_metadata.ZarrV3NamedConfigJSON` is this shape's canonical type; this
+    local equivalent exists because that one marks its members `ReadOnly`,
+    which pydantic answers with an advisory warning at every schema build
+    (each parametrization or subclassing of a model would warn).
     """
 
 
 CodecLike = str | AnyNamedConfig
-"""A type modelling the permissible declarations for codecs"""
+"""A codec declaration: an extension name, or a named configuration object."""
 
-
-class RegularChunkingConfig(TypedDict):
-    chunk_shape: tuple[int, ...]
-
-
-RegularChunking = NamedConfig[Literal["regular"], RegularChunkingConfig]
-
-
-class DefaultChunkKeyEncodingConfig(TypedDict):
-    separator: Literal[".", "/"]
-
-
-DefaultChunkKeyEncoding = NamedConfig[Literal["default"], DefaultChunkKeyEncodingConfig]
-
-
-class V2ChunkKeyEncodingConfig(TypedDict):
-    separator: Literal[".", "/"]
-
-
-V2ChunkKeyEncoding = NamedConfig[Literal["v2"], V2ChunkKeyEncodingConfig]
+# The structured Zarr V3 metadata types are defined once, by `zarr-metadata`;
+# the names this module exported before it delegated to that library are kept
+# as aliases. The aliased TypedDicts are *closed*: a member their definition
+# does not declare is rejected rather than silently dropped.
+RegularChunkingConfig = RegularChunkGridConfiguration
+RegularChunking = RegularChunkGridMetadata
+DefaultChunkKeyEncodingConfig = DefaultChunkKeyEncodingConfiguration
+DefaultChunkKeyEncoding = DefaultChunkKeyEncodingObject
+V2ChunkKeyEncodingConfig = V2ChunkKeyEncodingConfiguration
+V2ChunkKeyEncoding = V2ChunkKeyEncodingObject
 
 
 class NodeSpec(StrictBase):
@@ -224,8 +225,8 @@ def canonicalize_fill_value(fill_value: object) -> object:
     return fill_value
 
 
-DTypeStr = Annotated[str, BeforeValidator(parse_dtype_v3)]
-DTypeLike = DTypeStr | AnyNamedConfig
+DTypeLike = Annotated[str | AnyNamedConfig, BeforeValidator(parse_dtype_v3)]
+"""A data type declaration (name or named configuration), accepting numpy data types as input."""
 CodecTuple = Annotated[tuple[CodecLike, ...], BeforeValidator(ensure_multiple)]
 
 
@@ -263,8 +264,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     attributes: TAttr
     shape: tuple[int, ...]
     data_type: DTypeLike
-    chunk_grid: RegularChunking
-    chunk_key_encoding: DefaultChunkKeyEncoding | V2ChunkKeyEncoding
+    chunk_grid: RegularChunkGridMetadata
+    chunk_key_encoding: DefaultChunkKeyEncodingMetadata | V2ChunkKeyEncodingMetadata
     fill_value: Annotated[FillValue, BeforeValidator(canonicalize_fill_value)]
     codecs: CodecTuple
     storage_transformers: tuple[AnyNamedConfig, ...] = ()

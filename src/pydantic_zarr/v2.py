@@ -24,6 +24,7 @@ import numpy.typing as npt
 from packaging.version import Version
 from pydantic import AfterValidator, BaseModel, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
+from zarr_metadata import ZarrV2ArrayDimensionSeparator, ZarrV2ArrayOrder
 
 from pydantic_zarr.core import (
     IncEx,
@@ -62,8 +63,8 @@ FillValue = (
     BoolFillValue | IntFillValue | FloatFillValue | ComplexFillValue | RawFillValue | str | None
 )
 
-DimensionSeparator = Literal[".", "/"]
-MemoryOrder = Literal["C", "F"]
+DimensionSeparator = ZarrV2ArrayDimensionSeparator
+MemoryOrder = ZarrV2ArrayOrder
 
 
 def dictify_codec(value: dict[str, Any] | Codec) -> dict[str, Any]:
