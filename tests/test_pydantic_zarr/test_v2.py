@@ -37,7 +37,9 @@ from packaging.version import Version
 
 from pydantic_zarr.v2 import (
     AnyArraySpec,
+    AnyGroupSpec,
     ArraySpec,
+    BaseGroupSpec,
     GroupSpec,
     auto_attributes,
     auto_chunks,
@@ -48,6 +50,8 @@ from pydantic_zarr.v2 import (
     auto_order,
     from_flat,
     from_zarr,
+    is_array_spec,
+    is_group_spec,
     to_flat,
     to_zarr,
 )
@@ -555,7 +559,7 @@ def test_member_name(data: str) -> None:
                 members={"a": ArraySpec.from_array(np.arange(5), attributes={"foo": 100})},
             ),
             {
-                "": GroupSpec(attributes={"foo": 10}, members=None),
+                "": BaseGroupSpec(attributes={"foo": 10}),
                 "/a": ArraySpec.from_array(np.arange(5), attributes={"foo": 100}),
             },
         ),
@@ -571,8 +575,8 @@ def test_member_name(data: str) -> None:
                 },
             ),
             {
-                "": GroupSpec(attributes={}, members=None),
-                "/a": GroupSpec(attributes={"foo": 10}, members=None),
+                "": BaseGroupSpec(attributes={}),
+                "/a": BaseGroupSpec(attributes={"foo": 10}),
                 "/a/a": ArraySpec.from_array(np.arange(5), attributes={"foo": 100}),
                 "/b": ArraySpec.from_array(np.arange(2), attributes={"foo": 3}),
             },
@@ -649,16 +653,25 @@ def test_from_zarr_depth() -> None:
 
     group_in_2 = GroupSpec.from_zarr(group_out, depth=2)  # type: ignore[var-annotated]
     assert group_in_2.members is not None
-    assert group_in_2.members["1"].members["2"] == tree["/1/2"]
+    sub_2_1 = group_in_2.members["1"]
+    assert is_group_spec(sub_2_1)
+    assert sub_2_1.members is not None
+    assert sub_2_1.members["2"] == tree["/1/2"]
     assert group_in_2.attributes == tree[""].attributes
-    assert group_in_2.members["1"].attributes == tree["/1"].attributes
+    assert sub_2_1.attributes == tree["/1"].attributes
 
     group_in_3 = GroupSpec.from_zarr(group_out, depth=3)  # type: ignore[var-annotated]
     assert group_in_3.members is not None
-    assert group_in_3.members["1"].members["2"].members["1"] == tree["/1/2/1"]
+    sub_3_1 = group_in_3.members["1"]
+    assert is_group_spec(sub_3_1)
+    assert sub_3_1.members is not None
+    sub_3_2 = sub_3_1.members["2"]
+    assert is_group_spec(sub_3_2)
+    assert sub_3_2.members is not None
+    assert sub_3_2.members["1"] == tree["/1/2/1"]
     assert group_in_3.attributes == tree[""].attributes
-    assert group_in_3.members["1"].attributes == tree["/1"].attributes
-    assert group_in_3.members["1"].members["2"].attributes == tree["/1/2"].attributes
+    assert sub_3_1.attributes == tree["/1"].attributes
+    assert sub_3_2.attributes == tree["/1/2"].attributes
 
 
 @pytest.mark.parametrize(("dtype_example"), DTYPE_EXAMPLES_V2, ids=str)
@@ -699,3 +712,66 @@ def test_mix_v3_v2_fails() -> None:
         ),
     ):
         GroupSpec.from_flat(members_flat)
+
+
+def test_typevar_defaults_v2() -> None:
+    """The v2 generic type parameters carry defaults, so the bare class names are usable."""
+    array = ArraySpec(shape=(4,), dtype="uint8", chunks=(2,), attributes={})
+    group = GroupSpec(attributes={"a": 1}, members={"x": array})
+    assert group.members is not None
+    assert tuple(group.members) == ("x",)
+
+
+@pytest.mark.parametrize(
+    ("method", "value", "field"),
+    [
+        ("with_attributes", {"new": True}, "attributes"),
+        ("with_shape", (8,), "shape"),
+        ("with_chunks", (4,), "chunks"),
+        ("with_fill_value", 1, "fill_value"),
+        ("with_order", "F", "order"),
+        ("with_filters", None, "filters"),
+        ("with_dimension_separator", ".", "dimension_separator"),
+        ("with_compressor", None, "compressor"),
+    ],
+)
+def test_with_builders_v2(method: str, value: object, field: str) -> None:
+    """Every v2 `with_*` builder returns a revalidated copy with the one new field."""
+    spec: AnyArraySpec = ArraySpec(shape=(4,), dtype="uint8", chunks=(2,), attributes={})
+    built = getattr(spec, method)(value)
+    assert getattr(built, field) == value
+    assert built.model_dump(exclude={field}) == spec.model_dump(exclude={field})
+
+
+def test_with_dtype_v2() -> None:
+    """`with_dtype` routes through parse_dtype_v2, accepting numpy dtypes."""
+    spec: AnyArraySpec = ArraySpec(shape=(4,), dtype="uint8", chunks=(2,), attributes={})
+    assert spec.with_dtype(np.dtype("float64")).dtype == "<f8"
+
+
+def test_base_group_spec_v2() -> None:
+    """`BaseGroupSpec` models a v2 group without members, and `like` ignores members."""
+    array: AnyArraySpec = ArraySpec(shape=(4,), dtype="uint8", chunks=(2,), attributes={})
+    group: AnyGroupSpec = GroupSpec(attributes={"a": 1}, members={"x": array})
+    base = BaseGroupSpec(attributes={"a": 1})
+    assert base.like(group)
+    assert not base.like(GroupSpec(attributes={"a": 2}, members={}))
+    flat = group.to_flat()
+    assert type(flat[""]) is BaseGroupSpec
+    assert GroupSpec.from_flat(flat) == group
+
+
+def test_narrowing_helpers_v2() -> None:
+    """The v2 narrowing helpers tell flat-hierarchy values apart."""
+    from pydantic_zarr.v2 import is_base_group_spec
+
+    array: AnyArraySpec = ArraySpec(shape=(4,), dtype="uint8", chunks=(2,), attributes={})
+    group: AnyGroupSpec = GroupSpec(attributes={}, members={"a": array})
+    base = BaseGroupSpec(attributes={})
+    assert is_array_spec(array)
+    assert not is_array_spec(group)
+    assert is_group_spec(group)
+    assert not is_group_spec(base)
+    assert is_base_group_spec(base)
+    assert is_base_group_spec(group)
+    assert not is_base_group_spec(array)
