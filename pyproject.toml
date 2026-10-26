@@ -98,9 +98,9 @@ test = "pytest tests/test_docs"
 
 [tool.hatch.envs.types]
 dependency-groups = ["test"]
-extra-dependencies = ["mypy==2.3.0"]
+extra-dependencies = ["pyrefly==1.4.0"]
 [tool.hatch.envs.types.scripts]
-check = "mypy --install-types --non-interactive {args:src/pydantic_zarr tests}"
+check = "pyrefly check {args:}"
 
 [tool.coverage.run]
 source_pkgs = ["pydantic_zarr", "tests"]
@@ -194,17 +194,19 @@ ignore = [
 [tool.ruff.lint.extend-per-file-ignores]
 "tests/**" = ["ANN001", "ANN201", "RUF029", "SIM117", "SIM300"]
 
-[tool.mypy]
-python_version = "3.12"
-ignore_missing_imports = true
-namespace_packages = false
-warn_unreachable = true
-plugins = "pydantic.mypy"
-enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
-strict = true
-# TODO: remove each of these and fix any errors:
-disallow_any_generics = false
-warn_return_any = false
+[tool.pyrefly]
+project-includes = ["src", "tests"]
+search-path = ["src", "tests"]
+python-version = "3.12"
+
+[tool.pyrefly.errors]
+# TODO: enable each of these and fix any errors. They are the pyrefly counterparts
+# of the mypy settings this project ran with before switching
+# (disallow_any_generics = false, warn_return_any = false).
+implicit-any-type-argument = false
+implicit-any-lambda = false
+no-any-return-explicit = false
+no-any-return-implicit = false
 
 [tool.pytest.ini_options]
 minversion = "7"
@@ -226,8 +228,9 @@ filterwarnings = [
 
 [tool.repo-review]
 ignore = [
+    "MY100",  # type checking uses pyrefly, not mypy
     "PC111",  # black formatting for docs, not sure if want,
-    "PC140",  # mypy runs via the `types` hatch env and the typecheck CI job, not pre-commit
+    "PC140",  # type checking (pyrefly) runs via the `types` hatch env and the typecheck CI job, not pre-commit
     "PC180",  # markdown formatter, no thanks
     "RTD100", # read the docs, no thanks,
     "RTD101", # read the docs, no thanks

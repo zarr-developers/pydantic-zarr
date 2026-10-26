@@ -13,6 +13,7 @@ from typing import (
     NotRequired,
     Self,
     TypeVar,
+    cast,
     overload,
 )
 
@@ -380,16 +381,17 @@ class ArraySpec(NodeSpec):
             meta_json = json.loads(json.dumps(array.metadata.to_dict(), cls=V3JsonEncoder))
         else:
             meta_json = array.metadata.to_dict()
+        meta_any = cast("dict[str, Any]", meta_json)
         return cls(
-            attributes=meta_json["attributes"],
+            attributes=meta_any["attributes"],
             shape=array.shape,
-            data_type=meta_json["data_type"],
-            chunk_grid=meta_json["chunk_grid"],
-            chunk_key_encoding=meta_json["chunk_key_encoding"],
-            fill_value=meta_json["fill_value"],
-            codecs=meta_json["codecs"],
-            storage_transformers=meta_json["storage_transformers"],
-            dimension_names=meta_json.get("dimension_names", None),
+            data_type=meta_any["data_type"],
+            chunk_grid=meta_any["chunk_grid"],
+            chunk_key_encoding=meta_any["chunk_key_encoding"],
+            fill_value=meta_any["fill_value"],
+            codecs=meta_any["codecs"],
+            storage_transformers=meta_any["storage_transformers"],
+            dimension_names=meta_any.get("dimension_names", None),
         )
 
     def to_zarr(
@@ -522,7 +524,7 @@ class ArraySpec(NodeSpec):
         ArraySpec
             A copy of this model with a new `attributes` field.
         """
-        return type(self)(**{**self.model_dump(), "attributes": attributes})
+        return type(self).model_validate({**self.model_dump(), "attributes": attributes})
 
     def with_shape(self, shape: tuple[int, ...]) -> Self:
         """
@@ -538,7 +540,7 @@ class ArraySpec(NodeSpec):
         ArraySpec
             A copy of this model with a new `shape` field.
         """
-        return type(self)(**{**self.model_dump(), "shape": shape})
+        return type(self).model_validate({**self.model_dump(), "shape": shape})
 
     def with_data_type(self, data_type: DTypeLike) -> Self:
         """
@@ -554,7 +556,7 @@ class ArraySpec(NodeSpec):
         ArraySpec
             A copy of this model with a new `data_type` field.
         """
-        return type(self)(**{**self.model_dump(), "data_type": data_type})
+        return type(self).model_validate({**self.model_dump(), "data_type": data_type})
 
     def with_chunk_grid(self, chunk_grid: AnyNamedConfig) -> Self:
         """
@@ -570,7 +572,7 @@ class ArraySpec(NodeSpec):
         ArraySpec
             A copy of this model with a new `chunk_grid` field.
         """
-        return type(self)(**{**self.model_dump(), "chunk_grid": chunk_grid})
+        return type(self).model_validate({**self.model_dump(), "chunk_grid": chunk_grid})
 
     def with_chunk_key_encoding(self, chunk_key_encoding: AnyNamedConfig) -> Self:
         """
@@ -586,7 +588,9 @@ class ArraySpec(NodeSpec):
         ArraySpec
             A copy of this model with a new `chunk_key_encoding` field.
         """
-        return type(self)(**{**self.model_dump(), "chunk_key_encoding": chunk_key_encoding})
+        return type(self).model_validate(
+            {**self.model_dump(), "chunk_key_encoding": chunk_key_encoding}
+        )
 
     def with_fill_value(self, fill_value: FillValue) -> Self:
         """
@@ -602,7 +606,7 @@ class ArraySpec(NodeSpec):
         ArraySpec
             A copy of this model with a new `fill_value` field.
         """
-        return type(self)(**{**self.model_dump(), "fill_value": fill_value})
+        return type(self).model_validate({**self.model_dump(), "fill_value": fill_value})
 
     def with_codecs(self, codecs: CodecTuple) -> Self:
         """
@@ -618,7 +622,7 @@ class ArraySpec(NodeSpec):
         ArraySpec
             A copy of this model with a new `codecs` field.
         """
-        return type(self)(**{**self.model_dump(), "codecs": codecs})
+        return type(self).model_validate({**self.model_dump(), "codecs": codecs})
 
     def with_storage_transformers(self, storage_transformers: tuple[AnyNamedConfig, ...]) -> Self:
         """
@@ -634,7 +638,9 @@ class ArraySpec(NodeSpec):
         ArraySpec
             A copy of this model with a new `storage_transformers` field.
         """
-        return type(self)(**{**self.model_dump(), "storage_transformers": storage_transformers})
+        return type(self).model_validate(
+            {**self.model_dump(), "storage_transformers": storage_transformers}
+        )
 
     def with_dimension_names(self, dimension_names: tuple[str | None, ...] | None) -> Self:
         """
@@ -650,7 +656,7 @@ class ArraySpec(NodeSpec):
         ArraySpec
             A copy of this model with a new `dimension_names` field.
         """
-        return type(self)(**{**self.model_dump(), "dimension_names": dimension_names})
+        return type(self).model_validate({**self.model_dump(), "dimension_names": dimension_names})
 
 
 class BaseGroupSpec(NodeSpec):
@@ -677,7 +683,7 @@ class BaseGroupSpec(NodeSpec):
             A copy of this model with a new `attributes` field.
 
         """
-        return type(self)(**{**self.model_dump(), "attributes": attributes})
+        return type(self).model_validate({**self.model_dump(), "attributes": attributes})
 
 
 class GroupSpec(BaseGroupSpec):
@@ -720,7 +726,7 @@ class GroupSpec(BaseGroupSpec):
         -------
         A copy of this model with a new `members` field.
         """
-        return type(self)(**{**self.model_dump(), "members": members})
+        return type(self).model_validate({**self.model_dump(), "members": members})
 
     @classmethod
     def from_flat(cls, data: Mapping[str, ArraySpec | BaseGroupSpec]) -> Self:
@@ -773,7 +779,7 @@ class GroupSpec(BaseGroupSpec):
         ```
         """
         from_flated = from_flat_group(data)
-        return cls(**from_flated.model_dump())
+        return cls.model_validate(from_flated.model_dump())
 
     def to_flat(self, root_path: str = "") -> dict[str, ArraySpec | BaseGroupSpec]:
         """
@@ -848,7 +854,7 @@ class GroupSpec(BaseGroupSpec):
             )
             raise ValueError(msg)
         if depth == 0:
-            extra_fields = {}
+            extra_fields: dict[str, Any] = {}
             if group.metadata.consolidated_metadata is not None:
                 extra_fields["consolidated_metadata"] = (
                     group.metadata.consolidated_metadata.to_dict()
@@ -869,11 +875,11 @@ class GroupSpec(BaseGroupSpec):
 
                 raise ValueError(msg)  # noqa: TRY004
 
-        extra_fields = {}
+        extra_fields2: dict[str, Any] = {}
         if group.metadata.consolidated_metadata is not None:
-            extra_fields["consolidated_metadata"] = group.metadata.consolidated_metadata.to_dict()
+            extra_fields2["consolidated_metadata"] = group.metadata.consolidated_metadata.to_dict()
 
-        result = cls(attributes=attributes, members=members, **extra_fields)
+        result = cls(attributes=attributes, members=members, **extra_fields2)
         return result
 
     def to_zarr(

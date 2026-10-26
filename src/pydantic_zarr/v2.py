@@ -88,7 +88,8 @@ def dictify_codec(value: dict[str, Any] | Codec) -> dict[str, Any]:
 
     if (numcodecs := sys.modules.get("numcodecs")) and isinstance(value, numcodecs.abc.Codec):
         return value.get_config()
-    return value
+    # a Codec instance cannot exist unless numcodecs is imported, so value is a dict here
+    return cast("dict[str, Any]", value)
 
 
 def parse_dimension_separator(data: Any) -> DimensionSeparator:
@@ -302,8 +303,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             attributes=attributes_actual,
             fill_value=fill_value_actual,
             order=order_actual,
-            compressor=compressor_actual,
-            filters=filters_actual,
+            compressor=None if compressor_actual is None else dictify_codec(compressor_actual),
+            filters=None if filters_actual is None else [dictify_codec(f) for f in filters_actual],
             dimension_separator=dimension_separator_actual,
         )
 
@@ -755,7 +756,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         GroupSpec(zarr_format=2, attributes={'foo': 10}, members={'a': ArraySpec(zarr_format=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)})
         """
         from_flated = from_flat_group(data)
-        return cls(**from_flated.model_dump())
+        return cls.model_validate(from_flated.model_dump())
 
 
 @overload

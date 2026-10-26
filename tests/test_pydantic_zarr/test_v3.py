@@ -154,7 +154,7 @@ def test_auto_codecs(dtype: np.dtype[Any], expected_codecs: tuple[CodecLike, ...
         chunk_grid={"name": "regular", "configuration": {"chunk_shape": array.shape}},
         chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
         codecs=auto_codecs(array),
-        fill_value=zdt.to_json_scalar(zdt.default_scalar(), zarr_format=3),
+        fill_value=cast("Any", zdt.to_json_scalar(zdt.default_scalar(), zarr_format=3)),
     )
     spec.to_zarr(store={}, path="")  # type: ignore[arg-type]
 
@@ -236,7 +236,7 @@ def test_arrayspec_to_zarr(
         chunk_grid={"name": "regular", "configuration": {"chunk_shape": (10,)}},
         chunk_key_encoding={"name": "default", "configuration": {"separator": "/"}},
         codecs=codecs,
-        fill_value=fill_value,
+        fill_value=cast("Any", fill_value),
         dimension_names=("x",),
     )
     if not ZARR_AVAILABLE:
