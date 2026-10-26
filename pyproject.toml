@@ -39,6 +39,7 @@ zarr = ["zarr>=3.0.0"]
 [dependency-groups]
 test-base = [
     "coverage",
+    "hypothesis>=6.100",
     "pytest==9.1.0",
     "pytest-cov",
     "pytest-examples",
