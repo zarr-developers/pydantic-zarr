@@ -796,8 +796,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
                 raise ValueError(msg)  # noqa: TRY004
             members[name] = item_out
 
-        result = cls(attributes=attributes, members=members)
-        return result
+        return cls(attributes=attributes, members=members)
 
     def to_zarr(
         self, store: Store, path: str, *, overwrite: bool = False, **kwargs: Any

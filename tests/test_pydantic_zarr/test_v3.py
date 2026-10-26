@@ -324,7 +324,8 @@ class TestGroupSpec:
         group_in_2 = GroupSpec.from_zarr(group_out, depth=2)  # type: ignore[var-annotated]
         assert group_in_2.members is not None
         sub_2_1 = group_in_2.members["1"]
-        assert isinstance(sub_2_1, GroupSpec) and sub_2_1.members is not None
+        assert isinstance(sub_2_1, GroupSpec)
+    assert sub_2_1.members is not None
         assert sub_2_1.members["2"] == tree["/1/2"]
         assert group_in_2.attributes == tree[""].attributes
         assert sub_2_1.attributes == tree["/1"].attributes
@@ -332,9 +333,11 @@ class TestGroupSpec:
         group_in_3 = GroupSpec.from_zarr(group_out, depth=3)  # type: ignore[var-annotated]
         assert group_in_3.members is not None
         sub_3_1 = group_in_3.members["1"]
-        assert isinstance(sub_3_1, GroupSpec) and sub_3_1.members is not None
+        assert isinstance(sub_3_1, GroupSpec)
+    assert sub_3_1.members is not None
         sub_3_2 = sub_3_1.members["2"]
-        assert isinstance(sub_3_2, GroupSpec) and sub_3_2.members is not None
+        assert isinstance(sub_3_2, GroupSpec)
+    assert sub_3_2.members is not None
         assert sub_3_2.members["1"] == tree["/1/2/1"]
         assert group_in_3.attributes == tree[""].attributes
         assert sub_3_1.attributes == tree["/1"].attributes
