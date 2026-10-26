@@ -736,7 +736,7 @@ def test_typevar_defaults_v2() -> None:
     ],
 )
 def test_update_v2(field: str, value: object) -> None:
-    """v2 `update` returns a revalidated copy with the new field, everything else unchanged."""
+    """The v2 `update` returns a revalidated copy with the new field, everything else unchanged."""
     spec: AnyArraySpec = ArraySpec(shape=(4,), dtype="uint8", chunks=(2,), attributes={})
     built = spec.update(**{field: value})  # type: ignore[arg-type]
     assert getattr(built, field) == value
