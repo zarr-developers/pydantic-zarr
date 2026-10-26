@@ -118,7 +118,7 @@ from pydantic_zarr.v2 import ArraySpec, GroupSpec
 
 # other than the key representing the root path "",
 # the keys must be valid paths in the Zarr storage hierarchy
-# note that the `members` attribute is `None` for the `GroupSpec` instances in this `dict`.
+# note that groups appear as `BaseGroupSpec` instances, without a `members` attribute.
 tree = {
     "": GroupSpec(members=None, attributes={"root": True}),
     "/a": GroupSpec(members=None, attributes={"root": False}),
@@ -164,7 +164,7 @@ from pydantic_zarr.v2 import ArraySpec, GroupSpec
 
 # other than the key representing the root path "",
 # the keys must be valid paths in the Zarr storage hierarchy
-# note that the `members` attribute is `None` for the `GroupSpec` instances in this `dict`.
+# note that groups appear as `BaseGroupSpec` instances, without a `members` attribute.
 
 a_b = ArraySpec(shape=(10, 10), dtype="uint8", chunks=(1, 1), attributes={})
 a = GroupSpec(members={'b': a_b}, attributes={"root": False})
@@ -173,8 +173,8 @@ root = GroupSpec(members={'a': a}, attributes={"root": True})
 print(root.to_flat())
 """
 {
-    '': GroupSpec(zarr_format=2, attributes={'root': True}, members=None),
-    '/a': GroupSpec(zarr_format=2, attributes={'root': False}, members=None),
+    '': BaseGroupSpec(zarr_format=2, attributes={'root': True}),
+    '/a': BaseGroupSpec(zarr_format=2, attributes={'root': False}),
     '/a/b': ArraySpec(
         zarr_format=2,
         attributes={},

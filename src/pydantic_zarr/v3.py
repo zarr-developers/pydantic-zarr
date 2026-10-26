@@ -13,17 +13,17 @@ from typing import (
     Literal,
     NotRequired,
     Self,
-    TypeVar,
     Union,
     cast,
     overload,
+    override,
 )
 
 import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ValidationInfo, model_validator
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, TypeIs, TypeVar
 from zarr_metadata import (
     DefaultChunkKeyEncodingMetadata,
     JSONValue,
@@ -65,15 +65,17 @@ if TYPE_CHECKING:
 
 
 type TBaseAttr = Mapping[str, object] | BaseModel
-type TBaseItem = Union["GroupSpec", "ArraySpec"]
+type TBaseItem = Union["GroupSpec", "ArraySpec", "BaseGroupSpec"]
 
-# These types are for convenience when dealing with unknown ArraySpecs and GroupSpecs
-# because type variables don't have default values
-type AnyArraySpec = "ArraySpec[TBaseAttr]"
-type AnyGroupSpec = "GroupSpec[TBaseAttr, TBaseItem]"
+# Convenience aliases for ArraySpecs and GroupSpecs with unknown type parameters.
+# The type variables carry defaults (PEP 696), so the bare class names mean the
+# same thing; these aliases predate the defaults and are kept for compatibility.
+type AnyArraySpec = "ArraySpec[Any]"
+type AnyGroupSpec = "GroupSpec[Any, Any]"
+type AnyBaseGroupSpec = "BaseGroupSpec[Any]"
 
-TAttr = TypeVar("TAttr", bound=TBaseAttr)
-TItem = TypeVar("TItem", bound=TBaseItem)
+TAttr = TypeVar("TAttr", bound=TBaseAttr, default=TBaseAttr)
+TItem = TypeVar("TItem", bound=TBaseItem, default=TBaseItem)
 
 NodeType = Literal["group", "array"]
 
@@ -86,8 +88,8 @@ fill value. `zarr-metadata` exports per-data-type fill value types
 (``Float32FillValue`` and so on) for callers that want the narrow forms.
 """
 
-TName = TypeVar("TName", bound=str)
-TConfig = TypeVar("TConfig", bound=Mapping[str, object])
+TName = TypeVar("TName", bound=str, default=str)
+TConfig = TypeVar("TConfig", bound=Mapping[str, object], default=Mapping[str, object])
 
 
 class NamedConfig(TypedDict, Generic[TName, TConfig]):
@@ -460,16 +462,17 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             )
         else:
             meta_json = tuplify_json(array.metadata.to_dict())
+        meta_any = cast("dict[str, Any]", meta_json)
         return cls(
-            attributes=meta_json["attributes"],
+            attributes=meta_any["attributes"],
             shape=array.shape,
-            data_type=meta_json["data_type"],
-            chunk_grid=meta_json["chunk_grid"],
-            chunk_key_encoding=meta_json["chunk_key_encoding"],
-            fill_value=meta_json["fill_value"],
-            codecs=meta_json["codecs"],
-            storage_transformers=meta_json["storage_transformers"],
-            dimension_names=meta_json.get("dimension_names", None),
+            data_type=meta_any["data_type"],
+            chunk_grid=meta_any["chunk_grid"],
+            chunk_key_encoding=meta_any["chunk_key_encoding"],
+            fill_value=meta_any["fill_value"],
+            codecs=meta_any["codecs"],
+            storage_transformers=meta_any["storage_transformers"],
+            dimension_names=meta_any.get("dimension_names", None),
         )
 
     def to_zarr(
@@ -528,6 +531,50 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         async_array = AsyncArray(metadata=meta, store_path=store_path, config=config)
         sync(async_array._save_metadata(meta))
         return Array(_async_array=async_array)
+
+    def with_attributes(self, attributes: TBaseAttr) -> Self:
+        """Return a revalidated copy of this spec with a new `attributes` field."""
+        return type(self).model_validate({**self.model_dump(), "attributes": attributes})
+
+    def with_shape(self, shape: tuple[int, ...]) -> Self:
+        """Return a revalidated copy of this spec with a new `shape` field."""
+        return type(self).model_validate({**self.model_dump(), "shape": shape})
+
+    def with_data_type(self, data_type: npt.DTypeLike | Mapping[str, object]) -> Self:
+        """Return a revalidated copy of this spec with a new `data_type` field."""
+        return type(self).model_validate(
+            {**self.model_dump(), "data_type": parse_dtype_v3(data_type)}
+        )
+
+    def with_chunk_grid(self, chunk_grid: RegularChunking) -> Self:
+        """Return a revalidated copy of this spec with a new `chunk_grid` field."""
+        return type(self).model_validate({**self.model_dump(), "chunk_grid": chunk_grid})
+
+    def with_chunk_key_encoding(
+        self, chunk_key_encoding: DefaultChunkKeyEncoding | V2ChunkKeyEncoding
+    ) -> Self:
+        """Return a revalidated copy of this spec with a new `chunk_key_encoding` field."""
+        return type(self).model_validate(
+            {**self.model_dump(), "chunk_key_encoding": chunk_key_encoding}
+        )
+
+    def with_fill_value(self, fill_value: FillValue) -> Self:
+        """Return a revalidated copy of this spec with a new `fill_value` field."""
+        return type(self).model_validate({**self.model_dump(), "fill_value": fill_value})
+
+    def with_codecs(self, codecs: Sequence[CodecLike]) -> Self:
+        """Return a revalidated copy of this spec with a new `codecs` field."""
+        return type(self).model_validate({**self.model_dump(), "codecs": tuple(codecs)})
+
+    def with_storage_transformers(self, storage_transformers: Sequence[AnyNamedConfig]) -> Self:
+        """Return a revalidated copy of this spec with a new `storage_transformers` field."""
+        return type(self).model_validate(
+            {**self.model_dump(), "storage_transformers": tuple(storage_transformers)}
+        )
+
+    def with_dimension_names(self, dimension_names: tuple[str | None, ...] | None) -> Self:
+        """Return a revalidated copy of this spec with a new `dimension_names` field."""
+        return type(self).model_validate({**self.model_dump(), "dimension_names": dimension_names})
 
     def like(
         self,
@@ -622,7 +669,87 @@ def ensure_member_names_v3(data: Mapping[str, Any] | None) -> Mapping[str, Any] 
     return data
 
 
-class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
+class BaseGroupSpec(NodeSpec, Generic[TAttr]):
+    """
+    A model of a Zarr Version 3 Group's own metadata, without members.
+
+    This is the shape of a group in a flattened hierarchy (`to_flat` emits it
+    for every group), and of a group loaded without traversing its children.
+    `GroupSpec` subclasses this model and adds `members`.
+
+    Attributes
+    ----------
+    node_type: Literal['group']
+        The type of this node. Must be the string "group".
+    attributes: TAttr
+        The user-defined attributes of this group.
+    """
+
+    node_type: Literal["group"] = "group"
+    attributes: TAttr
+
+    def with_attributes(self, attributes: TBaseAttr) -> Self:
+        """Return a revalidated copy of this model with a new `attributes` field."""
+        return type(self).model_validate({**self.model_dump(), "attributes": attributes})
+
+    @classmethod
+    def from_zarr(cls, group: zarr.Group) -> Self:
+        """
+        Create a `BaseGroupSpec` from a zarr group, without reading its members.
+        """
+        return cls(attributes=group.attrs.asdict())
+
+    def to_zarr(self, store: Store, path: str, *, overwrite: bool = False) -> zarr.Group:
+        """
+        Serialize this group's own metadata to a zarr group at a specific path
+        in a zarr store. No members are written; `GroupSpec.to_zarr` writes a
+        whole hierarchy.
+        """
+        try:
+            import zarr
+            from zarr.errors import ContainsArrayError, ContainsGroupError
+        except ImportError as e:
+            raise ImportError("zarr must be installed to use to_zarr") from e
+
+        extant_node = maybe_node(store, path, zarr_format=3)
+        if isinstance(extant_node, zarr.Group):
+            if not self.like(extant_node):
+                if not overwrite:
+                    raise ContainsGroupError(store, path)
+            elif not overwrite:
+                return extant_node
+        elif isinstance(extant_node, zarr.Array) and not overwrite:
+            raise ContainsArrayError(store, path)
+        else:
+            zarr.create_group(store=store, overwrite=overwrite, path=path, zarr_format=3)
+
+        result = zarr.group(store=store, path=path, overwrite=overwrite, zarr_format=3)
+        result.attrs.put(self.model_dump()["attributes"])
+        return result
+
+    def like(
+        self,
+        other: AnyBaseGroupSpec | AnyGroupSpec | zarr.Group,
+        include: IncEx = None,
+        exclude: IncEx = None,
+    ) -> bool:
+        """
+        Compare this group's own metadata to another group's. Members never
+        participate in the comparison: a `GroupSpec` or `zarr.Group` is reduced
+        to its own metadata first.
+        """
+        other_parsed: AnyBaseGroupSpec
+        if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
+            other_parsed = BaseGroupSpec(attributes=other.attrs.asdict())
+        elif isinstance(other, GroupSpec):
+            other_parsed = BaseGroupSpec(attributes=other.attributes)
+        else:
+            other_parsed = cast("AnyBaseGroupSpec", other)
+
+        return model_like(self, other_parsed, include=include, exclude=exclude)
+
+
+class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
     """
     A model of a Zarr Version 3 Group.
 
@@ -638,12 +765,14 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         must inherit from either ArraySpec or GroupSpec.
     """
 
-    node_type: Literal["group"] = "group"
-    attributes: TAttr
     members: Annotated[Mapping[str, TItem] | None, AfterValidator(ensure_member_names_v3)] = {}
 
+    def with_members(self, members: Mapping[str, TItem] | None) -> Self:
+        """Return a revalidated copy of this model with a new `members` field."""
+        return type(self).model_validate({**self.model_dump(), "members": members})
+
     @classmethod
-    def from_flat(cls, data: Mapping[str, AnyArraySpec | AnyGroupSpec]) -> Self:
+    def from_flat(cls, data: Mapping[str, AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec]) -> Self:
         """
         Create a `GroupSpec` from a flat hierarchy representation.
 
@@ -693,9 +822,9 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         ```
         """
         from_flated = from_flat_group(data)
-        return cls(**from_flated.model_dump())
+        return cls.model_validate(from_flated.model_dump())
 
-    def to_flat(self, root_path: str = "") -> dict[str, AnyArraySpec | AnyGroupSpec]:
+    def to_flat(self, root_path: str = "") -> dict[str, AnyArraySpec | AnyBaseGroupSpec]:
         """
         Flatten this `GroupSpec`.
         This method returns a `dict` with string keys and values that are `GroupSpec` or
@@ -723,15 +852,16 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         >>> from pydantic_zarr.v3 import GroupSpec
         >>> g1 = GroupSpec(members=None, attributes={'foo': 'bar'})
         >>> g1.to_flat()
-        {'': GroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'}, members=None)}
+        {'': BaseGroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'})}
         >>> g1.to_flat(root_path='baz')
-        {'baz': GroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'}, members=None)}
+        {'baz': BaseGroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'})}
         >>> GroupSpec(members={'g1': g1}, attributes={'foo': 'bar'}).to_flat()
-        {'': GroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'}, members=None), '/g1': GroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'}, members=None)}
+        {'': BaseGroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'}), '/g1': BaseGroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'})}
         """
         return to_flat(self, root_path=root_path)
 
     @classmethod
+    @override
     def from_zarr(cls, group: zarr.Group, *, depth: int = -1) -> Self:
         """
         Create a GroupSpec from a zarr group. Subgroups and arrays contained in the zarr
@@ -757,7 +887,6 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         except ImportError as e:
             raise ImportError("zarr must be installed to use from_zarr") from e
 
-        result: GroupSpec[TAttr, TItem]
         attributes = group.attrs.asdict()
         members = {}
 
@@ -786,9 +915,9 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
                 raise ValueError(msg)  # noqa: TRY004
             members[name] = item_out
 
-        result = cls(attributes=attributes, members=members)
-        return result
+        return cls(attributes=attributes, members=members)
 
+    @override
     def to_zarr(
         self, store: Store, path: str, *, overwrite: bool = False, **kwargs: Any
     ) -> zarr.Group:
@@ -861,9 +990,10 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
 
         return result
 
+    @override
     def like(
         self,
-        other: AnyGroupSpec | zarr.Group,
+        other: AnyBaseGroupSpec | AnyGroupSpec | zarr.Group,
         include: IncEx = None,
         exclude: IncEx = None,
     ) -> bool:
@@ -916,7 +1046,10 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         True
         """
 
-        other_parsed: GroupSpec[Any, Any]
+        if isinstance(other, BaseGroupSpec) and not isinstance(other, GroupSpec):
+            # a group without members compares by the group's own metadata
+            return super().like(other, include=include, exclude=exclude)
+        other_parsed: AnyGroupSpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
             other_parsed = GroupSpec.from_zarr(other)
         else:
@@ -1010,7 +1143,7 @@ def to_zarr(
 
 
 def from_flat(
-    data: Mapping[str, AnyArraySpec | AnyGroupSpec],
+    data: Mapping[str, AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec],
 ) -> AnyArraySpec | AnyGroupSpec:
     """
     Wraps `from_flat_group`, handling the special case where a Zarr array is defined at the root of
@@ -1046,14 +1179,14 @@ def from_flat(
         msg = f'Invalid keys {invalid_keys} found in data. Keys may not end with the "/"" character'
         raise ValueError(msg)
 
-    if tuple(data.keys()) == ("",) and isinstance(next(iter(data.values())), ArraySpec):
-        return next(iter(data.values()))
+    if tuple(data.keys()) == ("",) and isinstance(first := next(iter(data.values())), ArraySpec):
+        return first
     else:
         return from_flat_group(data)
 
 
 def from_flat_group(
-    data: Mapping[str, AnyArraySpec | AnyGroupSpec],
+    data: Mapping[str, AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec],
 ) -> AnyGroupSpec:
     """
     Generate a `GroupSpec` from a flat representation of a hierarchy, i.e. a `dict` with
@@ -1087,7 +1220,9 @@ def from_flat_group(
     # this dict collects the arrayspecs and groupspecs that belong to one of the members of the
     # groupspecs we are constructing. They will later be aggregated in a recursive step that
     # populates member_groups
-    submember_by_parent_name: dict[str, dict[str, ArraySpec[Any] | GroupSpec[Any, Any]]] = {}
+    submember_by_parent_name: dict[
+        str, dict[str, AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec]
+    ] = {}
     # copy the input to ensure that mutations are contained inside this function
     data_copy = dict(data)
     # Get the root node
@@ -1098,7 +1233,7 @@ def from_flat_group(
             raise ValueError("Got an ArraySpec as the root node. This is invalid.")  # noqa: TRY004
     except KeyError:
         # If a root node was not found, create a default one
-        root_node = GroupSpec(attributes={}, members=None)
+        root_node = BaseGroupSpec(attributes={})
 
     # partition the tree (sans root node) into 2 categories: (arrays, groups + their members).
     for key, value in data_copy.items():
@@ -1111,7 +1246,7 @@ def from_flat_group(
             # this is an array or group that belongs to the group we are ultimately returning
             if isinstance(value, ArraySpec):
                 member_arrays[subparent_name] = value
-            elif isinstance(value, GroupSpec):
+            elif isinstance(value, BaseGroupSpec):
                 if subparent_name not in submember_by_parent_name:
                     submember_by_parent_name[subparent_name] = {}
                 submember_by_parent_name[subparent_name][root_name] = value
@@ -1202,7 +1337,9 @@ def auto_dimension_names(data: object) -> tuple[str | None, ...] | None:
     return None
 
 
-def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, ArraySpec | GroupSpec]:
+def to_flat(
+    node: AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec, root_path: str = ""
+) -> dict[str, AnyArraySpec | AnyBaseGroupSpec]:
     """
     Flatten a `GroupSpec` or `ArraySpec`.
     Converts a `GroupSpec` or `ArraySpec` and a string, into a `dict` with string keys and
@@ -1235,22 +1372,44 @@ def to_flat(node: ArraySpec | GroupSpec, root_path: str = "") -> dict[str, Array
     >>> from pydantic_zarr.v3 import to_flat, GroupSpec
     >>> g1 = GroupSpec(members=None, attributes={'foo': 'bar'})
     >>> to_flat(g1)
-    {'': GroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'}, members=None)}
+    {'': BaseGroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'})}
     >>> to_flat(g1, root_path='baz')
-    {'baz': GroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'}, members=None)}
+    {'baz': BaseGroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'})}
     >>> to_flat(GroupSpec(members={'g1': g1}, attributes={'foo': 'bar'}))
-    {'': GroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'}, members=None), '/g1': GroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'}, members=None)}
+    {'': BaseGroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'}), '/g1': BaseGroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'})}
     """
     result = {}
-    model_copy: AnyArraySpec | AnyGroupSpec
+    model_copy: AnyArraySpec | AnyBaseGroupSpec
     if isinstance(node, ArraySpec):
         model_copy = node.model_copy(deep=True)
     else:
-        model_copy = node.model_copy(deep=True, update={"members": None})
-        if node.members is not None:
+        model_copy = BaseGroupSpec(attributes=node.model_copy(deep=True).attributes)
+        if isinstance(node, GroupSpec) and node.members is not None:
             for name, value in node.members.items():
                 result.update(to_flat(value, f"{root_path}/{name}"))
 
     result[root_path] = model_copy
     # sort by increasing key length
     return dict(sorted(result.items(), key=lambda v: len(v[0])))
+
+
+def is_array_spec(node: object) -> TypeIs[AnyArraySpec]:
+    """Whether `node` is an `ArraySpec`, narrowing the type in both branches."""
+    return isinstance(node, ArraySpec)
+
+
+def is_group_spec(node: object) -> TypeIs[AnyGroupSpec]:
+    """
+    Whether `node` is a `GroupSpec` (a group with members), narrowing the type
+    in both branches. A `BaseGroupSpec` that is not a `GroupSpec` returns
+    `False`: use this to tell the two apart in a flattened hierarchy.
+    """
+    return isinstance(node, GroupSpec)
+
+
+def is_base_group_spec(node: object) -> TypeIs[AnyBaseGroupSpec]:
+    """
+    Whether `node` models a group, with or without members: `GroupSpec` is a
+    subclass of `BaseGroupSpec`, so this holds for both.
+    """
+    return isinstance(node, BaseGroupSpec)

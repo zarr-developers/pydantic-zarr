@@ -17,7 +17,7 @@ setup:
 lint:
     pre-commit run --all-files
 
-# Run mypy type checking
+# Run pyrefly type checking
 typecheck:
     hatch run types:check
 

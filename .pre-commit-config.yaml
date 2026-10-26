@@ -21,10 +21,11 @@ repos:
     hooks:
     - id: check-yaml
     - id: trailing-whitespace
-  # NOTE: mypy is deliberately not a pre-commit hook. Type checking runs via the `types`
-  # hatch environment (`hatch run types:check`, or `just typecheck`), which is also what the
-  # `typecheck` CI job runs. Keeping a single entry point means the mypy version and the
-  # dependencies being type-checked against cannot drift from what the tests actually use.
+  # NOTE: the type checker (pyrefly) is deliberately not a pre-commit hook. Type checking
+  # runs via the `types` hatch environment (`hatch run types:check`, or `just typecheck`),
+  # which is also what the `typecheck` CI job runs. Keeping a single entry point means the
+  # type checker version and the dependencies being checked against cannot drift from what
+  # the tests actually use.
   - repo: https://github.com/scientific-python/cookie
     rev: 2025.01.22
     hooks:

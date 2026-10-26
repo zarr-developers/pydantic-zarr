@@ -193,7 +193,7 @@ def test_fill_value_spellings_alike(document: dict[str, Any], data: st.DataObjec
     spellings = _NAN_SPELLINGS[dtype]
     document = {**document, "data_type": dtype}
     specs: list[ArraySpec[Any]] = [
-        ArraySpec(**{**document, "fill_value": spelling}) for spelling in spellings
+        ArraySpec.model_validate({**document, "fill_value": spelling}) for spelling in spellings
     ]
     for other in specs[1:]:
         assert specs[0].like(other)

@@ -81,7 +81,8 @@ def dictify_codec(value: dict[str, Any] | Codec) -> dict[str, Any]:
 
     if (numcodecs := sys.modules.get("numcodecs")) and isinstance(value, numcodecs.abc.Codec):
         return value.get_config()
-    return value
+    # a Codec instance cannot exist unless numcodecs is imported, so value is a dict here
+    return cast("dict[str, Any]", value)
 
 
 def parse_dimension_separator(data: Any) -> DimensionSeparator:
@@ -286,8 +287,8 @@ class ArraySpec(StrictBase):
             attributes=attributes_actual,
             fill_value=fill_value_actual,
             order=order_actual,
-            compressor=compressor_actual,
-            filters=filters_actual,
+            compressor=None if compressor_actual is None else dictify_codec(compressor_actual),
+            filters=None if filters_actual is None else [dictify_codec(f) for f in filters_actual],
             dimension_separator=dimension_separator_actual,
         )
 
@@ -464,7 +465,7 @@ class ArraySpec(StrictBase):
         ArraySpec
             A copy of this model with a new `attributes` field.
         """
-        return type(self)(**{**self.model_dump(), "attributes": attributes})
+        return type(self).model_validate({**self.model_dump(), "attributes": attributes})
 
     def with_shape(self, shape: tuple[int, ...]) -> Self:
         """
@@ -480,7 +481,7 @@ class ArraySpec(StrictBase):
         ArraySpec
             A copy of this model with a new `shape` field.
         """
-        return type(self)(**{**self.model_dump(), "shape": shape})
+        return type(self).model_validate({**self.model_dump(), "shape": shape})
 
     def with_chunks(self, chunks: tuple[int, ...]) -> Self:
         """
@@ -496,7 +497,7 @@ class ArraySpec(StrictBase):
         ArraySpec
             A copy of this model with a new `chunks` field.
         """
-        return type(self)(**{**self.model_dump(), "chunks": chunks})
+        return type(self).model_validate({**self.model_dump(), "chunks": chunks})
 
     def with_dtype(self, dtype: DtypeStr | list[tuple[Any, ...]]) -> Self:
         """
@@ -512,7 +513,7 @@ class ArraySpec(StrictBase):
         ArraySpec
             A copy of this model with a new `dtype` field.
         """
-        return type(self)(**{**self.model_dump(), "dtype": dtype})
+        return type(self).model_validate({**self.model_dump(), "dtype": dtype})
 
     def with_fill_value(self, fill_value: FillValue) -> Self:
         """
@@ -528,7 +529,7 @@ class ArraySpec(StrictBase):
         ArraySpec
             A copy of this model with a new `fill_value` field.
         """
-        return type(self)(**{**self.model_dump(), "fill_value": fill_value})
+        return type(self).model_validate({**self.model_dump(), "fill_value": fill_value})
 
     def with_order(self, order: MemoryOrder) -> Self:
         """
@@ -544,7 +545,7 @@ class ArraySpec(StrictBase):
         ArraySpec
             A copy of this model with a new `order` field.
         """
-        return type(self)(**{**self.model_dump(), "order": order})
+        return type(self).model_validate({**self.model_dump(), "order": order})
 
     def with_filters(self, filters: tuple[CodecDict, ...] | None) -> Self:
         """
@@ -560,7 +561,7 @@ class ArraySpec(StrictBase):
         ArraySpec
             A copy of this model with a new `filters` field.
         """
-        return type(self)(**{**self.model_dump(), "filters": filters})
+        return type(self).model_validate({**self.model_dump(), "filters": filters})
 
     def with_dimension_separator(self, dimension_separator: DimensionSeparator) -> Self:
         """
@@ -576,7 +577,9 @@ class ArraySpec(StrictBase):
         ArraySpec
             A copy of this model with a new `dimension_separator` field.
         """
-        return type(self)(**{**self.model_dump(), "dimension_separator": dimension_separator})
+        return type(self).model_validate(
+            {**self.model_dump(), "dimension_separator": dimension_separator}
+        )
 
     def with_compressor(self, compressor: CodecDict | None) -> Self:
         """
@@ -592,7 +595,7 @@ class ArraySpec(StrictBase):
         ArraySpec
             A copy of this model with a new `compressor` field.
         """
-        return type(self)(**{**self.model_dump(), "compressor": compressor})
+        return type(self).model_validate({**self.model_dump(), "compressor": compressor})
 
 
 class BaseGroupSpec(StrictBase):
@@ -619,7 +622,7 @@ class BaseGroupSpec(StrictBase):
         BaseGroupSpec
             A copy of this model with a new `attributes` field.
         """
-        return type(self)(**{**self.model_dump(), "attributes": attributes})
+        return type(self).model_validate({**self.model_dump(), "attributes": attributes})
 
 
 class GroupSpec(BaseGroupSpec):
@@ -662,7 +665,7 @@ class GroupSpec(BaseGroupSpec):
         GroupSpec
             A copy of this model with a new `members` field.
         """
-        return type(self)(**{**self.model_dump(), "members": members})
+        return type(self).model_validate({**self.model_dump(), "members": members})
 
     @classmethod
     def from_zarr(cls, group: zarr.Group, *, depth: int = -1) -> Self:
@@ -925,7 +928,7 @@ class GroupSpec(BaseGroupSpec):
         GroupSpec(zarr_format=2, attributes={'foo': 10}, members={'a': ArraySpec(zarr_format=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)})
         """
         from_flated = from_flat_group(data)
-        return cls(**from_flated.model_dump())
+        return cls.model_validate(from_flated.model_dump())
 
 
 @overload
