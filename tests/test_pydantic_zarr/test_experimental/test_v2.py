@@ -139,7 +139,7 @@ def test_arrayspec_to_zarr(overwrite: bool, path: str, config: dict[str, object]
     store = zarr.storage.MemoryStore()
     stored = spec.to_zarr(store, path=path, config=config)  # type: ignore[arg-type]
 
-    if config not in (None, {}):
+    if config:
         assert stored._async_array._config == ArrayConfig(
             order=cast("MemoryOrder", config["order"]),
             write_empty_chunks=cast("bool", config["write_empty_chunks"]),

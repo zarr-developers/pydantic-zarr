@@ -376,16 +376,17 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             )
         else:
             meta_json = tuplify_json(array.metadata.to_dict())
+        meta_any = cast("dict[str, Any]", meta_json)
         return cls(
-            attributes=meta_json["attributes"],
+            attributes=meta_any["attributes"],
             shape=array.shape,
-            data_type=meta_json["data_type"],
-            chunk_grid=meta_json["chunk_grid"],
-            chunk_key_encoding=meta_json["chunk_key_encoding"],
-            fill_value=meta_json["fill_value"],
-            codecs=meta_json["codecs"],
-            storage_transformers=meta_json["storage_transformers"],
-            dimension_names=meta_json.get("dimension_names", None),
+            data_type=meta_any["data_type"],
+            chunk_grid=meta_any["chunk_grid"],
+            chunk_key_encoding=meta_any["chunk_key_encoding"],
+            fill_value=meta_any["fill_value"],
+            codecs=meta_any["codecs"],
+            storage_transformers=meta_any["storage_transformers"],
+            dimension_names=meta_any.get("dimension_names", None),
         )
 
     def to_zarr(
@@ -576,7 +577,7 @@ class GroupSpec(NodeSpec, Generic[TAttr, TItem]):
         ```
         """
         from_flated = from_flat_group(data)
-        return cls(**from_flated.model_dump())
+        return cls.model_validate(from_flated.model_dump())
 
     def to_flat(self, root_path: str = "") -> dict[str, AnyArraySpec | AnyGroupSpec]:
         """

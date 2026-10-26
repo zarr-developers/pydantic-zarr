@@ -177,7 +177,11 @@ def test_array_spec(
     else:
         assert spec.filters is None
 
-    assert spec.dimension_separator == array2.metadata.dimension_separator
+    # a Zarr V2 array's metadata always carries a dimension_separator
+    assert (
+        spec.dimension_separator
+        == array2.metadata.dimension_separator  # pyrefly: ignore[missing-attribute]
+    )
     assert spec.shape == array2.shape
     assert spec.fill_value == array2.fill_value
 
@@ -367,7 +371,7 @@ def test_serialize_deserialize_groupspec(
                 shape=(10,) * len(chunks),
                 chunks=chunks,
                 dtype=dtype,
-                filters=_filters,
+                filters=cast("Any", _filters),
                 compressor=compressor,
                 order=memory_order,
                 dimension_separator=dimension_separator,
@@ -377,7 +381,7 @@ def test_serialize_deserialize_groupspec(
                 shape=(5,) * len(chunks),
                 chunks=chunks,
                 dtype=dtype,
-                filters=_filters,
+                filters=cast("Any", _filters),
                 compressor=compressor,
                 order=memory_order,
                 dimension_separator=dimension_separator,
