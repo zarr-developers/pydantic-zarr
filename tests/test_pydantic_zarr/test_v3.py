@@ -27,6 +27,8 @@ from pydantic_zarr.v3 import (
     RegularChunking,
     RegularChunkingConfig,
     auto_codecs,
+    is_array_spec,
+    is_group_spec,
     parse_dtype_v3,
 )
 
@@ -324,7 +326,7 @@ class TestGroupSpec:
         group_in_2 = GroupSpec.from_zarr(group_out, depth=2)  # type: ignore[var-annotated]
         assert group_in_2.members is not None
         sub_2_1 = group_in_2.members["1"]
-        assert isinstance(sub_2_1, GroupSpec)
+        assert is_group_spec(sub_2_1)
         assert sub_2_1.members is not None
         assert sub_2_1.members["2"] == tree["/1/2"]
         assert group_in_2.attributes == tree[""].attributes
@@ -333,10 +335,10 @@ class TestGroupSpec:
         group_in_3 = GroupSpec.from_zarr(group_out, depth=3)  # type: ignore[var-annotated]
         assert group_in_3.members is not None
         sub_3_1 = group_in_3.members["1"]
-        assert isinstance(sub_3_1, GroupSpec)
+        assert is_group_spec(sub_3_1)
         assert sub_3_1.members is not None
         sub_3_2 = sub_3_1.members["2"]
-        assert isinstance(sub_3_2, GroupSpec)
+        assert is_group_spec(sub_3_2)
         assert sub_3_2.members is not None
         assert sub_3_2.members["1"] == tree["/1/2/1"]
         assert group_in_3.attributes == tree[""].attributes
@@ -600,3 +602,22 @@ def test_base_group_spec_zarr_round_trip() -> None:
     group = base.to_zarr(store, path="g")
     assert group.attrs.asdict() == {"a": 1}
     assert BaseGroupSpec.from_zarr(group) == base
+
+
+def test_narrowing_helpers() -> None:
+    """
+    `is_array_spec` and `is_group_spec` tell flat-hierarchy values apart, and
+    `is_base_group_spec` holds for any group model, members or not.
+    """
+    from pydantic_zarr.v3 import is_base_group_spec
+
+    array: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
+    group: AnyGroupSpec = GroupSpec(attributes={}, members={"a": array})
+    base = BaseGroupSpec(attributes={})
+    assert is_array_spec(array)
+    assert not is_array_spec(group)
+    assert is_group_spec(group)
+    assert not is_group_spec(base)
+    assert is_base_group_spec(base)
+    assert is_base_group_spec(group)
+    assert not is_base_group_spec(array)

@@ -15,13 +15,14 @@ from typing import (
     Union,
     cast,
     overload,
+    override,
 )
 
 import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
 from pydantic import AfterValidator, BaseModel, BeforeValidator, model_validator
-from typing_extensions import TypedDict, TypeVar
+from typing_extensions import TypedDict, TypeIs, TypeVar
 
 from pydantic_zarr.core import (
     IncEx,
@@ -743,6 +744,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         return to_flat(self, root_path=root_path)
 
     @classmethod
+    @override
     def from_zarr(cls, group: zarr.Group, *, depth: int = -1) -> Self:
         """
         Create a GroupSpec from a zarr group. Subgroups and arrays contained in the zarr
@@ -798,6 +800,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
 
         return cls(attributes=attributes, members=members)
 
+    @override
     def to_zarr(
         self, store: Store, path: str, *, overwrite: bool = False, **kwargs: Any
     ) -> zarr.Group:
@@ -870,6 +873,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
 
         return result
 
+    @override
     def like(
         self,
         other: AnyBaseGroupSpec | AnyGroupSpec | zarr.Group,
@@ -1267,3 +1271,25 @@ def to_flat(
     result[root_path] = model_copy
     # sort by increasing key length
     return dict(sorted(result.items(), key=lambda v: len(v[0])))
+
+
+def is_array_spec(node: object) -> TypeIs[AnyArraySpec]:
+    """Whether `node` is an `ArraySpec`, narrowing the type in both branches."""
+    return isinstance(node, ArraySpec)
+
+
+def is_group_spec(node: object) -> TypeIs[AnyGroupSpec]:
+    """
+    Whether `node` is a `GroupSpec` (a group with members), narrowing the type
+    in both branches. A `BaseGroupSpec` that is not a `GroupSpec` returns
+    `False`: use this to tell the two apart in a flattened hierarchy.
+    """
+    return isinstance(node, GroupSpec)
+
+
+def is_base_group_spec(node: object) -> TypeIs[AnyBaseGroupSpec]:
+    """
+    Whether `node` models a group, with or without members: `GroupSpec` is a
+    subclass of `BaseGroupSpec`, so this holds for both.
+    """
+    return isinstance(node, BaseGroupSpec)

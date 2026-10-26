@@ -50,6 +50,8 @@ from pydantic_zarr.v2 import (
     auto_order,
     from_flat,
     from_zarr,
+    is_array_spec,
+    is_group_spec,
     to_flat,
     to_zarr,
 )
@@ -652,7 +654,7 @@ def test_from_zarr_depth() -> None:
     group_in_2 = GroupSpec.from_zarr(group_out, depth=2)  # type: ignore[var-annotated]
     assert group_in_2.members is not None
     sub_2_1 = group_in_2.members["1"]
-    assert isinstance(sub_2_1, GroupSpec)
+    assert is_group_spec(sub_2_1)
     assert sub_2_1.members is not None
     assert sub_2_1.members["2"] == tree["/1/2"]
     assert group_in_2.attributes == tree[""].attributes
@@ -661,10 +663,10 @@ def test_from_zarr_depth() -> None:
     group_in_3 = GroupSpec.from_zarr(group_out, depth=3)  # type: ignore[var-annotated]
     assert group_in_3.members is not None
     sub_3_1 = group_in_3.members["1"]
-    assert isinstance(sub_3_1, GroupSpec)
+    assert is_group_spec(sub_3_1)
     assert sub_3_1.members is not None
     sub_3_2 = sub_3_1.members["2"]
-    assert isinstance(sub_3_2, GroupSpec)
+    assert is_group_spec(sub_3_2)
     assert sub_3_2.members is not None
     assert sub_3_2.members["1"] == tree["/1/2/1"]
     assert group_in_3.attributes == tree[""].attributes
@@ -757,3 +759,19 @@ def test_base_group_spec_v2() -> None:
     flat = group.to_flat()
     assert type(flat[""]) is BaseGroupSpec
     assert GroupSpec.from_flat(flat) == group
+
+
+def test_narrowing_helpers_v2() -> None:
+    """The v2 narrowing helpers tell flat-hierarchy values apart."""
+    from pydantic_zarr.v2 import is_base_group_spec
+
+    array: AnyArraySpec = ArraySpec(shape=(4,), dtype="uint8", chunks=(2,), attributes={})
+    group: AnyGroupSpec = GroupSpec(attributes={}, members={"a": array})
+    base = BaseGroupSpec(attributes={})
+    assert is_array_spec(array)
+    assert not is_array_spec(group)
+    assert is_group_spec(group)
+    assert not is_group_spec(base)
+    assert is_base_group_spec(base)
+    assert is_base_group_spec(group)
+    assert not is_base_group_spec(array)
