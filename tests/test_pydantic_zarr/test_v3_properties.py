@@ -135,7 +135,7 @@ def test_zarr_generated_metadata_accepted(data: st.DataObject) -> None:
     if ZARR_PYTHON_VERSION < Version("3.1.0"):
         # zarr 3.0's to_dict returns non-JSON values (e.g. the DataType enum
         # for data_type); encode through its JSON encoder, as from_zarr does
-        from zarr.core.metadata.v3 import V3JsonEncoder
+        from zarr.core.metadata.v3 import V3JsonEncoder  # type: ignore[attr-defined]
 
         document = tuplify_json(json.loads(json.dumps(meta.to_dict(), cls=V3JsonEncoder)))
     else:
