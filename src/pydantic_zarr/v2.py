@@ -13,6 +13,7 @@ from typing import (
     Literal,
     Self,
     Union,
+    Unpack,
     cast,
     get_args,
     overload,
@@ -24,7 +25,7 @@ import numpy.typing as npt
 from packaging.version import Version
 from pydantic import AfterValidator, BaseModel, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
-from typing_extensions import TypeIs, TypeVar
+from typing_extensions import TypedDict, TypeIs, TypeVar
 
 from pydantic_zarr.core import (
     IncEx,
@@ -132,6 +133,33 @@ class NodeSpec(StrictBase):
     """
 
     zarr_format: Literal[2] = 2
+
+
+class ArraySpecUpdate(TypedDict, total=False):
+    """The fields an `ArraySpec.update` call may replace."""
+
+    attributes: TBaseAttr
+    shape: tuple[int, ...]
+    chunks: tuple[int, ...]
+    dtype: npt.DTypeLike | list[tuple[Any, ...]]
+    fill_value: FillValue
+    order: MemoryOrder
+    filters: Sequence[Mapping[str, Any]] | None
+    dimension_separator: DimensionSeparator
+    compressor: Mapping[str, Any] | None
+
+
+class BaseGroupSpecUpdate(TypedDict, total=False):
+    """The fields a `BaseGroupSpec.update` call may replace."""
+
+    attributes: TBaseAttr
+
+
+class GroupSpecUpdate(TypedDict, total=False):
+    """The fields a `GroupSpec.update` call may replace."""
+
+    attributes: TBaseAttr
+    members: Mapping[str, TBaseItem] | None
 
 
 class ArraySpec(NodeSpec, Generic[TAttr]):
@@ -411,45 +439,16 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         sync(async_array._save_metadata(meta))
         return Array(_async_array=async_array)
 
-    def with_attributes(self, attributes: TBaseAttr) -> Self:
-        """Return a revalidated copy of this spec with a new `attributes` field."""
-        return type(self).model_validate({**self.model_dump(), "attributes": attributes})
+    def update(self, **changes: Unpack[ArraySpecUpdate]) -> Self:
+        """
+        Return a revalidated copy of this model with `changes` applied.
 
-    def with_shape(self, shape: tuple[int, ...]) -> Self:
-        """Return a revalidated copy of this spec with a new `shape` field."""
-        return type(self).model_validate({**self.model_dump(), "shape": shape})
-
-    def with_chunks(self, chunks: tuple[int, ...]) -> Self:
-        """Return a revalidated copy of this spec with a new `chunks` field."""
-        return type(self).model_validate({**self.model_dump(), "chunks": chunks})
-
-    def with_dtype(self, dtype: npt.DTypeLike | list[tuple[Any, ...]]) -> Self:
-        """Return a revalidated copy of this spec with a new `dtype` field."""
-        return type(self).model_validate({**self.model_dump(), "dtype": parse_dtype_v2(dtype)})
-
-    def with_fill_value(self, fill_value: FillValue) -> Self:
-        """Return a revalidated copy of this spec with a new `fill_value` field."""
-        return type(self).model_validate({**self.model_dump(), "fill_value": fill_value})
-
-    def with_order(self, order: MemoryOrder) -> Self:
-        """Return a revalidated copy of this spec with a new `order` field."""
-        return type(self).model_validate({**self.model_dump(), "order": order})
-
-    def with_filters(self, filters: Sequence[Mapping[str, Any]] | None) -> Self:
-        """Return a revalidated copy of this spec with a new `filters` field."""
-        filters_parsed = None if filters is None else [dictify_codec(dict(f)) for f in filters]
-        return type(self).model_validate({**self.model_dump(), "filters": filters_parsed})
-
-    def with_dimension_separator(self, dimension_separator: DimensionSeparator) -> Self:
-        """Return a revalidated copy of this spec with a new `dimension_separator` field."""
-        return type(self).model_validate(
-            {**self.model_dump(), "dimension_separator": dimension_separator}
-        )
-
-    def with_compressor(self, compressor: Mapping[str, Any] | None) -> Self:
-        """Return a revalidated copy of this spec with a new `compressor` field."""
-        compressor_parsed = None if compressor is None else dictify_codec(dict(compressor))
-        return type(self).model_validate({**self.model_dump(), "compressor": compressor_parsed})
+        All changes land in one validation pass, so correlated fields (for an
+        array, a new `data_type` with a matching `fill_value`, or a new
+        `shape` with a matching `chunk_grid`) change together atomically.
+        Unlike `model_copy(update=...)`, the result is validated.
+        """
+        return type(self).model_validate({**self.model_dump(), **changes})
 
     def like(
         self,
@@ -527,9 +526,16 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
 
     attributes: TAttr
 
-    def with_attributes(self, attributes: TBaseAttr) -> Self:
-        """Return a revalidated copy of this model with a new `attributes` field."""
-        return type(self).model_validate({**self.model_dump(), "attributes": attributes})
+    def update(self, **changes: Unpack[BaseGroupSpecUpdate]) -> Self:
+        """
+        Return a revalidated copy of this model with `changes` applied.
+
+        All changes land in one validation pass, so correlated fields (for an
+        array, a new `data_type` with a matching `fill_value`, or a new
+        `shape` with a matching `chunk_grid`) change together atomically.
+        Unlike `model_copy(update=...)`, the result is validated.
+        """
+        return type(self).model_validate({**self.model_dump(), **changes})
 
     @classmethod
     def from_zarr(cls, group: zarr.Group) -> Self:
@@ -609,9 +615,17 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
 
     members: Annotated[Mapping[str, TItem] | None, AfterValidator(ensure_key_no_path)] = {}
 
-    def with_members(self, members: Mapping[str, TItem] | None) -> Self:
-        """Return a revalidated copy of this model with a new `members` field."""
-        return type(self).model_validate({**self.model_dump(), "members": members})
+    @override
+    def update(self, **changes: Unpack[GroupSpecUpdate]) -> Self:  # type: ignore[override]
+        """
+        Return a revalidated copy of this model with `changes` applied.
+
+        All changes land in one validation pass, so correlated fields (for an
+        array, a new `data_type` with a matching `fill_value`, or a new
+        `shape` with a matching `chunk_grid`) change together atomically.
+        Unlike `model_copy(update=...)`, the result is validated.
+        """
+        return type(self).model_validate({**self.model_dump(), **changes})
 
     @classmethod
     @override
