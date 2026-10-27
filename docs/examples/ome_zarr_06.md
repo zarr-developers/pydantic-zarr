@@ -5,8 +5,8 @@ multiscale image as a Zarr group whose `ome` attributes declare named
 coordinate systems, coordinate transformations, and the resolution-level
 arrays those transformations describe. This page models a trimmed version of
 that layout and shows four `pydantic-zarr` patterns: spec-style attribute
-models on `AttributesBase` (absent-vs-null handled by the `explicit_none`
-policy), a discriminated union of transformation types with cross-field
+models on `AttributesBase` (absent-vs-null told apart by the
+`pydantic.MISSING` sentinel), a discriminated union of transformation types with cross-field
 validators, a `GroupSpec` subclass that checks its metadata against its
 members with `get_path`, and a store round trip with `to_zarr` / `from_zarr`.
 The code on this page is the runnable script
@@ -20,11 +20,12 @@ run.
 
 A coordinate system is a named list of axes; a transformation maps points
 between two systems it references by `name` and/or `path`. OME-Zarr 0.6
-treats every optional key as *absent, never null*, which is exactly
-`explicit_none = "refuse"` on a shared base class — with one deliberate
-exception: the spec says a transformation reference's `path` "MAY be omitted
-or null", so `CoordinateReference` keeps the default `"keep"` policy and an
-explicit `"path": null` survives as written. The sequence transformation
+treats every optional key as *absent, never null*, which the annotations say
+directly: an optional key is `T | MISSING = MISSING`, so a `null` does not
+validate — with one deliberate exception: the spec says a transformation
+reference's `path` "MAY be omitted or null", so that one field admits `None`
+too (`str | None | MISSING`) and an explicit `"path": null` survives as
+written. The sequence transformation
 shows a cross-field rule: its scale and translation members must agree on
 dimensionality.
 

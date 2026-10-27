@@ -31,8 +31,12 @@ are its `assert` statements.
 CF attribute keys are not all legal pydantic field names: `_FillValue`
 starts with an underscore, which pydantic treats as private. Declare it as a
 field alias on [`AttributesBase`][pydantic_zarr.core.AttributesBase], which
-serializes by alias, accepts both spellings on input, preserves unknown
-keys, and omits optional fields that were left unset:
+serializes by alias, accepts both spellings on input, and preserves unknown
+keys. Optional keys are declared with the
+[`pydantic.MISSING`](https://docs.pydantic.dev/latest/concepts/experimental/#missing-sentinel)
+sentinel: a field left at `MISSING` stays out of the document, and because a
+CF attribute is a string or absent — never `null` — `None` appears in no
+annotation, so an explicit `None` is refused at validation:
 
 ```python
 --8<-- "examples/xarray_dataset.py:attrs"

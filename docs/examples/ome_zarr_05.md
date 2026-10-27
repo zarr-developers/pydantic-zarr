@@ -22,8 +22,11 @@ it claims.
 The spec's `image-label` object uses keys that are not Python identifiers
 (`label-value`) and marks most keys OPTIONAL: an absent key is meaningful,
 a JSON `null` is not. `AttributesBase` handles both: aliases are used on
-input and output, a field left unset is omitted, and the
-`explicit_none = "refuse"` policy rejects an explicit `None` outright.
+input and output, and an optional key is declared with the
+[`pydantic.MISSING`](https://docs.pydantic.dev/latest/concepts/experimental/#missing-sentinel)
+sentinel — a field left at `MISSING` stays out of the document, and since
+`None` appears in no annotation, an explicit `None` is a validation error
+rather than a stored `null`.
 
 ```python
 --8<-- "examples/ome_zarr_05.py:attrs"

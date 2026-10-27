@@ -2,7 +2,7 @@
 (https://ngff.openmicroscopy.org/specifications/0.6/): named coordinate
 systems, a discriminated union of coordinate transformations with cross-field
 validators, spec-style attribute models on `AttributesBase` (absent-vs-null
-via the `explicit_none` policy), an image `GroupSpec` whose metadata is
+told apart by the `pydantic.MISSING` sentinel), an image `GroupSpec` whose metadata is
 checked against its member arrays with `get_path`, and a round trip through
 an in-memory Zarr v3 store. The final section proves the model reproduces the
 metadata a real 0.6 writer emits: it is checked, zarr.json by zarr.json,
@@ -22,24 +22,24 @@ zarr-python): uv run --no-project --with ngff-zarr --with zarr --with . \
 # for the final reference-comparison section, which skips when it is absent.
 
 # --8<-- [start:transforms]
-from typing import Annotated, Any, ClassVar, Literal, Self, Union
+from typing import Annotated, Any, Literal, Self, Union
 
 from pydantic import ConfigDict, Field, ValidationError, model_validator
 
-from pydantic_zarr.core import AttributesBase
+from pydantic_zarr.core import MISSING, AttributesBase
 
 
 class OmeBase(AttributesBase):
-    """OME-Zarr 0.6 metadata: optional keys are absent, never null."""
+    """OME-Zarr 0.6 metadata: optional keys are absent (`MISSING`), never null,
+    so `None` appears in an annotation only where the spec allows a null."""
 
     model_config = ConfigDict(frozen=True)
-    explicit_none: ClassVar[Literal["keep", "omit", "refuse"]] = "refuse"
 
 
 class Axis(OmeBase):
     name: str = Field(min_length=1)
-    type: str | None = None
-    unit: str | None = None
+    type: str | MISSING = MISSING
+    unit: str | MISSING = MISSING
 
 
 class CoordinateSystem(OmeBase):
@@ -47,18 +47,17 @@ class CoordinateSystem(OmeBase):
     axes: tuple[Axis, ...] = Field(min_length=1)
 
 
-class CoordinateReference(AttributesBase):
+class CoordinateReference(OmeBase):
     """A transformation's input/output: 0.6 allows an explicit "path": null
-    here, so this model keeps the default explicit_none="keep" policy."""
+    here, so `path` alone admits `None` alongside the `MISSING` sentinel."""
 
-    model_config = ConfigDict(frozen=True)
-    name: str | None = None
-    path: str | None = None
+    name: str | MISSING = MISSING
+    path: str | None | MISSING = MISSING
 
 
 class TransformBase(OmeBase):
-    input: CoordinateReference | None = None
-    output: CoordinateReference | None = None
+    input: CoordinateReference | MISSING = MISSING
+    output: CoordinateReference | MISSING = MISSING
 
 
 class Identity(TransformBase):
@@ -126,12 +125,13 @@ try:
 except ValidationError as exc:
     assert "sequence members disagree on dimensionality: [2, 3]" in exc.errors()[0]["msg"]
 
-# absent-vs-null: a null unit is refused, a null reference path is kept
+# absent-vs-null: `unit` has no None in its annotation, so a null unit is a
+# validation error, while `path` admits None and a null path keeps its key
 try:
     Axis(name="x", type="space", unit=None)
     raise AssertionError("expected refusal")
 except ValidationError as exc:
-    assert "refuses an explicit None" in exc.errors()[0]["msg"]
+    assert exc.errors()[0]["type"] == "string_type"
 assert CoordinateReference(name="physical", path=None).model_dump() == {
     "name": "physical",
     "path": None,
@@ -166,9 +166,9 @@ class Dataset(OmeBase):
             and isinstance(transform.transformations[1], Translation)
         ):
             raise ValueError("a dataset sequence must be one scale then one translation")
-        if transform.input is None or transform.input.path != self.path:
+        if transform.input is MISSING or transform.input.path != self.path:
             raise ValueError(f"transform input must reference {self.path!r} by path")
-        if transform.output is None or transform.output.name is None:
+        if transform.output is MISSING or transform.output.name is MISSING:
             raise ValueError("transform output must name the intrinsic coordinate system")
         return self
 
@@ -190,7 +190,7 @@ class Multiscale(OmeBase):
         outputs: set[str] = set()
         for ds in self.datasets:
             output = ds.coordinateTransformations[0].output
-            if output is None or output.name is None:
+            if output is MISSING or output.name is MISSING:
                 # Dataset validation guarantees this; a model smuggled in via
                 # model_construct would not be re-validated, so fail loudly
                 raise ValueError("each dataset's first transform needs a named output")

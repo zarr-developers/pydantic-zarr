@@ -108,49 +108,41 @@ def test_model_like_list_vs_tuple_attrs(group_spec_cls: type) -> None:
 
 def test_attributes_base() -> None:
     """
-    `AttributesBase` serializes by alias, keeps unknown keys, omits unset
-    `None` fields, and applies the class-level `explicit_none` policy: the
-    default keeps an explicitly assigned `None`, and `"omit"` drops it.
+    `AttributesBase` serializes by alias, keeps unknown keys, and leaves
+    fields at the `MISSING` sentinel out of the dump; an assigned value —
+    `None` included, where the annotation admits it — keeps its key.
     """
-    from typing import ClassVar, Literal
-
     from pydantic import Field
 
-    from pydantic_zarr.core import AttributesBase
+    from pydantic_zarr.core import MISSING, AttributesBase
 
     class CF(AttributesBase):
-        fill: float | None = Field(default=None, alias="_FillValue")
-        units: str | None = None
+        fill: float | MISSING = Field(default=MISSING, alias="_FillValue")
+        units: str | MISSING = MISSING
+        path: str | MISSING | None = MISSING
 
     assert CF().model_dump() == {}
-    assert CF(units=None).model_dump() == {"units": None}
+    assert CF(path=None).model_dump() == {"path": None}
     assert CF(**{"_FillValue": 1.5, "proj:code": "x"}).model_dump() == {
         "_FillValue": 1.5,
         "proj:code": "x",
     }
-
-    class Omitting(CF):
-        explicit_none: ClassVar[Literal["keep", "omit", "refuse"]] = "omit"
-
-    assert Omitting(units=None).model_dump() == {}
+    assert CF.model_validate({"_FillValue": 1.5}).units is MISSING
 
 
-def test_attributes_base_refuses_explicit_none() -> None:
-    """With `explicit_none = "refuse"`, an explicitly assigned `None` is a validation error."""
-    from typing import ClassVar, Literal
-
+def test_attributes_base_refuses_none_outside_annotation() -> None:
+    """A `None` assigned to a field whose annotation has no `None` is a validation error."""
     import pytest
     from pydantic import ValidationError
 
-    from pydantic_zarr.core import AttributesBase
+    from pydantic_zarr.core import MISSING, AttributesBase
 
-    class Refusing(AttributesBase):
-        explicit_none: ClassVar[Literal["keep", "omit", "refuse"]] = "refuse"
-        unit: str | None = None
+    class Attrs(AttributesBase):
+        unit: str | MISSING = MISSING
 
-    assert Refusing().model_dump() == {}
-    with pytest.raises(ValidationError, match="refuses an explicit None"):
-        Refusing(unit=None)
+    assert Attrs().model_dump() == {}
+    with pytest.raises(ValidationError, match="Input should be a valid string"):
+        Attrs(unit=None)
 
 
 def test_get_attribute() -> None:
@@ -161,10 +153,10 @@ def test_get_attribute() -> None:
     """
     from pydantic import Field
 
-    from pydantic_zarr.core import AttributesBase, get_attribute
+    from pydantic_zarr.core import MISSING, AttributesBase, get_attribute
 
     class CF(AttributesBase):
-        fill: float | None = Field(default=None, alias="_FillValue")
+        fill: float | MISSING | None = Field(default=MISSING, alias="_FillValue")
 
     model = CF(**{"_FillValue": 1.5, "proj:code": "EPSG:32632"})
     assert get_attribute(model, "_FillValue") == 1.5
@@ -173,25 +165,16 @@ def test_get_attribute() -> None:
     assert get_attribute(model, "missing", "default") == "default"
     assert get_attribute({"k": 2}, "k") == 2
     assert get_attribute({"k": 2}, "zz") is None
-    # an unset None field serializes as an absent key, so it reads as absent,
-    # agreeing with the mapping form of the same document; an explicit None
-    # under the default "keep" policy is present
+    # a MISSING field would not appear in the serialized document, so it reads
+    # as absent, agreeing with the mapping form of the same document; an
+    # assigned None is a present key holding null, and reads as None
     assert get_attribute(CF(), "_FillValue", 0.0) == 0.0
     assert get_attribute(CF(fill=None), "_FillValue", 0.0) is None
 
     from pydantic import AliasChoices
 
     class Choosy(AttributesBase):
-        name_field: str | None = Field(default=None, validation_alias=AliasChoices("a", "b"))
+        name_field: str | MISSING = Field(default=MISSING, validation_alias=AliasChoices("a", "b"))
 
     assert get_attribute(Choosy(a="x"), "b", "dflt") == "x"
-
-    # under the "omit" policy an explicit None is absent from serialization,
-    # so it reads as absent too
-    from typing import ClassVar, Literal
-
-    class Omitting(CF):
-        explicit_none: ClassVar[Literal["keep", "omit", "refuse"]] = "omit"
-
-    assert "_FillValue" not in Omitting(fill=None).model_dump()
-    assert get_attribute(Omitting(fill=None), "_FillValue", 0.0) == 0.0
+    assert get_attribute(Choosy(), "a", "dflt") == "dflt"

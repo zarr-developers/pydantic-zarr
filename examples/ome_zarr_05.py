@@ -19,14 +19,14 @@ uv run --no-project --with-editable . --with ome-zarr --with 'zarr>=3.1' \
 # (AttributesBase, ArraySpec.from_shape_and_data_type, GroupSpec.get_path).
 
 import copy
-from typing import Annotated, ClassVar, Literal, NotRequired, Self, Union
+from typing import Annotated, Literal, NotRequired, Self, Union
 
 import zarr
 import zarr.storage
 from pydantic import ConfigDict, Field, ValidationError, model_validator
 from typing_extensions import TypedDict
 
-from pydantic_zarr.core import AttributesBase
+from pydantic_zarr.core import MISSING, AttributesBase
 from pydantic_zarr.v3 import ArraySpec, CodecLike, GroupSpec, is_array_spec
 
 # --8<-- [start:attrs]
@@ -36,36 +36,35 @@ class LabelColor(AttributesBase):
     """One entry of "image-label".colors: a label value and its RGBA color."""
 
     label_value: int = Field(alias="label-value")
-    rgba: tuple[int, int, int, int] | None = None
+    rgba: tuple[int, int, int, int] | MISSING = MISSING
 
 
 class ImageLabel(AttributesBase):
     """The "image-label" object of a label image (OME-Zarr 0.5, section 2.6)."""
 
-    explicit_none: ClassVar[Literal["keep", "omit", "refuse"]] = "refuse"
-
-    version: str | None = None
-    colors: tuple[LabelColor, ...] | None = None
+    version: str | MISSING = MISSING
+    colors: tuple[LabelColor, ...] | MISSING = MISSING
 
 
 image_label = ImageLabel.model_validate(
     {"version": "0.5", "colors": [{"label-value": 1, "rgba": [0, 128, 0, 128]}]}
 )
-assert image_label.colors is not None
+assert image_label.colors is not MISSING
 assert image_label.colors[0].label_value == 1
 
-# serialization writes the alias, and omits the unset optional key "colors"
+# serialization writes the alias, and leaves the MISSING key "colors" out
 assert ImageLabel(version="0.5", colors=(LabelColor(label_value=2),)).model_dump() == {
     "version": "0.5",
     "colors": ({"label-value": 2},),
 }
 assert ImageLabel(version="0.5").model_dump() == {"version": "0.5"}
 
-# the spec has no null-valued keys, so an explicit None is refused
+# the spec has no null-valued keys, so `None` is in no annotation — a key is
+# a string or absent (MISSING) — and an explicit None is a validation error
 try:
     ImageLabel(version=None)
 except ValidationError as e:
-    assert "refuses an explicit None" in e.errors()[0]["msg"]
+    assert e.errors()[0]["type"] == "string_type"
 else:
     raise AssertionError("expected refusal")
 # --8<-- [end:attrs]
@@ -77,8 +76,8 @@ class Axis(AttributesBase):
     """One axis (section 2.1): "name" MUST be given; "type" and "unit" SHOULD."""
 
     name: str
-    type: str | None = None
-    unit: str | None = None
+    type: str | MISSING = MISSING
+    unit: str | MISSING = MISSING
 
 
 class ScaleTransform(AttributesBase):
@@ -109,7 +108,7 @@ class Multiscale(AttributesBase):
 
     axes: tuple[Axis, ...] = Field(min_length=2, max_length=5)
     datasets: tuple[Dataset, ...] = Field(min_length=1)
-    name: str | None = None
+    name: str | MISSING = MISSING
 
     @model_validator(mode="after")
     def _transform_vectors_match_axes(self) -> Self:

@@ -21,19 +21,19 @@ an environment with xarray; from a checkout, run it as::
 # (document-level Zarr V3 metadata validation).
 
 # --8<-- [start:attrs]
-from pydantic import Field
+from pydantic import Field, ValidationError
 
-from pydantic_zarr.core import AttributesBase
+from pydantic_zarr.core import MISSING, AttributesBase
 
 
 class VariableAttrs(AttributesBase):
     """CF attributes of a netCDF-style variable."""
 
-    units: str | None = None
-    standard_name: str | None = None
-    long_name: str | None = None
-    calendar: str | None = None
-    FillValue: str | float | None = Field(default=None, alias="_FillValue")
+    units: str | MISSING = MISSING
+    standard_name: str | MISSING = MISSING
+    long_name: str | MISSING = MISSING
+    calendar: str | MISSING = MISSING
+    FillValue: str | float | MISSING = Field(default=MISSING, alias="_FillValue")
 
 
 stored = {
@@ -44,8 +44,18 @@ stored = {
 }
 attrs = VariableAttrs.model_validate(stored)
 assert attrs.FillValue == "AAAAAICHw8A="
+assert attrs.long_name is MISSING
 assert attrs.model_dump() == stored
 assert VariableAttrs(units="degrees_north").model_dump() == {"units": "degrees_north"}
+
+# a CF attribute is a string or absent, never null: `None` is in no
+# annotation, so an explicit None is a validation error, not a stored null
+try:
+    VariableAttrs(long_name=None)
+except ValidationError as exc:
+    assert exc.errors()[0]["type"] == "string_type"
+else:
+    raise AssertionError("expected a null long_name to be refused")
 # --8<-- [end:attrs]
 
 print("CF attributes: alias round trip and unset-key omission hold")
@@ -57,19 +67,19 @@ from pydantic import Field, ValidationError, model_validator
 from typing_extensions import TypedDict
 from zarr.storage import MemoryStore
 
-from pydantic_zarr.core import AttributesBase, get_attribute
+from pydantic_zarr.core import MISSING, AttributesBase, get_attribute
 from pydantic_zarr.v3 import ArraySpec, CodecLike, GroupSpec, is_array_spec
 
 
 class CFAttrs(AttributesBase):
     """CF attributes (in a real model, one subclass per variable family)."""
 
-    units: str | None = None
-    standard_name: str | None = None
-    long_name: str | None = None
-    calendar: str | None = None
-    coordinates: str | None = None
-    FillValue: str | float | None = Field(default=None, alias="_FillValue")
+    units: str | MISSING = MISSING
+    standard_name: str | MISSING = MISSING
+    long_name: str | MISSING = MISSING
+    calendar: str | MISSING = MISSING
+    coordinates: str | MISSING = MISSING
+    FillValue: str | float | MISSING = Field(default=MISSING, alias="_FillValue")
 
 
 class VariableSpec(ArraySpec[CFAttrs]):

@@ -1200,16 +1200,17 @@ def test_attributes_serialized_by_alias() -> None:
     """
     Dumping a spec serializes attribute models with their aliases, so stored
     metadata keys that are not Python identifiers (`_FillValue`, `image-label`)
-    come out under the spec's spelling, and unset `None` fields of an
-    `AttributesBase` model are omitted while explicitly set ones are kept.
+    come out under the spec's spelling, and fields of an `AttributesBase`
+    model left at `MISSING` are omitted while assigned ones — an assigned
+    `None` included, where the annotation admits it — are kept.
     """
     from pydantic import Field
 
-    from pydantic_zarr.core import AttributesBase
+    from pydantic_zarr.core import MISSING, AttributesBase
 
     class CFAttrs(AttributesBase):
-        fill: float | None = Field(default=None, alias="_FillValue")
-        units: str | None = None
+        fill: float | MISSING = Field(default=MISSING, alias="_FillValue")
+        units: str | MISSING | None = MISSING
 
     spec: AnyArraySpec = ArraySpec.from_shape_and_data_type(
         (4,), "float32", attributes=CFAttrs(units="K", _FillValue=1.5)

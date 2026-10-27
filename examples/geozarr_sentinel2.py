@@ -29,7 +29,7 @@ import zarr.storage
 from pydantic import Field, ValidationError, model_validator
 from typing_extensions import TypedDict
 
-from pydantic_zarr.core import AttributesBase, get_attribute
+from pydantic_zarr.core import MISSING, AttributesBase, get_attribute
 from pydantic_zarr.v3 import ArraySpec, CodecLike, GroupSpec, is_array_spec
 
 
@@ -69,7 +69,7 @@ class GridMappingAttrs(AttributesBase):
     """CF grid-mapping (CRS) variable attributes."""
 
     grid_mapping_name: str
-    crs_wkt: str | None = None
+    crs_wkt: str | MISSING = MISSING
 
 
 class GridMappingArray(ArraySpec[GridMappingAttrs]): ...

@@ -5,9 +5,7 @@ from collections.abc import Mapping, Sequence
 from typing import (
     TYPE_CHECKING,
     Any,
-    ClassVar,
     Literal,
-    Self,
     TypeVar,
     overload,
     override,
@@ -19,10 +17,21 @@ from pydantic import (
     AliasChoices,
     BaseModel,
     ConfigDict,
-    SerializerFunctionWrapHandler,
-    model_serializer,
-    model_validator,
 )
+
+if TYPE_CHECKING:
+    # both pydantic spellings below re-export pydantic_core's sentinel, and
+    # unlike them this import resolves statically on every supported pydantic
+    from pydantic_core import MISSING
+else:
+    try:
+        # the MISSING sentinel is stable from pydantic 2.14
+        from pydantic import MISSING
+    except ImportError:
+        # on pydantic 2.12 / 2.13 it lives in the experimental module, with
+        # the same object and behavior; re-exported here so users of
+        # AttributesBase have one import spanning the supported pydantic range
+        from pydantic.experimental.missing_sentinel import MISSING
 
 if TYPE_CHECKING:
     import zarr
@@ -89,10 +98,18 @@ class AttributesBase(BaseModel):
     - Keys that are not Python identifiers (`_FillValue`, `image-label`,
       `proj:code`) are declared as field aliases; serialization writes the
       alias, and validation accepts both spellings.
-    - A field left unset whose value is `None` serializes as an absent key
-      rather than `null`, matching specs where optional keys are omitted.
-      A field explicitly set to `None` keeps its key, so a spec that
-      distinguishes absent from null can express both.
+    - Optional keys are declared with the [`MISSING`
+      sentinel](https://docs.pydantic.dev/latest/concepts/experimental/#missing-sentinel)
+      (pydantic's, re-exported as `pydantic_zarr.core.MISSING` so one import
+      spans the supported pydantic range) — `units: str | MISSING = MISSING`
+      — and a field left at `MISSING` is
+      excluded from serialization, so "absent key" is a value of its own
+      rather than a serializer policy. The annotation then says exactly what
+      the spec says: where `null` is meaningful it includes `None`
+      (`str | None | MISSING`) and an assigned `None` keeps its key as
+      `null`; where a key is present or absent but never null — most
+      "optional keys are omitted" specs — it leaves `None` out, and an
+      explicit `None` is a validation error.
 
     Unknown keys are preserved and round-trip (`extra="allow"`): attributes
     read from a store keep the keys this model does not declare, so the model
@@ -102,50 +119,9 @@ class AttributesBase(BaseModel):
     with `by_alias=True`, so attributes dumped through a spec use aliases
     whatever this model's own config says, unless the caller passes
     `by_alias=False` to the spec's dump.
-
-    What an explicitly assigned `None` serializes as is the class-level
-    `explicit_none` policy; the default keeps it as `null`.
     """
 
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True, extra="allow")
-
-    explicit_none: ClassVar[Literal["keep", "omit", "refuse"]] = "keep"
-    """
-    What an explicitly assigned `None` means:
-    `"keep"` (the default) serializes it as `null`, for specs where null is
-    meaningful; `"omit"` drops the key, exactly like an unset field; and
-    `"refuse"` rejects it at validation (construction and `model_validate`;
-    plain attribute assignment and `model_construct` bypass validation, as
-    they do every validator), for specs where a key is absent or non-null,
-    never null (most "optional keys are omitted" specs).
-    """
-
-    @model_validator(mode="after")
-    def _refuse_explicit_none(self) -> Self:
-        if type(self).explicit_none == "refuse":
-            for name in self.model_fields_set:
-                if name in type(self).model_fields and getattr(self, name) is None:
-                    msg = (
-                        f"Field {name!r} is None, and {type(self).__name__} refuses an "
-                        'explicit None (explicit_none="refuse"): leave the field unset '
-                        "for an absent key."
-                    )
-                    raise ValueError(msg)
-        return self
-
-    @model_serializer(mode="wrap")
-    def _omit_unset_none(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
-        dumped = handler(self)
-        omit_explicit = type(self).explicit_none == "omit"
-        for name, field in type(self).model_fields.items():
-            if name in self.model_fields_set and not omit_explicit:
-                continue
-            # the serialized key may be the field name or its alias,
-            # depending on the serialization flags in effect
-            for key in {name, field.serialization_alias or field.alias or name}:
-                if key in dumped and dumped[key] is None:
-                    del dumped[key]
-        return dumped
 
 
 def get_attribute(attributes: object, key: str, default: object = None) -> object:
@@ -154,10 +130,9 @@ def get_attribute(attributes: object, key: str, default: object = None) -> objec
     `Mapping` is read by key, and a pydantic model by the field whose name or
     alias matches the key, extra (undeclared) fields included. Returns
     `default` when the key is absent — for a model, absent means the key would
-    not appear in its serialization, so a `None`-valued field an
-    `AttributesBase` subclass omits (unset, or explicitly set under the
-    `"omit"` policy) reads as the default, exactly as the mapping form of the
-    same document would. A cross-member validator on a group whose attributes
+    not appear in its serialization, so a field left at the `MISSING`
+    sentinel reads as the default, exactly as the mapping form of the same
+    document would. A cross-member validator on a group whose attributes
     type admits both forms needs exactly this.
     """
     if isinstance(attributes, Mapping):
@@ -173,12 +148,8 @@ def get_attribute(attributes: object, key: str, default: object = None) -> objec
             if key not in aliases:
                 continue
             value = getattr(attributes, name)
-            if value is None and isinstance(attributes, AttributesBase):
-                omitted = name not in attributes.model_fields_set or (
-                    type(attributes).explicit_none == "omit"
-                )
-                if omitted:
-                    return default
+            if value is MISSING:
+                return default
             return value
         extra = attributes.__pydantic_extra__
         if extra is not None and key in extra:

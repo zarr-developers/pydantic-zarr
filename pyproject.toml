@@ -23,7 +23,11 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "pydantic>=2.11",
+    # >= 2.12 for the MISSING sentinel (experimental there, stable in 2.14;
+    # pydantic_zarr.core imports whichever spelling exists). The floor stays
+    # below 2.13 so pydantic-zarr remains co-installable with downstreams
+    # that cap pydantic (ome-zarr-models, and through it ome-zarr-py).
+    "pydantic>=2.12",
     "numpy>=2.0.0",
     "packaging>=21.0",
     "zarr-metadata>=0.6.0",
@@ -58,6 +62,9 @@ docs = [
     "mkdocs-material",
     "mkdocstrings[python]",
     "pytest-examples",
+    # docs pages embed pydantic error URLs (errors.pydantic.dev/<version>/...)
+    # in print-checked output, so the docs build pins the minor version; it
+    # cannot move past 2.12 while ome-zarr (via ome-zarr-models) caps pydantic
     "pydantic==2.12.*",
     "zarr>=3.1.0",
     "towncrier",
