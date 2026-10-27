@@ -282,6 +282,20 @@ def _numpy_dtype_from_v3(data_type: str | Mapping[str, object]) -> np.dtype[Any]
 
 _SINGLE_BYTE_DATA_TYPES = ("bool", "int8", "uint8")
 
+# Derived defaults for the variable-length data types, which have no numpy
+# equivalent: fill value and codec pipeline, zarrs-style. zarr-python spells
+# the variable-length bytes data type "variable_length_bytes" (its V3
+# specification is still pending); "bytes" is the name zarrs and the
+# zarr-extensions drafts use. Both derive the same defaults.
+_VARIABLE_LENGTH_DATA_TYPES: Mapping[str, tuple[str, tuple[CodecLike, ...]]] = {
+    "string": ("", ({"name": "vlen-utf8"},)),
+    "bytes": ("", ({"name": "vlen-bytes"},)),
+    "variable_length_bytes": ("", ({"name": "vlen-bytes"},)),
+}
+# chunk guessing needs an element size; variable-length elements have none,
+# so use the size of a pointer, as numpy object arrays do
+_VARIABLE_LENGTH_NOMINAL_ITEM_SIZE = 8
+
 
 DTypeLike = Annotated[str | AnyNamedConfig, BeforeValidator(parse_dtype_v3)]
 """A data type declaration (name or named configuration), accepting numpy data types as input."""
@@ -385,48 +399,65 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
     @model_validator(mode="before")
     @classmethod
-    def canonicalize_bytes_codec(cls, data: object) -> object:
+    def canonicalize_codecs(cls, data: object) -> object:
         """
-        Normalize the `bytes` codec the way zarr-python stores it: for a
-        single-byte data type the `endian` configuration is a no-op and
-        zarr-python omits it from written metadata, so it is dropped here at
-        validation time. A spec constructed with either spelling then compares
-        equal — to one constructed with the other, and to what `from_zarr`
-        reads back. (`zarr-metadata`'s canonical document model does not yet
-        equate the two spellings; once it does, this normalization becomes
-        redundant but stays harmless.)
+        Normalize codec spellings the way zarr-python stores them, so a spec
+        constructed with either spelling compares equal — to one constructed
+        with the other, and to what `from_zarr` reads back. Two rules: an
+        empty `configuration` mapping is dropped from any codec, and the
+        `bytes` codec's `endian` configuration, a no-op for a single-byte
+        data type, is dropped for those data types. Both reach inside a
+        sharding codec's inner pipeline (same data type); its index codecs,
+        which encode the uint64 index, keep their endianness.
+        (`zarr-metadata`'s canonical document model already equates the
+        empty-configuration spellings, but not the endian ones; `==` on
+        specs compares fields literally, hence the normalization here.)
         """
-        if not isinstance(data, Mapping) or "codecs" not in data or "data_type" not in data:
-            return data
-        try:
-            parsed = parse_dtype_v3(data["data_type"])
-        except (ValueError, TypeError):
-            return data
-        if parsed not in _SINGLE_BYTE_DATA_TYPES:
+        if not isinstance(data, Mapping) or "codecs" not in data:
             return data
         codecs = data["codecs"]
         if isinstance(codecs, (str, Mapping)) or not isinstance(codecs, Sequence):
             # a lone codec is refused by the field validator; leave it alone
             return data
+        try:
+            parsed = parse_dtype_v3(data["data_type"]) if "data_type" in data else None
+        except (ValueError, TypeError):
+            parsed = None
+        drop_endian = parsed in _SINGLE_BYTE_DATA_TYPES
 
-        def normalize(codec: object) -> object:
+        def normalize(codec: object, *, drop_endian: bool) -> object:
             if not isinstance(codec, Mapping):
                 return codec
             name = codec.get("name")
             config = codec.get("configuration")
-            if name == "bytes" and isinstance(config, Mapping) and set(config) == {"endian"}:
+            if isinstance(config, Mapping) and not config:
+                return {key: value for key, value in codec.items() if key != "configuration"}
+            if (
+                drop_endian
+                and name == "bytes"
+                and isinstance(config, Mapping)
+                and set(config) == {"endian"}
+            ):
                 return {"name": "bytes"}
             if name == "sharding_indexed" and isinstance(config, Mapping):
-                # the inner codecs encode chunks of the same data type, so
-                # the same normalization applies; the index codecs encode
-                # the uint64 index, where endianness is meaningful
+                new_config = dict(config)
                 inner = config.get("codecs")
                 if isinstance(inner, Sequence) and not isinstance(inner, str):
-                    inner_normalized = tuple(normalize(inner_codec) for inner_codec in inner)
-                    return {**codec, "configuration": {**config, "codecs": inner_normalized}}
+                    new_config["codecs"] = tuple(
+                        normalize(inner_codec, drop_endian=drop_endian) for inner_codec in inner
+                    )
+                index = config.get("index_codecs")
+                if isinstance(index, Sequence) and not isinstance(index, str):
+                    new_config["index_codecs"] = tuple(
+                        normalize(index_codec, drop_endian=False) for index_codec in index
+                    )
+                return {**codec, "configuration": new_config}
             return codec
 
-        return {**data, "codecs": tuple(normalize(codec) for codec in codecs)}
+        return {
+            **data,
+            "codecs": tuple(normalize(codec, drop_endian=drop_endian) for codec in codecs),
+        }
 
     @model_validator(mode="after")
     def validate_dimension_names(self) -> Self:
@@ -609,8 +640,10 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         zarr-python applies when no chunks are given), the `default` chunk key
         encoding with the `/` separator, and the fill value and codecs
         `from_array` derives (`"NaN"` / `0` / `False` / NaT fills; a `bytes`
-        codec, carrying explicit endianness for multi-byte data types;
-        compression is not assumed). Everything lands in one validation pass,
+        codec, carrying explicit endianness for multi-byte data types, or the
+        matching variable-length codec and empty fill for the `string` and
+        `bytes` data types; compression is not assumed). Everything lands in
+        one validation pass,
         so a subclass that narrows a field (required attributes, say) takes
         the narrowed values through `overrides`. For a data type with no
         numpy equivalent (an unknown extension data type) no fill value,
@@ -625,16 +658,25 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         """
         parsed_data_type = parse_dtype_v3(data_type)
         np_dtype = _numpy_dtype_from_v3(parsed_data_type)
+        variable_length = (
+            _VARIABLE_LENGTH_DATA_TYPES.get(parsed_data_type)
+            if np_dtype is None and isinstance(parsed_data_type, str)
+            else None
+        )
         document: dict[str, object] = {
             "shape": tuple(shape),
             "data_type": parsed_data_type,
             "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
         }
         if "chunk_grid" not in overrides:
+            if np_dtype is not None:
+                item_size = np_dtype.itemsize
+            elif variable_length is not None:
+                item_size = _VARIABLE_LENGTH_NOMINAL_ITEM_SIZE
+            else:
+                item_size = None
             chunk_shape = (
-                guess_chunks(tuple(shape), np_dtype.itemsize)
-                if np_dtype is not None
-                else tuple(shape)
+                guess_chunks(tuple(shape), item_size) if item_size is not None else tuple(shape)
             )
             document["chunk_grid"] = {
                 "name": "regular",
@@ -642,7 +684,13 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             }
         underived = tuple(name for name in ("fill_value", "codecs") if name not in overrides)
         if underived:
-            if np_dtype is None:
+            if variable_length is not None:
+                fill_default, codecs_default = variable_length
+                if "fill_value" in underived:
+                    document["fill_value"] = fill_default
+                if "codecs" in underived:
+                    document["codecs"] = codecs_default
+            elif np_dtype is None:
                 msg = (
                     f"Data type {parsed_data_type!r} has no numpy equivalent, so no default "
                     f"can be derived for it: pass {' and '.join(underived)} explicitly."
@@ -660,11 +708,12 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
                             "what you meant)"
                         )
                 raise ValueError(msg)
-            stand_in = SimpleNamespace(dtype=np_dtype)
-            if "fill_value" in underived:
-                document["fill_value"] = auto_fill_value(stand_in)
-            if "codecs" in underived:
-                document["codecs"] = auto_codecs(stand_in)
+            else:
+                stand_in = SimpleNamespace(dtype=np_dtype)
+                if "fill_value" in underived:
+                    document["fill_value"] = auto_fill_value(stand_in)
+                if "codecs" in underived:
+                    document["codecs"] = auto_codecs(stand_in)
         return cls.model_validate({**document, **overrides})
 
     @classmethod
@@ -790,6 +839,37 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         Unlike `model_copy(update=...)`, the result is validated.
         """
         return type(self).model_validate({**self.model_dump(), **changes})
+
+    def with_sharding_codec(
+        self,
+        subchunk_shape: Sequence[int],
+        *,
+        index_location: Literal["start", "end"] = "end",
+    ) -> Self:
+        """
+        Return a copy of this spec sharded with the `sharding_indexed` codec:
+        the existing chunk shape becomes the shard shape, the existing codec
+        pipeline moves inside the shards as the subchunk pipeline, and the
+        shard index takes the default encoding (little-endian `bytes` plus
+        `crc32c`, at `index_location`). The subchunk shape must evenly divide
+        the chunk shape, which document validation enforces. Applying this to
+        an already-sharded spec nests the shards (the sharding codec is
+        recursive); the new subchunk shape must then be divisible by the
+        existing inner chunk shape, which document validation also enforces.
+        """
+        sharding_codec: AnyNamedConfig = {
+            "name": "sharding_indexed",
+            "configuration": {
+                "chunk_shape": tuple(subchunk_shape),
+                "codecs": self.codecs,
+                "index_codecs": (
+                    {"name": "bytes", "configuration": {"endian": "little"}},
+                    {"name": "crc32c"},
+                ),
+                "index_location": index_location,
+            },
+        }
+        return self.update(codecs=(sharding_codec,))
 
     def like(
         self,

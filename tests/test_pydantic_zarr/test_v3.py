@@ -206,11 +206,18 @@ def test_arrayspec_from_zarr(dtype_example: DTypeExample) -> None:
 
     arr_spec: AnyArraySpec = ArraySpec.from_zarr(arr)
     expected = json.loads(store["zarr.json"].to_bytes(), object_hook=tuplify_json)
+    # The spec canonicalizes two codec spellings zarr-python writes: an empty
+    # configuration mapping (any codec), and the no-op endian configuration on
+    # the bytes codec for single-byte data types (zarr-python 3.0 wrote it).
+    # The rewrites mirror the validator's exact conditions, so any other
+    # wrongly dropped configuration would still fail the comparison.
+    expected["codecs"] = tuple(
+        {k: v for k, v in codec.items() if k != "configuration"}
+        if isinstance(codec, dict) and codec.get("configuration") == {}
+        else codec
+        for codec in expected["codecs"]
+    )
     if data_type in _SINGLE_BYTE_DATA_TYPES:
-        # zarr-python 3.0 wrote a no-op endian configuration on the bytes
-        # codec for single-byte data types; the spec canonicalizes it away.
-        # The rewrite mirrors the validator's exact condition, so a wrongly
-        # dropped non-endian configuration would still fail the comparison.
         expected["codecs"] = tuple(
             {"name": "bytes"}
             if (
@@ -1333,17 +1340,6 @@ def test_bytes_codec_canonicalized_inside_sharding() -> None:
     assert index_codecs[0] == {"name": "bytes", "configuration": {"endian": "little"}}
 
 
-def test_from_shape_and_data_type_non_numpy_name_rejected() -> None:
-    """
-    A Zarr V3 data type name that numpy happens to parse as something else
-    (the variable-length `"bytes"` type reads as a zero-length bytestring
-    dtype) is not treated as a numpy equivalent: deriving defaults for it is
-    refused.
-    """
-    with pytest.raises(ValueError, match="fill_value and codecs"):
-        ArraySpec.from_shape_and_data_type((2,), "bytes")
-
-
 def test_bare_codec_rejected() -> None:
     """
     A single codec where a pipeline is expected is refused with a clear
@@ -1366,3 +1362,101 @@ def test_from_shape_and_data_type_numpy_style_name_suggestion() -> None:
     """
     with pytest.raises(ValueError, match="Zarr V3 form is 'int64'"):
         ArraySpec.from_shape_and_data_type((4,), "i8")
+
+
+@pytest.mark.parametrize(
+    ("data_type", "expected_codecs"),
+    [
+        ("string", ({"name": "vlen-utf8"},)),
+        ("bytes", ({"name": "vlen-bytes"},)),
+        ("variable_length_bytes", ({"name": "vlen-bytes"},)),
+    ],
+    ids=str,
+)
+def test_from_shape_and_data_type_variable_length(
+    data_type: str, expected_codecs: tuple[Any, ...]
+) -> None:
+    """
+    The variable-length data types derive their defaults the way zarrs does:
+    an empty fill value and the matching variable-length codec, with chunks
+    guessed from a nominal element size.
+    """
+    spec: AnyArraySpec = ArraySpec.from_shape_and_data_type((4,), data_type)
+    assert spec.fill_value == ""
+    assert spec.codecs == expected_codecs
+    assert spec.chunk_grid == {"name": "regular", "configuration": {"chunk_shape": (4,)}}
+
+
+def test_empty_codec_configuration_canonicalized() -> None:
+    """
+    An empty codec `configuration` mapping is dropped at validation, matching
+    the spelling difference zarr-python writes, so specs constructed with
+    either spelling compare equal.
+    """
+    with_empty: AnyArraySpec = ArraySpec.from_shape_and_data_type(
+        (4,), "string", codecs=({"name": "vlen-utf8", "configuration": {}},)
+    )
+    bare: AnyArraySpec = ArraySpec.from_shape_and_data_type((4,), "string")
+    assert with_empty.codecs == ({"name": "vlen-utf8"},)
+    assert with_empty == bare
+
+
+@pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr is required for this test")
+def test_variable_length_round_trip() -> None:
+    """A derived variable-length string spec round-trips a store with plain equality."""
+    import zarr
+
+    spec: AnyArraySpec = ArraySpec.from_shape_and_data_type((4,), "string")
+    arr = spec.to_zarr(zarr.storage.MemoryStore(), path="x")
+    assert ArraySpec.from_zarr(arr) == spec
+
+
+def test_with_sharding_codec() -> None:
+    """
+    `with_sharding_codec` moves the existing codec pipeline inside shards:
+    the chunk shape becomes the shard shape, the subchunk shape is the inner
+    chunk shape, the index takes the default encoding at the requested
+    location, and a compatible second application nests the shards.
+    """
+    spec: AnyArraySpec = ArraySpec.from_shape_and_data_type(
+        (16, 16),
+        "uint16",
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (8, 8)}},
+    )
+    sharded = spec.with_sharding_codec((4, 4))
+    assert sharded.chunk_grid == spec.chunk_grid
+    outer = sharded.codecs[0]
+    assert isinstance(outer, dict)
+    config = outer["configuration"]
+    assert isinstance(config, dict)
+    assert outer["name"] == "sharding_indexed"
+    assert config["chunk_shape"] == (4, 4)
+    assert config["codecs"] == spec.codecs
+    assert config["index_location"] == "end"
+    started = spec.with_sharding_codec((4, 4), index_location="start")
+    started_outer = started.codecs[0]
+    assert isinstance(started_outer, dict)
+    started_config = started_outer["configuration"]
+    assert isinstance(started_config, dict)
+    assert started_config["index_location"] == "start"
+    nested = sharded.with_sharding_codec((4, 4))
+    nested_outer = nested.codecs[0]
+    assert isinstance(nested_outer, dict)
+    nested_config = nested_outer["configuration"]
+    assert isinstance(nested_config, dict)
+    nested_inner = nested_config["codecs"]
+    assert isinstance(nested_inner, tuple)
+    first_inner = nested_inner[0]
+    assert isinstance(first_inner, dict)
+    assert first_inner["name"] == "sharding_indexed"
+
+
+def test_with_sharding_codec_non_dividing_rejected() -> None:
+    """A subchunk shape that does not divide the chunk shape is refused."""
+    spec: AnyArraySpec = ArraySpec.from_shape_and_data_type(
+        (16, 16),
+        "uint16",
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (8, 8)}},
+    )
+    with pytest.raises(ValidationError, match="divide"):
+        spec.with_sharding_codec((3, 3))
