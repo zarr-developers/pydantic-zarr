@@ -1245,7 +1245,8 @@ def test_group_like_base_group_member_projection() -> None:
     A `BaseGroupSpec` compares as the projection it is — by the group's own
     metadata alone — at the top level and in member position alike, so the
     comparison does not depend on depth. A `GroupSpec` with unknown members
-    (`members=None`) is a different state: it matches only the same.
+    (`members=None`) is a different state: it matches the same, or a
+    projection, never a group with known members.
     """
     g_full: AnyGroupSpec = GroupSpec(attributes={"a": 1}, members={})
     g_base = BaseGroupSpec(attributes={"a": 1})

@@ -185,3 +185,13 @@ def test_get_attribute() -> None:
         name_field: str | None = Field(default=None, validation_alias=AliasChoices("a", "b"))
 
     assert get_attribute(Choosy(a="x"), "b", "dflt") == "x"
+
+    # under the "omit" policy an explicit None is absent from serialization,
+    # so it reads as absent too
+    from typing import ClassVar, Literal
+
+    class Omitting(CF):
+        explicit_none: ClassVar[Literal["keep", "omit", "refuse"]] = "omit"
+
+    assert "_FillValue" not in Omitting(fill=None).model_dump()
+    assert get_attribute(Omitting(fill=None), "_FillValue", 0.0) == 0.0
