@@ -285,21 +285,45 @@ _SINGLE_BYTE_DATA_TYPES = ("bool", "int8", "uint8")
 
 DTypeLike = Annotated[str | AnyNamedConfig, BeforeValidator(parse_dtype_v3)]
 """A data type declaration (name or named configuration), accepting numpy data types as input."""
-CodecTuple = Annotated[tuple[CodecLike, ...], BeforeValidator(ensure_multiple)]
 
 
-class ArraySpecUpdate(TypedDict, total=False):
-    """The fields an `ArraySpec.update` call may replace."""
+def reject_bare_codec(data: object) -> object:
+    """
+    Refuse a single codec where a pipeline is expected: iterating a lone
+    mapping or string would validate its keys or characters as codec names.
+    """
+    if isinstance(data, (str, Mapping)):
+        msg = f"`codecs` takes a sequence of codecs; got a single codec ({data!r}). Wrap it in a sequence."
+        # pydantic turns ValueError into a validation error; TypeError would escape raw
+        raise ValueError(msg)  # noqa: TRY004
+    return data
+
+
+CodecTuple = Annotated[
+    tuple[CodecLike, ...], BeforeValidator(ensure_multiple), BeforeValidator(reject_bare_codec)
+]
+
+
+class ArraySpecOverrides(TypedDict, total=False):
+    """
+    The fields `ArraySpec.from_shape_and_data_type` may override: every
+    `ArraySpec` field except the two the method takes positionally.
+    """
 
     attributes: TBaseAttr
-    shape: tuple[int, ...]
-    data_type: npt.DTypeLike | Mapping[str, object]
     chunk_grid: RegularChunking
-    chunk_key_encoding: DefaultChunkKeyEncoding | V2ChunkKeyEncoding
+    chunk_key_encoding: DefaultChunkKeyEncodingMetadata | V2ChunkKeyEncodingMetadata
     fill_value: FillValue
     codecs: Sequence[CodecLike]
     storage_transformers: Sequence[AnyNamedConfig]
     dimension_names: Sequence[str | None] | None
+
+
+class ArraySpecUpdate(ArraySpecOverrides, total=False):
+    """The fields an `ArraySpec.update` call may replace."""
+
+    shape: tuple[int, ...]
+    data_type: npt.DTypeLike | Mapping[str, object]
 
 
 class BaseGroupSpecUpdate(TypedDict, total=False):
@@ -381,9 +405,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         if parsed not in _SINGLE_BYTE_DATA_TYPES:
             return data
         codecs = data["codecs"]
-        if isinstance(codecs, (str, Mapping)):
-            codecs = (codecs,)
-        if not isinstance(codecs, Sequence):
+        if isinstance(codecs, (str, Mapping)) or not isinstance(codecs, Sequence):
+            # a lone codec is refused by the field validator; leave it alone
             return data
 
         def normalize(codec: object) -> object:
@@ -569,91 +592,80 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         )
 
     @classmethod
-    def from_shape(
+    def from_shape_and_data_type(
         cls,
         shape: Sequence[int],
         data_type: npt.DTypeLike | Mapping[str, object],
-        *,
-        chunks: Literal["auto"] | Sequence[int] = "auto",
-        attributes: Literal["auto"] | TAttr | Mapping[str, object] = "auto",
-        chunk_key_encoding: Literal["auto"] | AnyNamedConfig = "auto",
-        fill_value: Literal["auto"] | FillValue = "auto",
-        codecs: Literal["auto"] | Sequence[CodecLike] = "auto",
-        storage_transformers: Sequence[AnyNamedConfig] = (),
-        dimension_names: Sequence[str | None] | None = None,
+        **overrides: Unpack[ArraySpecOverrides],
     ) -> Self:
         """
         Create an `ArraySpec` from a shape and a data type alone: the
         metadata-only counterpart to `from_array`, for when there is no array
         object to describe.
 
-        Every other field has a spec default or is derived from the data type:
-        `chunks` defaults to a size-guessed chunk shape (the same heuristic
-        zarr-python applies when no chunks are given), the chunk key encoding
-        to the `default` encoding with the `/` separator, and the fill value
-        and codecs to the same values `from_array` derives (`"NaN"` / `0` /
-        `False` / NaT fills; a `bytes` codec, carrying explicit endianness for
-        multi-byte data types; compression is not assumed). `attributes`
-        defaults to the empty dict, so a spec whose attributes type requires
-        fields needs them passed explicitly. For a data type with no numpy
-        equivalent (an unknown extension data type) no fill value, codec or
-        chunk guess can be derived: pass `fill_value` and `codecs` explicitly
-        there, and `chunks` defaults to the whole shape.
+        `overrides` takes the fields an `update` call takes, minus the two
+        this method takes positionally. Every field absent from it gets a
+        spec default or one derived from the data type: a size-guessed regular chunk grid (the same heuristic
+        zarr-python applies when no chunks are given), the `default` chunk key
+        encoding with the `/` separator, and the fill value and codecs
+        `from_array` derives (`"NaN"` / `0` / `False` / NaT fills; a `bytes`
+        codec, carrying explicit endianness for multi-byte data types;
+        compression is not assumed). Everything lands in one validation pass,
+        so a subclass that narrows a field (required attributes, say) takes
+        the narrowed values through `overrides`. For a data type with no
+        numpy equivalent (an unknown extension data type) no fill value,
+        codecs or chunk guess can be derived: pass `fill_value` and `codecs`
+        there, and the chunk grid defaults to one whole-array chunk.
 
         Examples
         --------
         >>> from pydantic_zarr.v3 import ArraySpec
-        >>> ArraySpec.from_shape((10, 10), "uint16", chunks=(5, 5), dimension_names=("y", "x"))
-        ArraySpec(zarr_format=3, node_type='array', attributes={}, shape=(10, 10), data_type='uint16', chunk_grid={'name': 'regular', 'configuration': {'chunk_shape': (5, 5)}}, chunk_key_encoding={'name': 'default', 'configuration': {'separator': '/'}}, fill_value=0, codecs=({'name': 'bytes', 'configuration': {'endian': 'little'}},), storage_transformers=(), dimension_names=('y', 'x'))
+        >>> ArraySpec.from_shape_and_data_type((10, 10), "uint16", dimension_names=("y", "x"))
+        ArraySpec(zarr_format=3, node_type='array', attributes={}, shape=(10, 10), data_type='uint16', chunk_grid={'name': 'regular', 'configuration': {'chunk_shape': (10, 10)}}, chunk_key_encoding={'name': 'default', 'configuration': {'separator': '/'}}, fill_value=0, codecs=({'name': 'bytes', 'configuration': {'endian': 'little'}},), storage_transformers=(), dimension_names=('y', 'x'))
         """
         parsed_data_type = parse_dtype_v3(data_type)
         np_dtype = _numpy_dtype_from_v3(parsed_data_type)
-        if chunks == "auto":
+        document: dict[str, object] = {
+            "shape": tuple(shape),
+            "data_type": parsed_data_type,
+            "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
+        }
+        if "chunk_grid" not in overrides:
             chunk_shape = (
                 guess_chunks(tuple(shape), np_dtype.itemsize)
                 if np_dtype is not None
                 else tuple(shape)
             )
-        else:
-            chunk_shape = tuple(chunks)
-        chunk_key_actual: AnyNamedConfig
-        if chunk_key_encoding == "auto":
-            chunk_key_actual = {"name": "default", "configuration": {"separator": "/"}}
-        else:
-            chunk_key_actual = chunk_key_encoding
-
-        fill_value_actual: FillValue = None
-        codecs_actual: tuple[CodecLike, ...] = ()
-        if fill_value == "auto" or codecs == "auto":
+            document["chunk_grid"] = {
+                "name": "regular",
+                "configuration": {"chunk_shape": chunk_shape},
+            }
+        underived = tuple(name for name in ("fill_value", "codecs") if name not in overrides)
+        if underived:
             if np_dtype is None:
-                underived = " and ".join(
-                    name
-                    for name, value in (("fill_value", fill_value), ("codecs", codecs))
-                    if value == "auto"
-                )
                 msg = (
                     f"Data type {parsed_data_type!r} has no numpy equivalent, so no default "
-                    f"can be derived for it: pass {underived} explicitly."
+                    f"can be derived for it: pass {' and '.join(underived)} explicitly."
                 )
+                if isinstance(parsed_data_type, str):
+                    try:
+                        as_numpy = np.dtype(parsed_data_type)
+                        suggestion = parse_dtype_v3(as_numpy)
+                    except (TypeError, ValueError):
+                        pass
+                    else:
+                        msg += (
+                            f" (numpy reads {parsed_data_type!r} as {as_numpy!r}, whose "
+                            f"Zarr V3 form is {suggestion!r}: pass that instead if it is "
+                            "what you meant)"
+                        )
                 raise ValueError(msg)
             stand_in = SimpleNamespace(dtype=np_dtype)
-            fill_value_actual = auto_fill_value(stand_in) if fill_value == "auto" else fill_value
-            codecs_actual = auto_codecs(stand_in) if codecs == "auto" else tuple(codecs)
-        else:
-            fill_value_actual = fill_value
-            codecs_actual = tuple(codecs)
-
-        return cls(
-            attributes=cast("TAttr", {} if attributes == "auto" else attributes),
-            shape=tuple(shape),
-            data_type=parsed_data_type,
-            chunk_grid={"name": "regular", "configuration": {"chunk_shape": chunk_shape}},
-            chunk_key_encoding=chunk_key_actual,
-            fill_value=fill_value_actual,
-            codecs=codecs_actual,
-            storage_transformers=tuple(storage_transformers),
-            dimension_names=dimension_names,
-        )
+            if "fill_value" in underived:
+                document["fill_value"] = auto_fill_value(stand_in)
+            if "codecs" in underived:
+                document["codecs"] = auto_codecs(stand_in)
+        return cls.model_validate({**document, **overrides})
 
     @classmethod
     def from_zarr(cls, array: zarr.Array) -> Self:

@@ -148,7 +148,7 @@ group's actual members: every `datasets[*].path` resolves (via `get_path`) to
 an array whose dimensionality matches the coordinate systems, every level
 maps into the same intrinsic system, and the scale vector length equals the
 image dimensionality. The resolution-level arrays are metadata-only
-`ArraySpec.from_shape` documents, the hierarchy round-trips through an
+`ArraySpec.from_shape_and_data_type` documents, the hierarchy round-trips through an
 in-memory Zarr v3 store, and invalid layouts are refused at construction.
 (The full spec allows identity and scale-then-translation sequences per
 dataset and ten more transformation types; this trimmed model fixes each
@@ -281,8 +281,8 @@ attributes = ImageAttributes(
     )
 )
 members = {
-    "s0": ArraySpec.from_shape((16, 16), "uint16"),
-    "s1": ArraySpec.from_shape((8, 8), "uint16"),
+    "s0": ArraySpec.from_shape_and_data_type((16, 16), "uint16"),
+    "s1": ArraySpec.from_shape_and_data_type((8, 8), "uint16"),
 }
 image = Image(attributes=attributes, members=members)
 print(image["s0"].shape)

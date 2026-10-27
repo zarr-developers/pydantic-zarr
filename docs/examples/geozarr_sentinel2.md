@@ -16,10 +16,11 @@ spec, and cross-member validation (`get_attribute`, `get_path`) for rules like
 CF and GeoZarr attribute keys are often not Python identifiers
 (`_ARRAY_DIMENSIONS`, `proj:code`). On `AttributesBase`, a `Field(alias=...)`
 is the whole story: both spellings validate, and serialization — including the
-metadata written by `to_zarr` — uses the alias. `ArraySpec.from_shape` builds
-the array metadata around the attributes; we pass explicit `chunks` here to
-keep the example small, but `chunks="auto"` guesses size-appropriate chunks
-for real shapes (a 10980×10980 Sentinel-2 band gets chunks of (687, 1373)).
+metadata written by `to_zarr` — uses the alias. `ArraySpec.from_shape_and_data_type` builds
+the array metadata around the attributes; we pass an explicit `chunk_grid`
+here to keep the example small, but when it is omitted the method guesses
+size-appropriate chunks for real shapes (a 10980×10980 Sentinel-2 band gets
+chunks of (687, 1373)).
 
 ```python
 from pydantic import Field
@@ -41,10 +42,10 @@ class BandArray(ArraySpec[BandAttrs]):
     """A Sentinel-2 band: uint16 digital numbers on the (y, x) grid."""
 
 
-b02 = BandArray.from_shape(
+b02 = BandArray.from_shape_and_data_type(
     (180, 180),
     "uint16",
-    chunks=(90, 90),
+    chunk_grid={"name": "regular", "configuration": {"chunk_shape": (90, 90)}},
     attributes={"_ARRAY_DIMENSIONS": ["y", "x"], "grid_mapping": "spatial_ref"},
     dimension_names=("y", "x"),
 )
@@ -146,17 +147,17 @@ class R10mDataset(GeoZarrDataset):
 
 
 def band() -> BandArray:
-    return BandArray.from_shape(
+    return BandArray.from_shape_and_data_type(
         (180, 180),
         "uint16",
-        chunks=(90, 90),
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (90, 90)}},
         attributes={"_ARRAY_DIMENSIONS": ["y", "x"], "grid_mapping": "spatial_ref"},
         dimension_names=("y", "x"),
     )
 
 
 def coord(axis: str) -> ArraySpec:
-    return ArraySpec.from_shape(
+    return ArraySpec.from_shape_and_data_type(
         (180,),
         "float64",
         attributes={"_ARRAY_DIMENSIONS": [axis]},
@@ -172,7 +173,7 @@ r10m = R10mDataset(
         "b08": band(),
         "x": coord("x"),
         "y": coord("y"),
-        "spatial_ref": GridMappingArray.from_shape(
+        "spatial_ref": GridMappingArray.from_shape_and_data_type(
             (), "int32", attributes={"grid_mapping_name": "transverse_mercator"}
         ),
     }
@@ -240,16 +241,16 @@ class R10mDataset(GeoZarrDataset):
 
 
 def band(grid_mapping: str) -> BandArray:
-    return BandArray.from_shape(
+    return BandArray.from_shape_and_data_type(
         (180, 180),
         "uint16",
-        chunks=(90, 90),
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (90, 90)}},
         attributes={"_ARRAY_DIMENSIONS": ["y", "x"], "grid_mapping": grid_mapping},
         dimension_names=("y", "x"),
     )
 
 
-crs = ArraySpec.from_shape((), "int32", attributes={"grid_mapping_name": "transverse_mercator"})
+crs = ArraySpec.from_shape_and_data_type((), "int32", attributes={"grid_mapping_name": "transverse_mercator"})
 
 # b05 is a 20 m band: it does not belong in the 10 m dataset
 try:

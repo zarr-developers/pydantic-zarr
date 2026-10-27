@@ -71,7 +71,7 @@ The layout rules live in three `ArraySpec` / `GroupSpec` subclasses:
 
 A concrete dataset then fixes its member set with a closed `TypedDict`:
 undeclared names are refused and missing members are required. Arrays are
-built with [`ArraySpec.from_shape`][pydantic_zarr.v3.ArraySpec.from_shape],
+built with [`ArraySpec.from_shape_and_data_type`][pydantic_zarr.v3.ArraySpec.from_shape_and_data_type],
 which fills in the whole-shape chunk grid, the `/` chunk key encoding, and a
 data-type-derived fill value; only the codec pipeline is spelled out, since
 xarray appends a `zstd` codec to the default `bytes` codec.
@@ -156,7 +156,7 @@ CODECS = (
 dataset = ClimateDataset(
     attributes={"Conventions": "CF-1.8", "title": "Example climate dataset"},
     members={
-        "time": CoordinateSpec.from_shape(
+        "time": CoordinateSpec.from_shape_and_data_type(
             (4,),
             "int64",
             dimension_names=("time",),
@@ -165,21 +165,21 @@ dataset = ClimateDataset(
                 units="days since 2024-01-01", calendar="proleptic_gregorian"
             ),
         ),
-        "lat": CoordinateSpec.from_shape(
+        "lat": CoordinateSpec.from_shape_and_data_type(
             (3,),
             "float64",
             dimension_names=("lat",),
             codecs=CODECS,
             attributes=CFAttrs(units="degrees_north", standard_name="latitude"),
         ),
-        "lon": CoordinateSpec.from_shape(
+        "lon": CoordinateSpec.from_shape_and_data_type(
             (5,),
             "float64",
             dimension_names=("lon",),
             codecs=CODECS,
             attributes=CFAttrs(units="degrees_east", standard_name="longitude"),
         ),
-        "temperature": VariableSpec.from_shape(
+        "temperature": VariableSpec.from_shape_and_data_type(
             (4, 3, 5),
             "float32",
             dimension_names=("time", "lat", "lon"),
@@ -226,7 +226,7 @@ try:
         attributes=dataset.attributes,
         members=dict(dataset.members)
         | {
-            "temperature": VariableSpec.from_shape(
+            "temperature": VariableSpec.from_shape_and_data_type(
                 (4, 2, 5),
                 "float32",
                 dimension_names=("time", "lat", "lon"),

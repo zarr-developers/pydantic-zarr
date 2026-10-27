@@ -205,8 +205,8 @@ multiscale = Multiscale(
 image = MultiscaleImage(
     attributes=ImageAttributes(ome=OmeImageBlock(version="0.5", multiscales=(multiscale,))),
     members={
-        "0": ArraySpec.from_shape((2, 32, 32), "uint16", dimension_names=("c", "y", "x")),
-        "1": ArraySpec.from_shape((2, 16, 16), "uint16", dimension_names=("c", "y", "x")),
+        "0": ArraySpec.from_shape_and_data_type((2, 32, 32), "uint16", dimension_names=("c", "y", "x")),
+        "1": ArraySpec.from_shape_and_data_type((2, 16, 16), "uint16", dimension_names=("c", "y", "x")),
         "labels": GroupSpec(attributes={"ome": {"version": "0.5", "labels": []}}),
     },
 )
