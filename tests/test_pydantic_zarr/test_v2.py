@@ -10,7 +10,7 @@ from contextlib import suppress
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from pydantic_zarr.core import tuplify_json
 
@@ -789,3 +789,35 @@ def test_member_name_validation_survives_narrowing_v2() -> None:
     array: AnyArraySpec = ArraySpec(shape=(4,), dtype="uint8", chunks=(2,), attributes={})
     with pytest.raises(ValidationError, match="/"):
         Narrowed(attributes={}, members={"a/b": array})
+
+
+def test_attributes_default() -> None:
+    """
+    `attributes` defaults to the empty dict on every node class, matching a
+    stored node with no attributes document.
+    """
+    assert ArraySpec(shape=(4,), dtype="uint8", chunks=(2,)).attributes == {}
+    assert GroupSpec().attributes == {}
+    assert BaseGroupSpec().attributes == {}
+    assert GroupSpec.model_validate({"zarr_format": 2}).attributes == {}
+
+
+def test_attributes_default_narrowed_type_rejected() -> None:
+    """
+    The `attributes` default is validated, so a model whose attributes type
+    does not accept the empty dict refuses construction without attributes
+    instead of silently holding a value of the wrong type.
+    """
+
+    class RequiredAttrs(BaseModel):
+        required: int
+
+    with pytest.raises(ValidationError):
+        GroupSpec[RequiredAttrs]()
+
+
+def test_like_filters_keyword_only() -> None:
+    """`like` takes its `include`/`exclude` filters as keyword arguments only."""
+    group: AnyGroupSpec = GroupSpec()
+    with pytest.raises(TypeError):
+        group.like(group, {"attributes"})  # type: ignore[call-arg]

@@ -23,7 +23,7 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
-from pydantic import BaseModel, BeforeValidator, ValidationInfo, model_validator
+from pydantic import BaseModel, BeforeValidator, Field, ValidationInfo, model_validator
 from typing_extensions import TypedDict, TypeIs, TypeVar
 from zarr_metadata import (
     DefaultChunkKeyEncodingMetadata,
@@ -274,8 +274,11 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
     node_type: Literal['array']
         The node type. Must be the string 'array'.
-    attributes: TAttr
-        User-defined metadata associated with this array.
+    attributes: TAttr, default = {}
+        User-defined metadata associated with this array. The default is the
+        empty dict, matching the Zarr V3 spec, where the `attributes` key is
+        optional; the default is validated against `TAttr`, so a model whose
+        attributes type does not accept the empty dict still requires them.
     shape: Sequence[int]
         The shape of this array.
     data_type: str
@@ -296,7 +299,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     """
 
     node_type: Literal["array"] = "array"
-    attributes: TAttr
+    attributes: TAttr = Field(default={}, validate_default=True)
     shape: tuple[int, ...]
     data_type: DTypeLike
     chunk_grid: RegularChunkGridMetadata
@@ -387,16 +390,40 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         Parameters
         ----------
         array :
-            object that conforms to the numpy array API.
-            The shape and dtype of this object will be used to construct an ArraySpec.
-            If the `chunks` keyword argument is not given, the shape of the array will
-            be used for the chunks.
+            object that conforms to the numpy array API, or a `zarr.Array`.
+            A `zarr.Array` carries its complete metadata document, which is
+            read whole (via `from_zarr`), so chunk grid, chunk key encoding,
+            fill value, codecs and attributes are all taken from the array;
+            for other objects they are probed from same-named attributes.
+            Keyword arguments other than `"auto"` override what the array
+            provides either way.
 
         Returns
         -------
         An instance of ArraySpec with properties derived from the provided array.
 
         """
+        if (zarr_mod := sys.modules.get("zarr")) is not None and isinstance(array, zarr_mod.Array):
+            spec = cls.from_zarr(array)
+            changes: dict[str, object] = {}
+            if attributes != "auto":
+                changes["attributes"] = attributes
+            if chunk_grid != "auto":
+                changes["chunk_grid"] = chunk_grid
+            if chunk_key_encoding != "auto":
+                changes["chunk_key_encoding"] = chunk_key_encoding
+            if fill_value != "auto":
+                changes["fill_value"] = fill_value
+            if codecs != "auto":
+                changes["codecs"] = tuple(codecs)
+            if storage_transformers != "auto":
+                changes["storage_transformers"] = tuple(storage_transformers)
+            if dimension_names != "auto":
+                changes["dimension_names"] = dimension_names
+            if changes:
+                return cls.model_validate({**spec.model_dump(), **changes})
+            return spec
+
         if attributes == "auto":
             attributes_actual = cast("TAttr", auto_attributes(array))
         else:
@@ -676,21 +703,22 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
     ----------
     node_type: Literal['group']
         The type of this node. Must be the string "group".
-    attributes: TAttr
-        The user-defined attributes of this group.
+    attributes: TAttr, default = {}
+        The user-defined attributes of this group. The default is the empty
+        dict, matching the Zarr V3 spec, where the `attributes` key is
+        optional; the default is validated against `TAttr`, so a model whose
+        attributes type does not accept the empty dict still requires them.
     """
 
     node_type: Literal["group"] = "group"
-    attributes: TAttr
+    attributes: TAttr = Field(default={}, validate_default=True)
 
     def update(self, **changes: Unpack[BaseGroupSpecUpdate]) -> Self:
         """
         Return a revalidated copy of this model with `changes` applied.
 
-        All changes land in one validation pass, so correlated fields (for an
-        array, a new `data_type` with a matching `fill_value`, or a new
-        `shape` with a matching `chunk_grid`) change together atomically.
-        Unlike `model_copy(update=...)`, the result is validated.
+        Unlike `model_copy(update=...)`, the result is validated, so an
+        invalid change is refused.
         """
         return type(self).model_validate({**self.model_dump(), **changes})
 
@@ -732,6 +760,7 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
     def like(
         self,
         other: AnyBaseGroupSpec | AnyGroupSpec | zarr.Group,
+        *,
         include: IncEx = None,
         exclude: IncEx = None,
     ) -> bool:
@@ -786,10 +815,9 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         """
         Return a revalidated copy of this model with `changes` applied.
 
-        All changes land in one validation pass, so correlated fields (for an
-        array, a new `data_type` with a matching `fill_value`, or a new
-        `shape` with a matching `chunk_grid`) change together atomically.
-        Unlike `model_copy(update=...)`, the result is validated.
+        All changes land in one validation pass, so `attributes` and `members`
+        change together atomically. Unlike `model_copy(update=...)`, the
+        result is validated.
         """
         return type(self).model_validate({**self.model_dump(), **changes})
 
@@ -1016,15 +1044,20 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
     def like(
         self,
         other: AnyBaseGroupSpec | AnyGroupSpec | zarr.Group,
+        *,
         include: IncEx = None,
         exclude: IncEx = None,
     ) -> bool:
         """
         Compare a `GroupSpec` to another `GroupSpec` or a `zarr.Group`.
 
-        This is parameterized over the fields to exclude or include in the comparison.
-        Models are first converted to dict via the `model_dump` method of `pydantic.BaseModel`,
-        then compared with the `==` operator.
+        With no `include`/`exclude` filters, the groups' own metadata is
+        compared as plain fields and each member is compared by that member's
+        own `like`, so member arrays compare by the meaning of their metadata
+        documents (a fill value written `"NaN"` equals one written
+        `"0x7fc00000"`), exactly as `ArraySpec.like` judges them directly.
+        With filters, models are converted to `dict` via the `model_dump`
+        method of `pydantic.BaseModel` and compared with the `==` operator.
 
         Parameters
         ----------
@@ -1076,6 +1109,26 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
             other_parsed = GroupSpec.from_zarr(other)
         else:
             other_parsed = other  # type: ignore[assignment]
+
+        if include is None and exclude is None:
+            # Compare the groups' own metadata as plain fields and each member
+            # by that member's own `like`, so member arrays compare by the
+            # meaning of their metadata documents, exactly as `ArraySpec.like`
+            # judges them directly.
+            if not model_like(self, other_parsed, exclude={"members"}):
+                return False
+            if self.members is None or other_parsed.members is None:
+                return self.members is None and other_parsed.members is None
+            if self.members.keys() != other_parsed.members.keys():
+                return False
+            for name, member in self.members.items():
+                other_member = other_parsed.members[name]
+                if isinstance(member, ArraySpec):
+                    if not isinstance(other_member, ArraySpec) or not member.like(other_member):
+                        return False
+                elif isinstance(other_member, ArraySpec) or not member.like(other_member):
+                    return False
+            return True
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
@@ -1185,14 +1238,20 @@ def from_flat(
 
     Examples
     --------
-    >>> from pydantic_zarr.v3 import from_flat, GroupSpec, ArraySpec
-    >>> import numpy as np
-    >>> tree = {'': ArraySpec.from_array(np.arange(10))}
-    >>> from_flat(tree) # special case of a Zarr array at the root of the hierarchy
-    ArraySpec(zarr_format=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)
-    >>> tree = {'/foo': ArraySpec.from_array(np.arange(10))}
-    >>> from_flat(tree) # note that an implicit Group is created
-    GroupSpec(zarr_format=2, attributes={}, members={'foo': ArraySpec(zarr_format=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)})
+    ```py
+    from pydantic_zarr.v3 import from_flat, ArraySpec
+    import numpy as np
+    tree = {'': ArraySpec.from_array(np.arange(10))}
+    from_flat(tree) # special case of a Zarr array at the root of the hierarchy
+    # ArraySpec(zarr_format=3, node_type='array', attributes={}, shape=(10,), ...)
+    tree = {'/foo': ArraySpec.from_array(np.arange(10))}
+    from_flat(tree) # note that an implicit Group is created
+    # GroupSpec(
+    #    zarr_format=3,
+    #    node_type='group',
+    #    attributes={},
+    #    members={'foo': ArraySpec(zarr_format=3, node_type='array', ...)})
+    ```
     """
 
     # minimal check that the keys are valid
@@ -1226,11 +1285,17 @@ def from_flat_group(
 
     Examples
     --------
-    >>> from pydantic_zarr.v3 import from_flat_group, GroupSpec, ArraySpec
-    >>> import numpy as np
-    >>> tree = {'/foo': ArraySpec.from_array(np.arange(10))}
-    >>> from_flat_group(tree) # note that an implicit Group is created
-    GroupSpec(zarr_format=2, attributes={}, members={'foo': ArraySpec(zarr_format=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)})
+    ```py
+    from pydantic_zarr.v3 import from_flat_group, ArraySpec
+    import numpy as np
+    tree = {'/foo': ArraySpec.from_array(np.arange(10))}
+    from_flat_group(tree) # note that an implicit Group is created
+    # GroupSpec(
+    #    zarr_format=3,
+    #    node_type='group',
+    #    attributes={},
+    #    members={'foo': ArraySpec(zarr_format=3, node_type='array', ...)})
+    ```
     """
     root_name = ""
     sep = "/"

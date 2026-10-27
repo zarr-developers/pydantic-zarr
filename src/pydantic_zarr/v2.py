@@ -23,7 +23,7 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
 from typing_extensions import TypedDict, TypeIs, TypeVar
 from zarr_metadata import ZarrV2ArrayDimensionSeparator, ZarrV2ArrayOrder
@@ -171,8 +171,12 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
     Attributes
     ----------
-    attributes: TAttr
-        User-defined metadata associated with this array. Should be JSON-serializable.
+    attributes: TAttr, default = {}
+        User-defined metadata associated with this array. Should be
+        JSON-serializable. The default is the empty dict, matching a stored
+        array with no attributes document; the default is validated against
+        `TAttr`, so a model whose attributes type does not accept the empty
+        dict still requires them.
     shape: tuple[int, ...]
         The shape of this array.
     dtype: str
@@ -196,7 +200,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         The default is "/".
     """
 
-    attributes: TAttr
+    attributes: TAttr = Field(default={}, validate_default=True)
     shape: tuple[int, ...]
     chunks: tuple[int, ...]
     dtype: DtypeStr | list[tuple[Any, ...]]
@@ -521,20 +525,21 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
 
     Attributes
     ----------
-    attributes: TAttr
-        The user-defined attributes of this group.
+    attributes: TAttr, default = {}
+        The user-defined attributes of this group. The default is the empty
+        dict, matching a stored group with no attributes document; the default
+        is validated against `TAttr`, so a model whose attributes type does
+        not accept the empty dict still requires them.
     """
 
-    attributes: TAttr
+    attributes: TAttr = Field(default={}, validate_default=True)
 
     def update(self, **changes: Unpack[BaseGroupSpecUpdate]) -> Self:
         """
         Return a revalidated copy of this model with `changes` applied.
 
-        All changes land in one validation pass, so correlated fields (for an
-        array, a new `data_type` with a matching `fill_value`, or a new
-        `shape` with a matching `chunk_grid`) change together atomically.
-        Unlike `model_copy(update=...)`, the result is validated.
+        Unlike `model_copy(update=...)`, the result is validated, so an
+        invalid change is refused.
         """
         return type(self).model_validate({**self.model_dump(), **changes})
 
@@ -576,6 +581,7 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
     def like(
         self,
         other: AnyBaseGroupSpec | AnyGroupSpec | zarr.Group,
+        *,
         include: IncEx = None,
         exclude: IncEx = None,
     ) -> bool:
@@ -633,10 +639,9 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         """
         Return a revalidated copy of this model with `changes` applied.
 
-        All changes land in one validation pass, so correlated fields (for an
-        array, a new `data_type` with a matching `fill_value`, or a new
-        `shape` with a matching `chunk_grid`) change together atomically.
-        Unlike `model_copy(update=...)`, the result is validated.
+        All changes land in one validation pass, so `attributes` and `members`
+        change together atomically. Unlike `model_copy(update=...)`, the
+        result is validated.
         """
         return type(self).model_validate({**self.model_dump(), **changes})
 
@@ -781,6 +786,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
     def like(
         self,
         other: AnyBaseGroupSpec | AnyGroupSpec | zarr.Group,
+        *,
         include: IncEx = None,
         exclude: IncEx = None,
     ) -> bool:

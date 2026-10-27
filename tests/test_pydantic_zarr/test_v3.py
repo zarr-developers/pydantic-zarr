@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 import pytest
 from packaging.version import Version
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from pydantic_zarr.core import tuplify_json
 from pydantic_zarr.v3 import (
@@ -910,3 +910,127 @@ def test_member_name_validation_survives_narrowing() -> None:
     array: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
     with pytest.raises(ValidationError, match="member name"):
         Narrowed(attributes={}, members={"__reserved": array})
+
+
+def test_group_like_canonical() -> None:
+    """
+    With no `include`/`exclude` filters, `GroupSpec.like` compares each member
+    by that member's own `like`, so member arrays whose metadata documents
+    differ only in spelling (a fill value written "NaN" against its
+    hexadecimal byte form) are alike, at any depth, exactly as they are when
+    compared directly. With filters, the comparison is the raw field
+    comparison, where the spellings differ.
+    """
+    a_nan: AnyArraySpec = ArraySpec(**_v3_array_kwargs(fill_value="NaN"))
+    a_hex: AnyArraySpec = ArraySpec(**_v3_array_kwargs(fill_value="0x7fc00000"))
+    assert a_nan.like(a_hex)
+    g_nan: AnyGroupSpec = GroupSpec(attributes={}, members={"x": a_nan})
+    g_hex: AnyGroupSpec = GroupSpec(attributes={}, members={"x": a_hex})
+    assert g_nan.like(g_hex)
+    assert g_hex.like(g_nan)
+    nested_nan: AnyGroupSpec = GroupSpec(attributes={}, members={"g": g_nan})
+    nested_hex: AnyGroupSpec = GroupSpec(attributes={}, members={"g": g_hex})
+    assert nested_nan.like(nested_hex)
+    assert g_nan.like(g_hex, include={"attributes"})
+    assert not g_nan.like(g_hex, include={"members"})
+
+
+@pytest.mark.parametrize(
+    "other_members",
+    [
+        {},
+        None,
+        {"y": ArraySpec(**_v3_array_kwargs())},
+        {"x": GroupSpec(attributes={})},
+        {"x": ArraySpec(**_v3_array_kwargs(shape=(8, 8)))},
+    ],
+    ids=["no_members", "none_members", "renamed_member", "kind_mismatch", "unalike_member"],
+)
+def test_group_like_canonical_unalike(other_members: dict[str, object] | None) -> None:
+    """
+    The canonical group comparison still distinguishes groups that differ in
+    substance: a missing, renamed or unalike member, members of different node
+    kinds, and unknown (`None`) against empty members are all not alike.
+    """
+    group: AnyGroupSpec = GroupSpec(attributes={}, members={"x": ArraySpec(**_v3_array_kwargs())})
+    other = GroupSpec.model_validate(
+        {"zarr_format": 3, "node_type": "group", "attributes": {}, "members": other_members}
+    )
+    assert not group.like(other)
+    assert not other.like(group)
+
+
+@pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr is required for this test")
+def test_from_array_zarr_array_fidelity() -> None:
+    """
+    `from_array` on a `zarr.Array` reads the array's whole stored metadata
+    document, so the chunk grid, chunk key encoding and attributes survive,
+    and an explicit (non-"auto") keyword argument overrides the stored value.
+    """
+    import zarr
+
+    arr = zarr.create_array(
+        store={},
+        shape=(64, 64),
+        dtype="float32",
+        chunks=(16, 16),
+        chunk_key_encoding={"name": "v2", "separator": "."},
+        zarr_format=3,
+    )
+    arr.attrs.put({"a": 1})
+    spec: AnyArraySpec = ArraySpec.from_array(arr)
+    assert spec == ArraySpec.from_zarr(arr)
+    assert spec.chunk_grid == {"name": "regular", "configuration": {"chunk_shape": (16, 16)}}
+    assert spec.chunk_key_encoding == {"name": "v2", "configuration": {"separator": "."}}
+    assert spec.attributes == {"a": 1}
+    overridden: AnyArraySpec = ArraySpec.from_array(arr, attributes={"b": 2}, fill_value=1.5)
+    assert overridden.attributes == {"b": 2}
+    assert overridden.fill_value == 1.5
+    assert overridden.chunk_grid == spec.chunk_grid
+
+
+@pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr is required for this test")
+def test_from_array_zarr_v2_array_rejected() -> None:
+    """A Zarr V2 `zarr.Array` is refused by the v3 `from_array`."""
+    import zarr
+
+    arr = zarr.create_array(store={}, shape=(4,), dtype="uint8", chunks=(2,), zarr_format=2)
+    with pytest.raises(ValueError, match="Only zarr v3 arrays"):
+        ArraySpec.from_array(arr)
+
+
+def test_attributes_default() -> None:
+    """
+    `attributes` defaults to the empty dict on every node class, and a stored
+    metadata document without the `attributes` key (which the Zarr V3 spec
+    makes optional) parses.
+    """
+    array_kwargs = _v3_array_kwargs()
+    array_kwargs.pop("attributes")
+    assert ArraySpec(**array_kwargs).attributes == {}
+    assert GroupSpec().attributes == {}
+    assert BaseGroupSpec().attributes == {}
+    assert GroupSpec.model_validate({"zarr_format": 3, "node_type": "group"}).attributes == {}
+    array_document = {"zarr_format": 3, "node_type": "array", **array_kwargs}
+    assert ArraySpec.model_validate(array_document).attributes == {}
+
+
+def test_attributes_default_narrowed_type_rejected() -> None:
+    """
+    The `attributes` default is validated, so a model whose attributes type
+    does not accept the empty dict refuses construction without attributes
+    instead of silently holding a value of the wrong type.
+    """
+
+    class RequiredAttrs(BaseModel):
+        required: int
+
+    with pytest.raises(ValidationError):
+        GroupSpec[RequiredAttrs]()
+
+
+def test_like_filters_keyword_only() -> None:
+    """`like` takes its `include`/`exclude` filters as keyword arguments only."""
+    group: AnyGroupSpec = GroupSpec()
+    with pytest.raises(TypeError):
+        group.like(group, {"attributes"})  # type: ignore[call-arg]
