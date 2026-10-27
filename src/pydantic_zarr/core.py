@@ -6,9 +6,11 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Literal,
+    Protocol,
     TypeVar,
     overload,
     override,
+    runtime_checkable,
 )
 
 import numpy as np
@@ -155,6 +157,60 @@ def get_attribute(attributes: object, key: str, default: object = None) -> objec
         if extra is not None and key in extra:
             return extra[key]
     return default
+
+
+@runtime_checkable
+class _HasMembers(Protocol):
+    """
+    The structural shape path traversal needs from a group: a `members`
+    mapping, `None` when the members are unknown. The v2 and v3 `GroupSpec`
+    both have it; `ArraySpec` and `BaseGroupSpec` do not, which is how
+    traversal tells a group with members from every other node.
+    """
+
+    @property
+    def members(self) -> Mapping[str, object] | None: ...
+
+
+def resolve_member_path(node: object, path: str) -> object:
+    """
+    Return the node at a `/`-separated path of member names relative to
+    `node` (`"a"`, `"a/b/c"`; leading and trailing `/` are ignored). The
+    shared engine of the v2 and v3 `GroupSpec.resolve_path`, whose docstrings
+    carry the user-facing contract.
+
+    Raises
+    ------
+    ValueError
+        If the path holds no member names, or an empty one (`"a//b"`).
+    KeyError
+        Naming the segment that failed: a member name that does not exist, a
+        segment that descends into a node that is not a group with members,
+        or a group whose members are unknown (`members=None`).
+    """
+    stripped = path.strip("/")
+    if stripped == "":
+        msg = f"Invalid path {path!r}: it holds no member names."
+        raise ValueError(msg)
+    resolved: list[str] = []
+    for segment in stripped.split("/"):
+        where = "/".join(resolved) if resolved else "this group"
+        if segment == "":
+            msg = f"Invalid path {path!r}: empty member name."
+            raise ValueError(msg)
+        if not isinstance(node, _HasMembers):
+            msg = f"Cannot resolve {segment!r}: {where} is not a group with members."
+            raise KeyError(msg)
+        if node.members is None:
+            msg = f"Cannot resolve {segment!r}: the members of {where} are unknown (members=None)."
+            raise KeyError(msg)
+        if segment not in node.members:
+            available = ", ".join(repr(name) for name in sorted(node.members)) or "(none)"
+            msg = f"No member named {segment!r} in {where}. Members: {available}."
+            raise KeyError(msg)
+        node = node.members[segment]
+        resolved.append(segment)
+    return node
 
 
 def guess_chunks(shape: tuple[int, ...], typesize: int) -> tuple[int, ...]:

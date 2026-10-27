@@ -63,6 +63,7 @@ from pydantic_zarr.core import (
     guess_chunks,
     maybe_node,
     model_like,
+    resolve_member_path,
     tuplify_json,
 )
 
@@ -1122,30 +1123,8 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
             exist, a segment that descends into a node that is not a group,
             or a group whose members are unknown (`members=None`).
         """
-        stripped = path.strip("/")
-        if stripped == "":
-            msg = f"Invalid path {path!r}: it holds no member names."
-            raise ValueError(msg)
-        node: AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec = self
-        resolved: list[str] = []
-        for segment in stripped.split("/"):
-            where = "/".join(resolved) if resolved else "this group"
-            if segment == "":
-                msg = f"Invalid path {path!r}: empty member name."
-                raise ValueError(msg)
-            if not isinstance(node, GroupSpec):
-                msg = f"Cannot resolve {segment!r}: {where} is not a group with members."
-                raise KeyError(msg)
-            if node.members is None:
-                msg = f"Cannot resolve {segment!r}: the members of {where} are unknown (members=None)."
-                raise KeyError(msg)
-            if segment not in node.members:
-                available = ", ".join(repr(name) for name in sorted(node.members)) or "(none)"
-                msg = f"No member named {segment!r} in {where}. Members: {available}."
-                raise KeyError(msg)
-            node = node.members[segment]
-            resolved.append(segment)
-        return node
+        node = resolve_member_path(self, path)
+        return cast("AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec", node)
 
     def __getitem__(self, path: str) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec:
         """`group[path]` resolves a member path: see `resolve_path`."""
