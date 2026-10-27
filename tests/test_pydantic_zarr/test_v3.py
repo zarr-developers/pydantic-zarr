@@ -111,6 +111,9 @@ def test_from_array() -> None:
 
 
 @pytest.mark.filterwarnings("ignore:The data type :FutureWarning")
+# zarr >= 3.4 warns that an aligned structured dtype is converted to a packed
+# field layout; the codec derivation under test is unaffected
+@pytest.mark.filterwarnings("ignore:The structured dtype is converted to a packed field layout")
 @pytest.mark.parametrize(
     ("dtype", "expected_codecs"),
     [
