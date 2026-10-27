@@ -190,11 +190,16 @@ def parse_dtype_v3(
     that names no data type in the scope but that numpy reads as a data type
     (``"i8"``, ``"float"``, ``">f4"``) is ambiguous — far more likely a numpy
     spelling than an unknown extension — and is refused, with the Zarr V3
-    spelling suggested when one exists.
+    spelling suggested when one exists. The spellings zarr-python has stored
+    for the variable-length data types (``"str"``, ``"variable_length_bytes"``)
+    are recognized although no scope claims them, so documents zarr-python
+    wrote pass through.
     """
     if isinstance(dtype, Mapping):
         return dtype
     if isinstance(dtype, str):
+        if dtype in _VARIABLE_LENGTH_DATA_TYPES:
+            return dtype
         scope_actual = CORE_AND_EXTENSIONS if scope is None else scope
         if scope_actual.claimant(DataTypeDefinition, dtype) is not None:
             return dtype
@@ -328,9 +333,14 @@ _SINGLE_BYTE_DATA_TYPES = ("bool", "int8", "uint8")
 # equivalent: fill value and codec pipeline, zarrs-style. zarr-python spells
 # the variable-length bytes data type "variable_length_bytes" (its V3
 # specification is still pending); "bytes" is the name zarrs and the
-# zarr-extensions drafts use. Both derive the same defaults.
+# zarr-extensions drafts use. Both derive the same defaults. "str" is the
+# spelling zarr-python 3.0 stored for the variable-length string data type
+# (renamed "string" in 3.1), so documents it wrote still hold it; membership
+# here also exempts a name from the ambiguous-numpy-spelling guard in
+# `parse_dtype_v3` (numpy reads "str" as a zero-length unicode type).
 _VARIABLE_LENGTH_DATA_TYPES: Mapping[str, tuple[str, tuple[CodecLike, ...]]] = {
     "string": ("", ({"name": "vlen-utf8"},)),
+    "str": ("", ({"name": "vlen-utf8"},)),
     "bytes": ("", ({"name": "vlen-bytes"},)),
     "variable_length_bytes": ("", ({"name": "vlen-bytes"},)),
 }

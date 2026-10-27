@@ -547,6 +547,10 @@ def test_parse_dtype_v3_passes_v3_declarations_through() -> None:
     assert parse_dtype_v3("r16") == "r16"
     assert parse_dtype_v3("bytes") == "bytes"
     assert parse_dtype_v3("variable_length_bytes") == "variable_length_bytes"
+    # zarr-python 3.0 stored "str" for the variable-length string data type;
+    # numpy reads the same string as a unicode type, but documents zarr-python
+    # wrote must keep passing through
+    assert parse_dtype_v3("str") == "str"
     declaration = {"name": "numpy.datetime64", "configuration": {"unit": "s", "scale_factor": 1}}
     assert parse_dtype_v3(declaration) == declaration
 
