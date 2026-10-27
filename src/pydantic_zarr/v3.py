@@ -1298,6 +1298,10 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         own `like`, so member arrays compare by the meaning of their metadata
         documents (a fill value written `"NaN"` equals one written
         `"0x7fc00000"`), exactly as `ArraySpec.like` judges them directly.
+        A `BaseGroupSpec` — a group considered without members — compares as
+        that projection at any depth: by the group's own metadata alone. A
+        `GroupSpec` whose members are unknown (`members=None`) is alike only
+        a group whose members are likewise unknown.
         With filters, models are converted to `dict` via the `model_dump`
         method of `pydantic.BaseModel` and compared with the `==` operator.
 
@@ -1344,8 +1348,11 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         """
 
         if isinstance(other, BaseGroupSpec) and not isinstance(other, GroupSpec):
-            # a group without members compares by the group's own metadata
-            return super().like(other, include=include, exclude=exclude)
+            # a group without members compares by the group's own metadata;
+            # this side projects to its own metadata too, or the comparison
+            # would always fail on the members field itself
+            projection = BaseGroupSpec(attributes=self.attributes)
+            return projection.like(other, include=include, exclude=exclude)
         other_parsed: AnyGroupSpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
             other_parsed = GroupSpec.from_zarr(other)
@@ -1370,13 +1377,12 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
                         return False
                 elif isinstance(other_member, ArraySpec):
                     return False
-                elif isinstance(member, GroupSpec) != isinstance(other_member, GroupSpec):
-                    # a group with members and one without them (a
-                    # `BaseGroupSpec`, the shape a depth-limited `from_zarr`
-                    # leaves at its cutoff) differ structurally, whatever
-                    # their own metadata says
-                    return False
                 elif not member.like(other_member):
+                    # a `BaseGroupSpec` member is the projection it is
+                    # everywhere else: it compares by the group's own
+                    # metadata, at any depth, exactly as at the top level.
+                    # A `GroupSpec` member with unknown members
+                    # (members=None) still matches only the same.
                     return False
             return True
 

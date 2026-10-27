@@ -1240,22 +1240,33 @@ def test_get_path() -> None:
         root.resolve_path("a/zz")
 
 
-def test_group_like_base_group_member_unalike() -> None:
+def test_group_like_base_group_member_projection() -> None:
     """
-    In the canonical group comparison, a member `GroupSpec` (members known)
-    and a member `BaseGroupSpec` (no members) are not alike, even with equal
-    attributes: a depth-limited read differs structurally from a full one.
+    A `BaseGroupSpec` compares as the projection it is — by the group's own
+    metadata alone — at the top level and in member position alike, so the
+    comparison does not depend on depth. A `GroupSpec` with unknown members
+    (`members=None`) is a different state: it matches only the same.
     """
     g_full: AnyGroupSpec = GroupSpec(attributes={"a": 1}, members={})
     g_base = BaseGroupSpec(attributes={"a": 1})
+    assert g_full.like(g_base)
     outer_full: AnyGroupSpec = GroupSpec(members={"g": g_full})
     outer_base: AnyGroupSpec = GroupSpec(members={"g": g_base})
     members = outer_base.members
     assert members is not None
     assert isinstance(members["g"], BaseGroupSpec)
     assert not isinstance(members["g"], GroupSpec)
-    assert not outer_full.like(outer_base)
-    assert not outer_base.like(outer_full)
+    assert outer_full.like(outer_base)
+    assert outer_base.like(outer_full)
+    # differing own metadata still distinguishes the projection
+    other_attrs: AnyGroupSpec = GroupSpec(members={"g": BaseGroupSpec(attributes={"a": 2})})
+    assert not outer_full.like(other_attrs)
+    # members=None matches only members=None, in member position too
+    outer_unknown: AnyGroupSpec = GroupSpec(
+        members={"g": GroupSpec(attributes={"a": 1}, members=None)}
+    )
+    assert not outer_full.like(outer_unknown)
+    assert outer_unknown.like(outer_unknown)
 
 
 def test_bytes_codec_canonicalized_inside_sharding() -> None:

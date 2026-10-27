@@ -902,8 +902,11 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         """
 
         if isinstance(other, BaseGroupSpec) and not isinstance(other, GroupSpec):
-            # a group without members compares by the group's own metadata
-            return super().like(other, include=include, exclude=exclude)
+            # a group without members compares by the group's own metadata;
+            # this side projects to its own metadata too, or the comparison
+            # would always fail on the members field itself
+            projection = BaseGroupSpec(attributes=self.attributes)
+            return projection.like(other, include=include, exclude=exclude)
         other_parsed: GroupSpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
             other_parsed = GroupSpec.from_zarr(other)
