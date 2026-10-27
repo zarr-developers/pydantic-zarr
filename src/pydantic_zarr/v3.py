@@ -60,6 +60,7 @@ from pydantic_zarr.core import (
     IncEx,
     StrictBase,
     ensure_multiple,
+    guess_chunks,
     maybe_node,
     model_like,
     tuplify_json,
@@ -89,6 +90,7 @@ type AnyBaseGroupSpec = "BaseGroupSpec[Any]"
 
 TAttr = TypeVar("TAttr", bound=TBaseAttr, default=TBaseAttr)
 TItem = TypeVar("TItem", bound=TBaseItem, default=TBaseItem)
+TDefault = TypeVar("TDefault")
 
 NodeType = Literal["group", "array"]
 
@@ -557,7 +559,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         data_type: npt.DTypeLike | Mapping[str, object],
         *,
         chunks: Literal["auto"] | Sequence[int] = "auto",
-        attributes: Literal["auto"] | TAttr = "auto",
+        attributes: Literal["auto"] | TAttr | Mapping[str, object] = "auto",
         chunk_key_encoding: Literal["auto"] | AnyNamedConfig = "auto",
         fill_value: Literal["auto"] | FillValue = "auto",
         codecs: Literal["auto"] | Sequence[CodecLike] = "auto",
@@ -570,13 +572,17 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         object to describe.
 
         Every other field has a spec default or is derived from the data type:
-        `chunks` defaults to the whole shape, the chunk key encoding to the
-        `default` encoding with the `/` separator, and the fill value and
-        codecs to the same values `from_array` derives (`"NaN"` / `0` /
+        `chunks` defaults to a size-guessed chunk shape (the same heuristic
+        zarr-python applies when no chunks are given), the chunk key encoding
+        to the `default` encoding with the `/` separator, and the fill value
+        and codecs to the same values `from_array` derives (`"NaN"` / `0` /
         `False` / NaT fills; a `bytes` codec, carrying explicit endianness for
-        multi-byte data types). A fill value or codec default cannot be
-        derived for a data type with no numpy equivalent (an unknown extension
-        data type): pass `fill_value` and `codecs` explicitly there.
+        multi-byte data types; compression is not assumed). `attributes`
+        defaults to the empty dict, so a spec whose attributes type requires
+        fields needs them passed explicitly. For a data type with no numpy
+        equivalent (an unknown extension data type) no fill value, codec or
+        chunk guess can be derived: pass `fill_value` and `codecs` explicitly
+        there, and `chunks` defaults to the whole shape.
 
         Examples
         --------
@@ -585,7 +591,15 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         ArraySpec(zarr_format=3, node_type='array', attributes={}, shape=(10, 10), data_type='uint16', chunk_grid={'name': 'regular', 'configuration': {'chunk_shape': (5, 5)}}, chunk_key_encoding={'name': 'default', 'configuration': {'separator': '/'}}, fill_value=0, codecs=({'name': 'bytes', 'configuration': {'endian': 'little'}},), storage_transformers=(), dimension_names=('y', 'x'))
         """
         parsed_data_type = parse_dtype_v3(data_type)
-        chunk_shape = tuple(shape) if chunks == "auto" else tuple(chunks)
+        np_dtype = _numpy_dtype_from_v3(parsed_data_type)
+        if chunks == "auto":
+            chunk_shape = (
+                guess_chunks(tuple(shape), np_dtype.itemsize)
+                if np_dtype is not None
+                else tuple(shape)
+            )
+        else:
+            chunk_shape = tuple(chunks)
         chunk_key_actual: AnyNamedConfig
         if chunk_key_encoding == "auto":
             chunk_key_actual = {"name": "default", "configuration": {"separator": "/"}}
@@ -595,7 +609,6 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         fill_value_actual: FillValue = None
         codecs_actual: tuple[CodecLike, ...] = ()
         if fill_value == "auto" or codecs == "auto":
-            np_dtype = _numpy_dtype_from_v3(parsed_data_type)
             if np_dtype is None:
                 underived = " and ".join(
                     name
@@ -615,7 +628,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             codecs_actual = tuple(codecs)
 
         return cls(
-            attributes=cast("TAttr", {}) if attributes == "auto" else attributes,
+            attributes=cast("TAttr", {} if attributes == "auto" else attributes),
             shape=tuple(shape),
             data_type=parsed_data_type,
             chunk_grid={"name": "regular", "configuration": {"chunk_shape": chunk_shape}},
@@ -1008,7 +1021,8 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
                 msg = f"Cannot resolve {segment!r}: the members of {where} are unknown (members=None)."
                 raise KeyError(msg)
             if segment not in node.members:
-                msg = f"No member named {segment!r} in {where}."
+                available = ", ".join(repr(name) for name in sorted(node.members)) or "(none)"
+                msg = f"No member named {segment!r} in {where}. Members: {available}."
                 raise KeyError(msg)
             node = node.members[segment]
             resolved.append(segment)
@@ -1017,6 +1031,21 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
     def __getitem__(self, path: str) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec:
         """`group[path]` resolves a member path: see `resolve_path`."""
         return self.resolve_path(path)
+
+    def get_path(
+        self, path: str, default: TDefault | None = None
+    ) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec | TDefault | None:
+        """
+        `resolve_path` that returns `default` instead of raising when the path
+        does not resolve (a missing member, a non-group on the way, or unknown
+        members); a malformed path still raises `ValueError`. This non-raising
+        form suits pydantic validators, which turn `ValueError` into a
+        validation error but let `KeyError` escape.
+        """
+        try:
+            return self.resolve_path(path)
+        except KeyError:
+            return default
 
     @classmethod
     def from_flat(cls, data: Mapping[str, AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec]) -> Self:

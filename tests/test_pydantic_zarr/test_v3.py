@@ -1187,3 +1187,36 @@ def test_attributes_serialized_by_alias() -> None:
     assert unset.model_dump()["attributes"] == {}
     explicit: AnyArraySpec = ArraySpec.from_shape((4,), "float32", attributes=CFAttrs(units=None))
     assert explicit.model_dump()["attributes"] == {"units": None}
+
+
+def test_from_shape_guessed_chunks() -> None:
+    """
+    With `chunks="auto"`, `from_shape` guesses a chunk shape from the array
+    size the way zarr-python does, rather than defaulting to one whole-array
+    chunk: a large array gets chunks smaller than its shape, in a sane byte
+    range, while a small array keeps its whole shape.
+    """
+    big: AnyArraySpec = ArraySpec.from_shape((10980, 10980), "uint16")
+    chunk_shape = big.chunk_grid["configuration"]["chunk_shape"]
+    assert all(c <= s for c, s in zip(chunk_shape, big.shape, strict=True))
+    nbytes = 2 * chunk_shape[0] * chunk_shape[1]
+    assert 128 * 1024 <= nbytes <= 64 * 1024 * 1024
+    small: AnyArraySpec = ArraySpec.from_shape((10, 12), "uint16")
+    assert small.chunk_grid["configuration"]["chunk_shape"] == (10, 12)
+
+
+def test_get_path() -> None:
+    """
+    `get_path` resolves like `resolve_path` but returns the default instead of
+    raising on an unresolvable path, while a malformed path still raises
+    `ValueError`; `resolve_path`'s missing-member error lists the member names.
+    """
+    leaf: AnyArraySpec = ArraySpec.from_shape((4,), "uint8")
+    root: AnyGroupSpec = GroupSpec(members={"a": GroupSpec(members={"b": leaf})})
+    assert root.get_path("a/b") == leaf
+    assert root.get_path("a/zz") is None
+    assert root.get_path("a/zz", default="sentinel") == "sentinel"
+    with pytest.raises(ValueError, match="empty member name"):
+        root.get_path("a//b")
+    with pytest.raises(KeyError, match="Members: 'b'"):
+        root.resolve_path("a/zz")

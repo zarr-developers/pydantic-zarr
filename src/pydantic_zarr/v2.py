@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import sys
 from collections.abc import Mapping, Sequence
 from importlib.metadata import version
@@ -32,6 +31,7 @@ from pydantic_zarr.core import (
     IncEx,
     StrictBase,
     ensure_key_no_path,
+    guess_chunks,
     maybe_node,
     model_like,
     parse_dtype_v2,
@@ -55,6 +55,7 @@ type AnyBaseGroupSpec = "BaseGroupSpec[Any]"
 
 TAttr = TypeVar("TAttr", bound=TBaseAttr, default=TBaseAttr)
 TItem = TypeVar("TItem", bound=TBaseItem, default=TBaseItem)
+TDefault = TypeVar("TDefault")
 
 DtypeStr = Annotated[str, BeforeValidator(parse_dtype_v2)]
 
@@ -682,7 +683,8 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
                 msg = f"Cannot resolve {segment!r}: the members of {where} are unknown (members=None)."
                 raise KeyError(msg)
             if segment not in node.members:
-                msg = f"No member named {segment!r} in {where}."
+                available = ", ".join(repr(name) for name in sorted(node.members)) or "(none)"
+                msg = f"No member named {segment!r} in {where}. Members: {available}."
                 raise KeyError(msg)
             node = node.members[segment]
             resolved.append(segment)
@@ -691,6 +693,21 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
     def __getitem__(self, path: str) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec:
         """`group[path]` resolves a member path: see `resolve_path`."""
         return self.resolve_path(path)
+
+    def get_path(
+        self, path: str, default: TDefault | None = None
+    ) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec | TDefault | None:
+        """
+        `resolve_path` that returns `default` instead of raising when the path
+        does not resolve (a missing member, a non-group on the way, or unknown
+        members); a malformed path still raises `ValueError`. This non-raising
+        form suits pydantic validators, which turn `ValueError` into a
+        validation error but let `KeyError` escape.
+        """
+        try:
+            return self.resolve_path(path)
+        except KeyError:
+            return default
 
     @classmethod
     @override
@@ -1251,7 +1268,7 @@ def auto_chunks(data: Any) -> tuple[int, ...]:
         return data.chunksize
     if hasattr(data, "chunks"):
         return data.chunks
-    return _guess_chunks(data.shape, np.dtype(data.dtype).itemsize)
+    return guess_chunks(data.shape, np.dtype(data.dtype).itemsize)
 
 
 def auto_attributes(data: Any) -> Mapping[str, Any]:
@@ -1317,58 +1334,6 @@ def auto_dimension_separator(data: Any) -> DimensionSeparator:
         else:
             raise ValueError(f"Dimension separator attribute not in {get_args(DimensionSeparator)}")
     return "/"
-
-
-def _guess_chunks(shape: tuple[int, ...], typesize: int) -> tuple[int, ...]:
-    """
-    Vendored from zarr-python v2.
-
-    Guess an appropriate chunk layout for an array, given its shape and
-    the size of each element in bytes.  Will allocate chunks only as large
-    as MAX_SIZE.  Chunks are generally close to some power-of-2 fraction of
-    each axis, slightly favoring bigger values for the last index.
-    Undocumented and subject to change without warning.
-    """
-
-    CHUNK_BASE = 256 * 1024  # Multiplier by which chunks are adjusted
-    CHUNK_MIN = 128 * 1024  # Soft lower limit (128k)
-    CHUNK_MAX = 64 * 1024 * 1024  # Hard upper limit
-
-    ndims = len(shape)
-    # require chunks to have non-zero length for all dimensions
-    chunks = np.maximum(np.array(shape, dtype="=f8"), 1)
-
-    # Determine the optimal chunk size in bytes using a PyTables expression.
-    # This is kept as a float.
-    dset_size = np.prod(chunks) * typesize
-    target_size = CHUNK_BASE * (2 ** np.log10(dset_size / (1024.0 * 1024)))
-
-    if target_size > CHUNK_MAX:
-        target_size = CHUNK_MAX
-    elif target_size < CHUNK_MIN:
-        target_size = CHUNK_MIN
-
-    idx = 0
-    while True:
-        # Repeatedly loop over the axes, dividing them by 2.  Stop when:
-        # 1a. We're smaller than the target chunk size, OR
-        # 1b. We're within 50% of the target chunk size, AND
-        # 2. The chunk is smaller than the maximum chunk size
-
-        chunk_bytes = np.prod(chunks) * typesize
-
-        if (
-            chunk_bytes < target_size or abs(chunk_bytes - target_size) / target_size < 0.5
-        ) and chunk_bytes < CHUNK_MAX:
-            break
-
-        if np.prod(chunks) == 1:
-            break  # Element size larger than CHUNK_MAX
-
-        chunks[idx % ndims] = math.ceil(chunks[idx % ndims] / 2.0)
-        idx += 1
-
-    return tuple(int(x) for x in chunks)
 
 
 def is_array_spec(node: object) -> TypeIs[AnyArraySpec]:

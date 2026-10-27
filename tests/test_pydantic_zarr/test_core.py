@@ -104,3 +104,72 @@ def test_model_like_list_vs_tuple_attrs(group_spec_cls: type) -> None:
     assert model_like(a, b)
     assert a.like(b)
     assert b.like(a)
+
+
+def test_attributes_base() -> None:
+    """
+    `AttributesBase` serializes by alias, keeps unknown keys, omits unset
+    `None` fields, and applies the class-level `explicit_none` policy: the
+    default keeps an explicitly assigned `None`, and `"omit"` drops it.
+    """
+    from typing import ClassVar, Literal
+
+    from pydantic import Field
+
+    from pydantic_zarr.core import AttributesBase
+
+    class CF(AttributesBase):
+        fill: float | None = Field(default=None, alias="_FillValue")
+        units: str | None = None
+
+    assert CF().model_dump() == {}
+    assert CF(units=None).model_dump() == {"units": None}
+    assert CF(**{"_FillValue": 1.5, "proj:code": "x"}).model_dump() == {
+        "_FillValue": 1.5,
+        "proj:code": "x",
+    }
+
+    class Omitting(CF):
+        explicit_none: ClassVar[Literal["keep", "omit", "refuse"]] = "omit"
+
+    assert Omitting(units=None).model_dump() == {}
+
+
+def test_attributes_base_refuses_explicit_none() -> None:
+    """With `explicit_none = "refuse"`, an explicitly assigned `None` is a validation error."""
+    from typing import ClassVar, Literal
+
+    import pytest
+    from pydantic import ValidationError
+
+    from pydantic_zarr.core import AttributesBase
+
+    class Refusing(AttributesBase):
+        explicit_none: ClassVar[Literal["keep", "omit", "refuse"]] = "refuse"
+        unit: str | None = None
+
+    assert Refusing().model_dump() == {}
+    with pytest.raises(ValidationError, match="refuses an explicit None"):
+        Refusing(unit=None)
+
+
+def test_get_attribute() -> None:
+    """
+    `get_attribute` reads a key from attributes in either form: mappings by
+    key, models by field name or alias (extra fields included), with a default
+    for absent keys.
+    """
+    from pydantic import Field
+
+    from pydantic_zarr.core import AttributesBase, get_attribute
+
+    class CF(AttributesBase):
+        fill: float | None = Field(default=None, alias="_FillValue")
+
+    model = CF(**{"_FillValue": 1.5, "proj:code": "EPSG:32632"})
+    assert get_attribute(model, "_FillValue") == 1.5
+    assert get_attribute(model, "fill") == 1.5
+    assert get_attribute(model, "proj:code") == "EPSG:32632"
+    assert get_attribute(model, "missing", "default") == "default"
+    assert get_attribute({"k": 2}, "k") == 2
+    assert get_attribute({"k": 2}, "zz") is None

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from typing import (
     TYPE_CHECKING,
     Any,
+    ClassVar,
     Literal,
+    Self,
     TypeVar,
     overload,
     override,
@@ -17,6 +20,7 @@ from pydantic import (
     ConfigDict,
     SerializerFunctionWrapHandler,
     model_serializer,
+    model_validator,
 )
 
 if TYPE_CHECKING:
@@ -89,18 +93,46 @@ class AttributesBase(BaseModel):
       A field explicitly set to `None` keeps its key, so a spec that
       distinguishes absent from null can express both.
 
-    Unknown keys are preserved (`extra="allow"`), so re-serializing
-    attributes read from a store does not drop keys this model does not
-    declare. Subclasses can override any of this via `model_config`.
+    Unknown keys are preserved and round-trip (`extra="allow"`): attributes
+    read from a store keep the keys this model does not declare, so the model
+    is OPEN by default — declare `model_config` with `extra="forbid"` in a
+    subclass for a closed one. Subclasses can override any of this via
+    `model_config`.
+
+    What an explicitly assigned `None` serializes as is the class-level
+    `explicit_none` policy; the default keeps it as `null`.
     """
 
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True, extra="allow")
 
+    explicit_none: ClassVar[Literal["keep", "omit", "refuse"]] = "keep"
+    """
+    What an explicitly assigned `None` means:
+    `"keep"` (the default) serializes it as `null`, for specs where null is
+    meaningful; `"omit"` drops the key, exactly like an unset field; and
+    `"refuse"` rejects the assignment at validation, for specs where a key is
+    absent or non-null, never null (most "optional keys are omitted" specs).
+    """
+
+    @model_validator(mode="after")
+    def _refuse_explicit_none(self) -> Self:
+        if type(self).explicit_none == "refuse":
+            for name in self.model_fields_set:
+                if name in type(self).model_fields and getattr(self, name) is None:
+                    msg = (
+                        f"Field {name!r} is None, and {type(self).__name__} refuses an "
+                        'explicit None (explicit_none="refuse"): leave the field unset '
+                        "for an absent key."
+                    )
+                    raise ValueError(msg)
+        return self
+
     @model_serializer(mode="wrap")
     def _omit_unset_none(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         dumped = handler(self)
+        omit_explicit = type(self).explicit_none == "omit"
         for name, field in type(self).model_fields.items():
-            if name in self.model_fields_set:
+            if name in self.model_fields_set and not omit_explicit:
                 continue
             # the serialized key may be the field name or its alias,
             # depending on the serialization flags in effect
@@ -108,6 +140,82 @@ class AttributesBase(BaseModel):
                 if key in dumped and dumped[key] is None:
                     del dumped[key]
         return dumped
+
+
+def get_attribute(attributes: object, key: str, default: object = None) -> object:
+    """
+    Read one key from a node's attributes, whichever form they take: a
+    `Mapping` is read by key, and a pydantic model by the field whose name or
+    alias matches the key, extra (undeclared) fields included. Returns
+    `default` when the key is absent. A cross-member validator on a group
+    whose attributes type admits both forms needs exactly this.
+    """
+    if isinstance(attributes, Mapping):
+        return attributes.get(key, default)
+    if isinstance(attributes, BaseModel):
+        for name, field in type(attributes).model_fields.items():
+            if key == name or key in (
+                field.alias,
+                field.serialization_alias,
+                field.validation_alias,
+            ):
+                return getattr(attributes, name)
+        extra = attributes.__pydantic_extra__
+        if extra is not None and key in extra:
+            return extra[key]
+    return default
+
+
+def guess_chunks(shape: tuple[int, ...], typesize: int) -> tuple[int, ...]:
+    """
+    Vendored from zarr-python v2.
+
+    Guess an appropriate chunk layout for an array, given its shape and
+    the size of each element in bytes.  Will allocate chunks only as large
+    as MAX_SIZE.  Chunks are generally close to some power-of-2 fraction of
+    each axis, slightly favoring bigger values for the last index.
+    Undocumented and subject to change without warning.
+    """
+
+    CHUNK_BASE = 256 * 1024  # Multiplier by which chunks are adjusted
+    CHUNK_MIN = 128 * 1024  # Soft lower limit (128k)
+    CHUNK_MAX = 64 * 1024 * 1024  # Hard upper limit
+
+    ndims = len(shape)
+    # require chunks to have non-zero length for all dimensions
+    chunks = np.maximum(np.array(shape, dtype="=f8"), 1)
+
+    # Determine the optimal chunk size in bytes using a PyTables expression.
+    # This is kept as a float.
+    dset_size = np.prod(chunks) * typesize
+    target_size = CHUNK_BASE * (2 ** np.log10(dset_size / (1024.0 * 1024)))
+
+    if target_size > CHUNK_MAX:
+        target_size = CHUNK_MAX
+    elif target_size < CHUNK_MIN:
+        target_size = CHUNK_MIN
+
+    idx = 0
+    while True:
+        # Repeatedly loop over the axes, dividing them by 2.  Stop when:
+        # 1a. We're smaller than the target chunk size, OR
+        # 1b. We're within 50% of the target chunk size, AND
+        # 2. The chunk is smaller than the maximum chunk size
+
+        chunk_bytes = np.prod(chunks) * typesize
+
+        if (
+            chunk_bytes < target_size or abs(chunk_bytes - target_size) / target_size < 0.5
+        ) and chunk_bytes < CHUNK_MAX:
+            break
+
+        if np.prod(chunks) == 1:
+            break  # Element size larger than CHUNK_MAX
+
+        chunks[idx % ndims] = math.ceil(chunks[idx % ndims] / 2.0)
+        idx += 1
+
+    return tuple(int(x) for x in chunks)
 
 
 def parse_dtype_v2(value: npt.DTypeLike) -> str | list[tuple[Any, ...]]:
