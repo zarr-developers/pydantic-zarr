@@ -16,6 +16,7 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from pydantic import (
+    AliasChoices,
     BaseModel,
     ConfigDict,
     SerializerFunctionWrapHandler,
@@ -113,8 +114,10 @@ class AttributesBase(BaseModel):
     What an explicitly assigned `None` means:
     `"keep"` (the default) serializes it as `null`, for specs where null is
     meaningful; `"omit"` drops the key, exactly like an unset field; and
-    `"refuse"` rejects the assignment at validation, for specs where a key is
-    absent or non-null, never null (most "optional keys are omitted" specs).
+    `"refuse"` rejects it at validation (construction and `model_validate`;
+    plain attribute assignment and `model_construct` bypass validation, as
+    they do every validator), for specs where a key is absent or non-null,
+    never null (most "optional keys are omitted" specs).
     """
 
     @model_validator(mode="after")
@@ -150,19 +153,33 @@ def get_attribute(attributes: object, key: str, default: object = None) -> objec
     Read one key from a node's attributes, whichever form they take: a
     `Mapping` is read by key, and a pydantic model by the field whose name or
     alias matches the key, extra (undeclared) fields included. Returns
-    `default` when the key is absent. A cross-member validator on a group
-    whose attributes type admits both forms needs exactly this.
+    `default` when the key is absent — for a model, absent means the key would
+    not appear in its serialization, so a `None`-valued field an
+    `AttributesBase` subclass omits (unset, or explicitly set under the
+    `"omit"` policy) reads as the default, exactly as the mapping form of the
+    same document would. A cross-member validator on a group whose attributes
+    type admits both forms needs exactly this.
     """
     if isinstance(attributes, Mapping):
         return attributes.get(key, default)
     if isinstance(attributes, BaseModel):
         for name, field in type(attributes).model_fields.items():
-            if key == name or key in (
-                field.alias,
-                field.serialization_alias,
-                field.validation_alias,
-            ):
-                return getattr(attributes, name)
+            aliases: list[str] = [name]
+            for alias in (field.alias, field.serialization_alias, field.validation_alias):
+                if isinstance(alias, str):
+                    aliases.append(alias)
+                elif isinstance(alias, AliasChoices):
+                    aliases.extend(choice for choice in alias.choices if isinstance(choice, str))
+            if key not in aliases:
+                continue
+            value = getattr(attributes, name)
+            if value is None and isinstance(attributes, AttributesBase):
+                omitted = name not in attributes.model_fields_set or (
+                    type(attributes).explicit_none == "omit"
+                )
+                if omitted:
+                    return default
+            return value
         extra = attributes.__pydantic_extra__
         if extra is not None and key in extra:
             return extra[key]

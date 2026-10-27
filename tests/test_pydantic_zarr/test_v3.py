@@ -1213,6 +1213,14 @@ def test_from_shape_guessed_chunks() -> None:
     assert 128 * 1024 <= nbytes <= 64 * 1024 * 1024
     small: AnyArraySpec = ArraySpec.from_shape((10, 12), "uint16")
     assert small.chunk_grid["configuration"]["chunk_shape"] == (10, 12)
+    # an extension data type has no knowable element size: whole-shape chunks
+    ext: AnyArraySpec = ArraySpec.from_shape(
+        (10980, 10980),
+        {"name": "example.ext"},
+        fill_value=0,
+        codecs=({"name": "example.serializer"},),
+    )
+    assert ext.chunk_grid["configuration"]["chunk_shape"] == (10980, 10980)
 
 
 def test_get_path() -> None:

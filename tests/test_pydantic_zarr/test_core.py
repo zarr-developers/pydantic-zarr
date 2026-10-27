@@ -173,3 +173,15 @@ def test_get_attribute() -> None:
     assert get_attribute(model, "missing", "default") == "default"
     assert get_attribute({"k": 2}, "k") == 2
     assert get_attribute({"k": 2}, "zz") is None
+    # an unset None field serializes as an absent key, so it reads as absent,
+    # agreeing with the mapping form of the same document; an explicit None
+    # under the default "keep" policy is present
+    assert get_attribute(CF(), "_FillValue", 0.0) == 0.0
+    assert get_attribute(CF(fill=None), "_FillValue", 0.0) is None
+
+    from pydantic import AliasChoices
+
+    class Choosy(AttributesBase):
+        name_field: str | None = Field(default=None, validation_alias=AliasChoices("a", "b"))
+
+    assert get_attribute(Choosy(a="x"), "b", "dflt") == "x"
