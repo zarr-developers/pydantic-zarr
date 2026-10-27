@@ -136,6 +136,8 @@ class ClimateMembers(TypedDict, closed=True):
 
 
 class ClimateDataset(DatasetSpec):
+    # sound at runtime: pydantic validates members against the TypedDict;
+    # the ignore is for checkers that treat the field override as unsound
     members: ClimateMembers  # type: ignore[assignment]
 
 
@@ -234,6 +236,16 @@ try:
     raise AssertionError("accepted a non-coordinate array named after a dimension")
 except ValidationError as exc:
     assert "'lat' is named after a dimension it uses" in exc.errors()[0]["msg"]
+
+# unnamed dimensions carry no coordinates, so their lengths are not
+# reconciled across members: two unnamed 1-D arrays of different lengths
+# coexist, while the named-dimension mismatch above is still refused
+DatasetSpec(
+    members={
+        "a": ArraySpec.from_shape_and_data_type((3,), "uint8", dimension_names=(None,)),
+        "b": ArraySpec.from_shape_and_data_type((5,), "uint8", dimension_names=(None,)),
+    },
+)
 
 # a `coordinates` attribute referencing a missing member is refused
 try:

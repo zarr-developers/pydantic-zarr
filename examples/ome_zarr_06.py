@@ -190,9 +190,10 @@ class Multiscale(OmeBase):
         outputs: set[str] = set()
         for ds in self.datasets:
             output = ds.coordinateTransformations[0].output
-            # Dataset validation requires a named output on the first transform
-            assert output is not None
-            assert output.name is not None
+            if output is None or output.name is None:
+                # Dataset validation guarantees this; a model smuggled in via
+                # model_construct would not be re-validated, so fail loudly
+                raise ValueError("each dataset's first transform needs a named output")
             outputs.add(output.name)
         if len(outputs) != 1:
             raise ValueError(f"datasets must share one intrinsic output, got {sorted(outputs)}")

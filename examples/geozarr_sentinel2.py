@@ -113,6 +113,8 @@ class GeoZarrDataset(GroupSpec):
 
 
 class R10mDataset(GeoZarrDataset):
+    # sound at runtime: pydantic validates members against the TypedDict;
+    # the ignore is for checkers that treat the field override as unsound
     members: R10mMembers  # type: ignore[assignment]
 
 

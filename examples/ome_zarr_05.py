@@ -139,7 +139,9 @@ class ImageAttributes(AttributesBase):
 class MultiscaleImageMembers(TypedDict, extra_items=ArraySpec):
     """Dynamically named resolution arrays, plus at most one "labels" group."""
 
-    # keep the enclosing model's extra="forbid" config off this TypedDict
+    # keep the enclosing model's extra="forbid" config off this TypedDict;
+    # checkers reject assignments in TypedDict bodies, but pydantic documents
+    # this configuration mechanism, hence the ignore
     __pydantic_config__ = ConfigDict()  # type: ignore[misc]
 
     labels: NotRequired[GroupSpec]
