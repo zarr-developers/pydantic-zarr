@@ -30,7 +30,7 @@ from pydantic import Field, ValidationError, model_validator
 from typing_extensions import TypedDict
 
 from pydantic_zarr.core import AttributesBase, get_attribute
-from pydantic_zarr.v3 import ArraySpec, GroupSpec, is_array_spec
+from pydantic_zarr.v3 import ArraySpec, CodecLike, GroupSpec, is_array_spec
 
 
 class BandAttrs(AttributesBase):
@@ -113,7 +113,7 @@ class GeoZarrDataset(GroupSpec):
 
 
 class R10mDataset(GeoZarrDataset):
-    members: R10mMembers
+    members: R10mMembers  # type: ignore[assignment]
 
 
 def band(grid_mapping: str = "spatial_ref") -> BandArray:
@@ -150,7 +150,9 @@ r10m = R10mDataset(
     }
 )
 assert sorted(r10m.members) == ["b02", "b03", "b04", "b08", "spatial_ref", "x", "y"]
-assert r10m["b02"].dimension_names == ("y", "x")
+b02 = r10m["b02"]
+assert is_array_spec(b02)
+assert b02.dimension_names == ("y", "x")
 
 # Round trip: write the dataset to a store and read it back. `from_zarr` on
 # the typed subclass re-validates everything it reads.
@@ -201,7 +203,7 @@ import numpy as np
 import xarray as xr
 
 # what zarr-python (and so xarray) writes by default: bytes + zstd
-REF_CODECS = (
+REF_CODECS: tuple[CodecLike, ...] = (
     {"name": "bytes", "configuration": {"endian": "little"}},
     {"name": "zstd", "configuration": {"level": 0, "checksum": False}},
 )
@@ -229,7 +231,7 @@ reference = xr.Dataset(
 ref_store = zarr.storage.MemoryStore()
 # suppress xarray's CF _FillValue attribute on the float coordinates; the
 # zarr-level fill_value ("NaN") is still written
-reference.to_zarr(
+reference.to_zarr(  # type: ignore[no-matching-overload]
     ref_store,
     zarr_format=3,
     consolidated=False,
@@ -277,11 +279,14 @@ def metadata_documents(store: zarr.storage.MemoryStore) -> dict[str, dict[str, o
         return [k async for k in s.list()]
 
     proto = zarr.core.buffer.default_buffer_prototype()
-    return {
-        key: json.loads(asyncio.run(store.get(key, prototype=proto)).to_bytes())
-        for key in asyncio.run(keys(store))
-        if key.endswith("zarr.json")
-    }
+    documents: dict[str, dict[str, object]] = {}
+    for key in asyncio.run(keys(store)):
+        if not key.endswith("zarr.json"):
+            continue
+        buffer = asyncio.run(store.get(key, prototype=proto))
+        assert buffer is not None
+        documents[key] = json.loads(buffer.to_bytes())
+    return documents
 
 
 ref_docs = metadata_documents(ref_store)

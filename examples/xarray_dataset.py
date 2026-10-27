@@ -58,7 +58,7 @@ from typing_extensions import TypedDict
 from zarr.storage import MemoryStore
 
 from pydantic_zarr.core import AttributesBase, get_attribute
-from pydantic_zarr.v3 import ArraySpec, GroupSpec, is_array_spec
+from pydantic_zarr.v3 import ArraySpec, CodecLike, GroupSpec, is_array_spec
 
 
 class CFAttrs(AttributesBase):
@@ -97,6 +97,8 @@ class DatasetSpec(GroupSpec):
             if not is_array_spec(member) or member.dimension_names is None:
                 continue
             for dim, size in zip(member.dimension_names, member.shape, strict=True):
+                if dim is None:  # unnamed dimensions have no coordinates
+                    continue
                 if sizes.setdefault(dim, size) != size:
                     msg = (
                         f"Dimension {dim!r} has length {sizes[dim]} elsewhere, "
@@ -134,11 +136,11 @@ class ClimateMembers(TypedDict, closed=True):
 
 
 class ClimateDataset(DatasetSpec):
-    members: ClimateMembers
+    members: ClimateMembers  # type: ignore[assignment]
 
 
 # xarray's default Zarr V3 codec pipeline
-CODECS = (
+CODECS: tuple[CodecLike, ...] = (
     {"name": "bytes", "configuration": {"endian": "little"}},
     {"name": "zstd", "configuration": {"level": 0, "checksum": False}},
 )

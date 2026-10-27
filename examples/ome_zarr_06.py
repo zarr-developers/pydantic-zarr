@@ -143,7 +143,7 @@ assert CoordinateReference(name="physical", path=None).model_dump() == {
 import zarr
 import zarr.storage
 
-from pydantic_zarr.v3 import ArraySpec, GroupSpec
+from pydantic_zarr.v3 import ArraySpec, GroupSpec, is_array_spec
 
 
 class Dataset(OmeBase):
@@ -187,7 +187,13 @@ class Multiscale(OmeBase):
 
     @model_validator(mode="after")
     def _intrinsic_system_and_dims(self) -> Self:
-        outputs = {ds.coordinateTransformations[0].output.name for ds in self.datasets}
+        outputs: set[str] = set()
+        for ds in self.datasets:
+            output = ds.coordinateTransformations[0].output
+            # Dataset validation requires a named output on the first transform
+            assert output is not None
+            assert output.name is not None
+            outputs.add(output.name)
         if len(outputs) != 1:
             raise ValueError(f"datasets must share one intrinsic output, got {sorted(outputs)}")
         known = {cs.name for cs in self.coordinateSystems}
@@ -256,7 +262,9 @@ members = {
     "s1": ArraySpec.from_shape_and_data_type((8, 8), "uint16"),
 }
 image = Image(attributes=attributes, members=members)
-assert image["s0"].shape == (16, 16)
+s0 = image["s0"]
+assert is_array_spec(s0)
+assert s0.shape == (16, 16)
 
 # round trip through an in-memory Zarr v3 store
 store = zarr.storage.MemoryStore()

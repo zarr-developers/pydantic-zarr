@@ -27,7 +27,7 @@ from pydantic import ConfigDict, Field, ValidationError, model_validator
 from typing_extensions import TypedDict
 
 from pydantic_zarr.core import AttributesBase
-from pydantic_zarr.v3 import ArraySpec, GroupSpec
+from pydantic_zarr.v3 import ArraySpec, CodecLike, GroupSpec, is_array_spec
 
 # --8<-- [start:attrs]
 
@@ -140,7 +140,7 @@ class MultiscaleImageMembers(TypedDict, extra_items=ArraySpec):
     """Dynamically named resolution arrays, plus at most one "labels" group."""
 
     # keep the enclosing model's extra="forbid" config off this TypedDict
-    __pydantic_config__ = ConfigDict()
+    __pydantic_config__ = ConfigDict()  # type: ignore[misc]
 
     labels: NotRequired[GroupSpec]
 
@@ -200,7 +200,9 @@ image = MultiscaleImage(
     },
 )
 assert sorted(image.members) == ["0", "1", "labels"]
-assert image["0"].shape == (2, 32, 32)
+level0 = image["0"]
+assert is_array_spec(level0)
+assert level0.shape == (2, 32, 32)
 print("built a 2-level OME-Zarr 0.5 image:", sorted(image.members))
 
 # write the hierarchy to a store and read it back
@@ -260,7 +262,7 @@ write_image(
 
 # the same image, described by the model: ome-zarr-py's layout and choices
 # (paths s0/s1, per-dataset scale + translation, whole-shape chunks, zstd)
-reference_codecs = (
+reference_codecs: tuple[CodecLike, ...] = (
     {"name": "bytes", "configuration": {"endian": "little"}},
     {"name": "zstd", "configuration": {"level": 0, "checksum": False}},
 )

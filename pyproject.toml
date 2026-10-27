@@ -213,8 +213,11 @@ ignore = [
 "examples/**" = ["PT017", "E402"]
 
 [tool.pyrefly]
-project-includes = ["src", "tests"]
-search-path = ["src", "tests"]
+project-includes = ["src", "tests", "examples"]
+search-path = ["src", "tests", "examples"]
+# the reference implementations the example scripts import are docs-only
+# dependencies; the types environment does not install them
+replace-imports-with-any = ["ome_zarr.*", "ngff_zarr", "ome_zarr"]
 python-version = "3.12"
 
 [tool.pyrefly.errors]
