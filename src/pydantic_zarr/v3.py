@@ -23,7 +23,15 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
-from pydantic import BaseModel, BeforeValidator, Field, ValidationInfo, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    Field,
+    SerializerFunctionWrapHandler,
+    ValidationInfo,
+    model_serializer,
+    model_validator,
+)
 from typing_extensions import TypedDict, TypeIs, TypeVar
 from zarr_metadata import (
     DefaultChunkKeyEncodingMetadata,
@@ -356,20 +364,18 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         except MetadataValidationError as e:
             raise ValueError(format_problems(e)) from e
 
-    def model_dump(
-        self,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
+    @model_serializer(mode="wrap")
+    def _serialize_document(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         """
-        Override this method because the Zarr V3 spec requires that the dimension_names
-        field be omitted from metadata entirely if it's set to None.
+        Omit `dimension_names` when it is `None`: the Zarr V3 spec allows the
+        key to be absent, not null. This is a model serializer rather than a
+        `model_dump` override so the omission also applies to arrays nested as
+        members in a group's dump, and to JSON serialization.
         """
-        # TODO: use exclude_if when we require a newer version of pydantic
-        d = super().model_dump(**kwargs)
-
-        if d.get("dimension_names") is None:
-            d.pop("dimension_names", None)
-        return d
+        document = handler(self)
+        if document.get("dimension_names") is None:
+            document.pop("dimension_names", None)
+        return document
 
     @classmethod
     def from_array(

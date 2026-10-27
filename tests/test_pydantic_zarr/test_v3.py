@@ -1034,3 +1034,22 @@ def test_like_filters_keyword_only() -> None:
     group: AnyGroupSpec = GroupSpec()
     with pytest.raises(TypeError):
         group.like(group, {"attributes"})  # type: ignore[call-arg]
+
+
+def test_dimension_names_omitted_when_none() -> None:
+    """
+    `dimension_names` is omitted from serialization when it is `None` (the
+    Zarr V3 spec allows the key to be absent, not null), including for arrays
+    nested as members in a group's dump and in JSON serialization, while set
+    dimension names are kept at every depth.
+    """
+    unnamed: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
+    named: AnyArraySpec = ArraySpec(**_v3_array_kwargs(dimension_names=("x", "y")))
+    assert "dimension_names" not in unnamed.model_dump()
+    group: AnyGroupSpec = GroupSpec(members={"unnamed": unnamed, "named": named})
+    dump = group.model_dump()
+    assert "dimension_names" not in dump["members"]["unnamed"]
+    assert dump["members"]["named"]["dimension_names"] == ("x", "y")
+    json_dump = json.loads(group.model_dump_json())
+    assert "dimension_names" not in json_dump["members"]["unnamed"]
+    assert json_dump["members"]["named"]["dimension_names"] == ["x", "y"]
