@@ -535,6 +535,40 @@ def _v3_array_kwargs(**overrides: object) -> dict[str, Any]:
     return kwargs
 
 
+def test_parse_dtype_v3_passes_v3_declarations_through() -> None:
+    """
+    `parse_dtype_v3` parses only numpy data types; a declaration already in
+    Zarr V3 form passes through, for document validation to judge in scope: a
+    claimed name, a name claimed by pattern (`r16`), a claimed name numpy
+    would misread (`bytes` is numpy's zero-length bytestring spelling), an
+    unclaimed extension name numpy cannot read, and a named configuration.
+    """
+    assert parse_dtype_v3("int8") == "int8"
+    assert parse_dtype_v3("r16") == "r16"
+    assert parse_dtype_v3("bytes") == "bytes"
+    assert parse_dtype_v3("variable_length_bytes") == "variable_length_bytes"
+    declaration = {"name": "numpy.datetime64", "configuration": {"unit": "s", "scale_factor": 1}}
+    assert parse_dtype_v3(declaration) == declaration
+
+
+def test_parse_dtype_v3_refuses_ambiguous_numpy_spelling() -> None:
+    """
+    A string that names no data type in the scope but that numpy reads as a
+    data type is refused with the Zarr V3 spelling suggested — on any spec
+    construction, not only through `from_shape_and_data_type`.
+    """
+    with pytest.raises(ValueError, match="Zarr V3 form is 'int64'"):
+        parse_dtype_v3("i8")
+    with pytest.raises(ValidationError, match="Zarr V3 form is 'float32'"):
+        ArraySpec(**_v3_array_kwargs(data_type=">f4"))
+
+
+def test_parse_dtype_v3_refuses_numpy_spelling_without_v3_form() -> None:
+    """A numpy-readable string with no Zarr V3 equivalent (`"S10"`) is refused too."""
+    with pytest.raises(ValueError, match="no Zarr V3 form"):
+        parse_dtype_v3("S10")
+
+
 @pytest.mark.parametrize(
     "overrides",
     [

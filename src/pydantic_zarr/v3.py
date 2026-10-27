@@ -53,6 +53,7 @@ from zarr_metadata.v3.chunk_key_encoding.v2 import (
     V2ChunkKeyEncodingConfiguration,
     V2ChunkKeyEncodingObject,
 )
+from zarr_metadata.v3.definition import CORE_AND_EXTENSIONS, DataTypeDefinition
 
 from pydantic_zarr._metadata import CONTEXT_KEY as CONTEXT_KEY
 from pydantic_zarr._metadata import format_problems, scope_from_context
@@ -170,17 +171,54 @@ class NodeSpec(StrictBase):
     zarr_format: Literal[3] = 3
 
 
-def parse_dtype_v3(dtype: npt.DTypeLike | Mapping[str, object]) -> Mapping[str, object] | str:
+def parse_dtype_v3(
+    dtype: npt.DTypeLike | Mapping[str, object],
+    *,
+    scope: ZarrV3Context | None = None,
+) -> Mapping[str, object] | str:
     """
-    Convert a numpy data type to its Zarr V3 metadata form.
+    Convert a numpy data type declaration to its Zarr V3 metadata form.
 
-    Strings and mappings pass through unchanged; they are validated later as
-    part of the whole metadata document. A numpy data type maps to its Zarr V3
+    Only numpy data types are parsed: a numpy data type maps to its Zarr V3
     name, or, for ``datetime64`` / ``timedelta64``, to the named configuration
-    object the Zarr V3 form of those data types requires.
+    object the Zarr V3 form of those data types requires. A declaration
+    already in Zarr V3 form — a data type name or a named configuration
+    mapping — needs no parsing and passes through unchanged: like every other
+    field, it is judged against the definitions in `scope` (``zarr-metadata``'s
+    ``CORE_AND_EXTENSIONS`` when `scope` is `None`) when the whole metadata
+    document is validated. One guard runs here instead of there: a string
+    that names no data type in the scope but that numpy reads as a data type
+    (``"i8"``, ``"float"``, ``">f4"``) is ambiguous — far more likely a numpy
+    spelling than an unknown extension — and is refused, with the Zarr V3
+    spelling suggested when one exists.
     """
-    if isinstance(dtype, str | Mapping):
+    if isinstance(dtype, Mapping):
         return dtype
+    if isinstance(dtype, str):
+        scope_actual = CORE_AND_EXTENSIONS if scope is None else scope
+        if scope_actual.claimant(DataTypeDefinition, dtype) is not None:
+            return dtype
+        try:
+            as_numpy = np.dtype(dtype)
+        except TypeError:
+            # not a numpy spelling either: an unknown extension data type
+            # name, passed through for document validation to judge in scope
+            return dtype
+        try:
+            suggestion = parse_dtype_v3(as_numpy)
+        except ValueError:
+            msg = (
+                f"Data type {dtype!r} names no data type in the scope, and numpy reads it "
+                f"as {as_numpy!r}, which has no Zarr V3 form: pass a data type the scope "
+                "defines."
+            )
+            raise ValueError(msg) from None
+        msg = (
+            f"Data type {dtype!r} names no data type in the scope, but numpy reads it as "
+            f"{as_numpy!r}, whose Zarr V3 form is {suggestion!r}: pass that instead if it "
+            "is what you meant."
+        )
+        raise ValueError(msg)
     try:
         parsed = np.dtype(dtype)
     except TypeError as e:
@@ -301,7 +339,14 @@ _VARIABLE_LENGTH_DATA_TYPES: Mapping[str, tuple[str, tuple[CodecLike, ...]]] = {
 _VARIABLE_LENGTH_NOMINAL_ITEM_SIZE = 8
 
 
-DTypeLike = Annotated[str | AnyNamedConfig, BeforeValidator(parse_dtype_v3)]
+def _parse_dtype_v3_scoped(
+    dtype: npt.DTypeLike | Mapping[str, object], info: ValidationInfo
+) -> Mapping[str, object] | str:
+    """`parse_dtype_v3` reading the scope from the pydantic validation context."""
+    return parse_dtype_v3(dtype, scope=scope_from_context(info.context))
+
+
+DTypeLike = Annotated[str | AnyNamedConfig, BeforeValidator(_parse_dtype_v3_scoped)]
 """A data type declaration (name or named configuration), accepting numpy data types as input."""
 
 
@@ -670,23 +715,6 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             if np_dtype is None and isinstance(parsed_data_type, str)
             else None
         )
-        if np_dtype is None and variable_length is None and isinstance(parsed_data_type, str):
-            # a name numpy reads as a different type ("i8", "float") is a
-            # likely mistake, refused here whether or not a default must be
-            # derived; document validation would otherwise pass it through
-            # as an unknown extension data type
-            try:
-                as_numpy = np.dtype(parsed_data_type)
-                suggestion = parse_dtype_v3(as_numpy)
-            except (TypeError, ValueError):
-                pass
-            else:
-                msg = (
-                    f"Data type {parsed_data_type!r} is not a Zarr V3 data type name, but "
-                    f"numpy reads it as {as_numpy!r}, whose Zarr V3 form is {suggestion!r}: "
-                    "pass that instead if it is what you meant."
-                )
-                raise ValueError(msg)
         document: dict[str, object] = {
             "shape": tuple(shape),
             "data_type": parsed_data_type,
