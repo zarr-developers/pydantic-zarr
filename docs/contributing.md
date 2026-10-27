@@ -20,6 +20,8 @@ just --list     # see every available task
 | Run the whole python/zarr matrix | `just test-all` |
 | Type checking (pyrefly) | `just typecheck` |
 | Lint and format everything | `just lint` |
+| Run the tests with coverage | `just test-cov` |
+| Validate changelog fragment names | `just changelog-check` |
 | Documentation tests | `just test-docs` |
 | Build or serve the documentation | `just docs-build` / `just docs-serve` |
 
@@ -27,7 +29,7 @@ just --list     # see every available task
 
 Every user-facing change needs a [towncrier](https://towncrier.readthedocs.io)
 fragment in `changes/`, named `<pull request number>.<type>.md` where `<type>`
-is one of `feature`, `bugfix`, `doc`, or `misc`. The fragment is one or more
+is one of `feature`, `bugfix`, `doc`, `removal`, or `misc` (the authoritative list lives in `changes/README.md`). The fragment is one or more
 complete sentences describing the change from a user's point of view; it
 becomes part of the release notes.
 
