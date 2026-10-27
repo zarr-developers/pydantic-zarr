@@ -59,6 +59,10 @@ docs = [
     "pydantic==2.12.*",
     "zarr>=3.1.0",
     "towncrier",
+    # reference implementations the example scripts compare their output against
+    "xarray",
+    "ome-zarr>=0.21",
+    "ngff-zarr>=0.50",
 ]
 dev = [
     {include-group = "test"},
@@ -200,6 +204,10 @@ ignore = [
 
 [tool.ruff.lint.extend-per-file-ignores]
 "tests/**" = ["ANN001", "ANN201", "RUF029", "SIM117", "SIM300"]
+# example scripts assert on refused ValidationErrors by design (they are not
+# pytest tests), and their literate sections import the reference libraries
+# where the rendered docs section uses them
+"examples/**" = ["PT017", "E402"]
 
 [tool.pyrefly]
 project-includes = ["src", "tests"]
