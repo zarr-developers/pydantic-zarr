@@ -134,9 +134,11 @@ except ValidationError as exc:
 # absent-vs-null: a null unit is refused, a null reference path is kept
 try:
     Axis(name="x", type="space", unit=None)
-except ValidationError:
-    print("explicit null unit refused")
-    #> explicit null unit refused
+except ValidationError as exc:
+    print(exc.errors()[0]["msg"])
+    """
+    Value error, Field 'unit' is None, and Axis refuses an explicit None (explicit_none="refuse"): leave the field unset for an absent key.
+    """
 print(CoordinateReference(name="physical", path=None).model_dump())
 #> {'name': 'physical', 'path': None}
 ```

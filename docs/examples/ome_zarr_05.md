@@ -49,7 +49,7 @@ image_label = ImageLabel.model_validate(
 print(image_label.colors[0].label_value)
 #> 1
 
-# serialization writes the alias, and omits the unset optional key "colors"
+# serialization writes the alias and omits unset optional keys ("rgba" in the first dump, "colors" in the second)
 print(ImageLabel(version="0.5", colors=(LabelColor(label_value=2),)).model_dump())
 #> {'version': '0.5', 'colors': ({'label-value': 2},)}
 print(ImageLabel(version="0.5").model_dump())

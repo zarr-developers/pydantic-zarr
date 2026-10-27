@@ -645,7 +645,10 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         `bytes` data types; compression is not assumed). Everything lands in
         one validation pass,
         so a subclass that narrows a field (required attributes, say) takes
-        the narrowed values through `overrides`. For a data type with no
+        the narrowed values through `overrides`. A data type name that is not
+        a Zarr V3 name but that numpy reads as some other type (`"i8"`,
+        `"float"`) is refused as a likely mistake, with the V3 spelling
+        suggested. For a data type with no
         numpy equivalent (an unknown extension data type) no fill value,
         codecs or chunk guess can be derived: pass `fill_value` and `codecs`
         there, and the chunk grid defaults to one whole-array chunk.
@@ -663,6 +666,23 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             if np_dtype is None and isinstance(parsed_data_type, str)
             else None
         )
+        if np_dtype is None and variable_length is None and isinstance(parsed_data_type, str):
+            # a name numpy reads as a different type ("i8", "float") is a
+            # likely mistake, refused here whether or not a default must be
+            # derived; document validation would otherwise pass it through
+            # as an unknown extension data type
+            try:
+                as_numpy = np.dtype(parsed_data_type)
+                suggestion = parse_dtype_v3(as_numpy)
+            except (TypeError, ValueError):
+                pass
+            else:
+                msg = (
+                    f"Data type {parsed_data_type!r} is not a Zarr V3 data type name, but "
+                    f"numpy reads it as {as_numpy!r}, whose Zarr V3 form is {suggestion!r}: "
+                    "pass that instead if it is what you meant."
+                )
+                raise ValueError(msg)
         document: dict[str, object] = {
             "shape": tuple(shape),
             "data_type": parsed_data_type,
@@ -695,18 +715,6 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
                     f"Data type {parsed_data_type!r} has no numpy equivalent, so no default "
                     f"can be derived for it: pass {' and '.join(underived)} explicitly."
                 )
-                if isinstance(parsed_data_type, str):
-                    try:
-                        as_numpy = np.dtype(parsed_data_type)
-                        suggestion = parse_dtype_v3(as_numpy)
-                    except (TypeError, ValueError):
-                        pass
-                    else:
-                        msg += (
-                            f" (numpy reads {parsed_data_type!r} as {as_numpy!r}, whose "
-                            f"Zarr V3 form is {suggestion!r}: pass that instead if it is "
-                            "what you meant)"
-                        )
                 raise ValueError(msg)
             else:
                 stand_in = SimpleNamespace(dtype=np_dtype)

@@ -8,8 +8,8 @@ Dimensions use the native Zarr V3 `dimension_names` field, and each
 *coordinate variable* is a 1-D array named after its own dimension (the
 netCDF convention). Every array carries CF attributes such as `units`,
 `standard_name`, and `long_name`; `_FillValue` appears as a base64 string,
-because zarr-python JSON-encodes a numpy-scalar attribute as the base64 of
-its bytes. This page builds a typed model of that layout: CF attribute
+because xarray's Zarr V3 fill-value coder encodes the attribute as the
+base64 of the value's bytes (four bytes here, for a `float32` variable). This page builds a typed model of that layout: CF attribute
 models with reserved-name aliases, `ArraySpec` subclasses for variables and
 coordinates, a cross-member dimension-consistency validator, and a closed
 member set for one concrete dataset. The same model classes validate real
@@ -44,12 +44,12 @@ class VariableAttrs(AttributesBase):
 stored = {
     "units": "degC",
     "standard_name": "air_temperature",
-    "_FillValue": "AAAAAICHw8A=",
+    "_FillValue": "ADwcxg==",
     "comment": "unknown keys are preserved",
 }
 attrs = VariableAttrs.model_validate(stored)
 print(attrs.FillValue)
-#> AAAAAICHw8A=
+#> ADwcxg==
 print(attrs.model_dump() == stored)
 #> True
 print(VariableAttrs(units="degrees_north").model_dump())
@@ -187,7 +187,7 @@ dataset = ClimateDataset(
             attributes=CFAttrs(
                 units="degC",
                 standard_name="air_temperature",
-                FillValue="AAAAAICHw8A=",
+                FillValue="ADwcxg==",
             ),
         ),
     },
@@ -196,7 +196,7 @@ temperature = dataset.members["temperature"]
 print(temperature.dimension_names)
 #> ('time', 'lat', 'lon')
 print(temperature.fill_value, temperature.attributes.FillValue)
-#> NaN AAAAAICHw8A=
+#> NaN ADwcxg==
 
 # round trip through an in-memory Zarr V3 store
 store = MemoryStore()
@@ -216,9 +216,9 @@ try:
             )
         },
     )
-except ValidationError:
-    print("refused: dimension 'latitude' has no coordinate array")
-    #> refused: dimension 'latitude' has no coordinate array
+except ValidationError as exc:
+    print(exc.errors()[0]["msg"])
+    #> Value error, Dimension 'latitude' of 'temperature' has no coordinate array.
 
 # a variable shape that disagrees with a coordinate length is refused
 try:
@@ -234,9 +234,11 @@ try:
             )
         },
     )
-except ValidationError:
-    print("refused: temperature length 2 along 'lat', coordinate has length 3")
-    #> refused: temperature length 2 along 'lat', coordinate has length 3
+except ValidationError as exc:
+    print(exc.errors()[0]["msg"])
+    """
+    Value error, 'temperature' has length 2 along 'lat', but the coordinate array has length 3.
+    """
 ```
 
 Reading a real xarray-written store back is the same `from_zarr` call on the

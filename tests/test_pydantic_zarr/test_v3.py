@@ -1098,11 +1098,10 @@ def test_from_shape_and_data_type(
 ) -> None:
     """
     `from_shape_and_data_type` builds a valid `ArraySpec` from a shape and
-    data type alone:
-    chunks default to the whole shape, the chunk key encoding to the default
-    `/` encoding, and fill value and codecs to the data type's derived
-    defaults, while explicit keyword arguments and dimension names pass
-    through.
+    data type alone: the chunk grid is guessed (one whole-array chunk for a
+    shape this small), the chunk key encoding defaults to the `/` encoding,
+    fill value and codecs are derived from the data type, and overrides pass
+    through into the same validation pass.
     """
     spec: AnyArraySpec = ArraySpec.from_shape_and_data_type(
         (10, 12), data_type, dimension_names=("y", "x")
@@ -1400,13 +1399,61 @@ def test_empty_codec_configuration_canonicalized() -> None:
     assert with_empty.codecs == ({"name": "vlen-utf8"},)
     assert with_empty == bare
 
+    def sharded_uint16(empty_configs: bool) -> AnyArraySpec:
+        crc: CodecLike = (
+            {"name": "crc32c", "configuration": {}} if empty_configs else {"name": "crc32c"}
+        )
+        return ArraySpec.from_shape_and_data_type(
+            (8,),
+            "uint16",
+            chunk_grid={"name": "regular", "configuration": {"chunk_shape": (4,)}},
+            codecs=(
+                {
+                    "name": "sharding_indexed",
+                    "configuration": {
+                        "chunk_shape": (2,),
+                        "codecs": (
+                            {"name": "bytes", "configuration": {"endian": "little"}},
+                            crc,
+                        ),
+                        "index_codecs": (
+                            {"name": "bytes", "configuration": {"endian": "little"}},
+                            crc,
+                        ),
+                        "index_location": "end",
+                    },
+                },
+            ),
+        )
+
+    # the rule reaches the inner pipeline and the index codecs of a sharding
+    # codec, where endianness is kept (uint16 inner data; uint64 index)
+    assert sharded_uint16(True) == sharded_uint16(False)
+    outer = sharded_uint16(True).codecs[0]
+    assert isinstance(outer, dict)
+    config = outer["configuration"]
+    assert isinstance(config, dict)
+    inner_codecs = config["codecs"]
+    assert isinstance(inner_codecs, tuple)
+    assert inner_codecs[1] == {"name": "crc32c"}
+    assert config["index_codecs"] == (
+        {"name": "bytes", "configuration": {"endian": "little"}},
+        {"name": "crc32c"},
+    )
+
 
 @pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr is required for this test")
-def test_variable_length_round_trip() -> None:
-    """A derived variable-length string spec round-trips a store with plain equality."""
+@pytest.mark.filterwarnings("ignore:The data type")
+@pytest.mark.parametrize("data_type", ["string", "variable_length_bytes"])
+def test_variable_length_round_trip(data_type: str) -> None:
+    """
+    A derived variable-length spec round-trips a store with plain equality:
+    zarr-python writes the vlen codecs with an explicit empty configuration,
+    which canonicalization reconciles.
+    """
     import zarr
 
-    spec: AnyArraySpec = ArraySpec.from_shape_and_data_type((4,), "string")
+    spec: AnyArraySpec = ArraySpec.from_shape_and_data_type((4,), data_type)
     arr = spec.to_zarr(zarr.storage.MemoryStore(), path="x")
     assert ArraySpec.from_zarr(arr) == spec
 
@@ -1460,3 +1507,28 @@ def test_with_sharding_codec_non_dividing_rejected() -> None:
     )
     with pytest.raises(ValidationError, match="divide"):
         spec.with_sharding_codec((3, 3))
+
+
+def test_with_sharding_codec_nested_non_dividing_rejected() -> None:
+    """Nesting shards whose existing inner chunks do not divide the new subchunks is refused."""
+    spec: AnyArraySpec = ArraySpec.from_shape_and_data_type(
+        (16, 16),
+        "uint16",
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (8, 8)}},
+    )
+    with pytest.raises(ValidationError, match="divide"):
+        spec.with_sharding_codec((4, 4)).with_sharding_codec((2, 2))
+
+
+@pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr is required for this test")
+def test_with_sharding_codec_round_trip() -> None:
+    """A sharded spec round-trips a store with plain equality."""
+    import zarr
+
+    sharded: AnyArraySpec = ArraySpec.from_shape_and_data_type(
+        (16, 16),
+        "uint16",
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (8, 8)}},
+    ).with_sharding_codec((4, 4))
+    arr = sharded.to_zarr(zarr.storage.MemoryStore(), path="x")
+    assert ArraySpec.from_zarr(arr) == sharded
