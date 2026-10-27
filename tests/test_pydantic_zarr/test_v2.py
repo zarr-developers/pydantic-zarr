@@ -755,7 +755,9 @@ def test_base_group_spec_v2() -> None:
     group: AnyGroupSpec = GroupSpec(attributes={"a": 1}, members={"x": array})
     base = BaseGroupSpec(attributes={"a": 1})
     assert base.like(group)
+    assert group.like(base)
     assert not base.like(GroupSpec(attributes={"a": 2}, members={}))
+    assert not group.like(BaseGroupSpec(attributes={"a": 2}))
     flat = group.to_flat()
     assert type(flat[""]) is BaseGroupSpec
     assert GroupSpec.from_flat(flat) == group

@@ -855,13 +855,15 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         exclude: IncEx = None,
     ) -> bool:
         """
-        Compare a `GroupSpec` to another `GroupSpec` or a `zarr.Group`, parameterized over the
-        fields to exclude or include in the comparison. Models are first converted to dict via the
-        `model_dump` method of `pydantic.BaseModel`, then compared with the `==` operator.
+        Compare a `GroupSpec` to another `GroupSpec`, `BaseGroupSpec` or `zarr.Group`,
+        parameterized over the fields to exclude or include in the comparison. Models are first
+        converted to dict via the `model_dump` method of `pydantic.BaseModel`, then compared with
+        the `==` operator. A `BaseGroupSpec` — a group considered without members — compares as
+        that projection: by the group's own metadata alone, whatever this side's members hold.
 
         Parameters
         ----------
-        other : GroupSpec | zarr.Group
+        other : GroupSpec | BaseGroupSpec | zarr.Group
             The group (model or actual) to compare with. If other is a `zarr.Group`, it will be
             converted to a `GroupSpec`.
         include : IncEx, default = None

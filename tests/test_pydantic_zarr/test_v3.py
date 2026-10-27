@@ -1261,12 +1261,13 @@ def test_group_like_base_group_member_projection() -> None:
     # differing own metadata still distinguishes the projection
     other_attrs: AnyGroupSpec = GroupSpec(members={"g": BaseGroupSpec(attributes={"a": 2})})
     assert not outer_full.like(other_attrs)
-    # members=None matches only members=None, in member position too
+    # members=None matches members=None or a projection, never known members
     outer_unknown: AnyGroupSpec = GroupSpec(
         members={"g": GroupSpec(attributes={"a": 1}, members=None)}
     )
     assert not outer_full.like(outer_unknown)
     assert outer_unknown.like(outer_unknown)
+    assert outer_unknown.like(outer_base)
 
 
 def test_bytes_codec_canonicalized_inside_sharding() -> None:

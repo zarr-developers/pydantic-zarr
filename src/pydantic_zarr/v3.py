@@ -1299,9 +1299,11 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         documents (a fill value written `"NaN"` equals one written
         `"0x7fc00000"`), exactly as `ArraySpec.like` judges them directly.
         A `BaseGroupSpec` — a group considered without members — compares as
-        that projection at any depth: by the group's own metadata alone. A
-        `GroupSpec` whose members are unknown (`members=None`) is alike only
-        a group whose members are likewise unknown.
+        that projection at any depth: by the group's own metadata alone,
+        whatever this side's members hold. A `GroupSpec` whose members are
+        unknown (`members=None`) is alike a group whose members are likewise
+        unknown, or a `BaseGroupSpec` projection, never a group with known
+        members.
         With filters, models are converted to `dict` via the `model_dump`
         method of `pydantic.BaseModel` and compared with the `==` operator.
 
@@ -1381,8 +1383,8 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
                     # a `BaseGroupSpec` member is the projection it is
                     # everywhere else: it compares by the group's own
                     # metadata, at any depth, exactly as at the top level.
-                    # A `GroupSpec` member with unknown members
-                    # (members=None) still matches only the same.
+                    # Two `GroupSpec` members agree on whether their members
+                    # are known (members=None matches only members=None).
                     return False
             return True
 
