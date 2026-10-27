@@ -1444,6 +1444,8 @@ def test_empty_codec_configuration_canonicalized() -> None:
 
 @pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr is required for this test")
 @pytest.mark.filterwarnings("ignore:The data type")
+@pytest.mark.filterwarnings("ignore:The codec `vlen-utf8`:UserWarning")
+@pytest.mark.filterwarnings("ignore:The codec `vlen-bytes`:UserWarning")
 @pytest.mark.parametrize("data_type", ["string", "variable_length_bytes"])
 def test_variable_length_round_trip(data_type: str) -> None:
     """
@@ -1453,6 +1455,8 @@ def test_variable_length_round_trip(data_type: str) -> None:
     """
     import zarr
 
+    if data_type == "variable_length_bytes" and ZARR_PYTHON_VERSION < Version("3.1.0"):
+        pytest.skip("zarr-python < 3.1 does not know the variable_length_bytes data type")
     spec: AnyArraySpec = ArraySpec.from_shape_and_data_type((4,), data_type)
     arr = spec.to_zarr(zarr.storage.MemoryStore(), path="x")
     assert ArraySpec.from_zarr(arr) == spec
