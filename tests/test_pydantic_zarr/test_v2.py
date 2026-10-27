@@ -821,3 +821,16 @@ def test_like_filters_keyword_only() -> None:
     group: AnyGroupSpec = GroupSpec()
     with pytest.raises(TypeError):
         group.like(group, {"attributes"})  # type: ignore[call-arg]
+
+
+def test_resolve_path_v2() -> None:
+    """
+    `resolve_path` (and `group[path]`) returns the node at a `/`-separated
+    relative path; a missing member raises `KeyError` naming the segment.
+    """
+    leaf: AnyArraySpec = ArraySpec(shape=(4,), dtype="uint8", chunks=(2,))
+    root: AnyGroupSpec = GroupSpec(members={"a": GroupSpec(members={"b": leaf})})
+    assert root.resolve_path("a/b") == leaf
+    assert root["a/b"] == leaf
+    with pytest.raises(KeyError, match="No member named 'zz' in a"):
+        root.resolve_path("a/zz")

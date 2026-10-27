@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import math
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from importlib.metadata import version
+from types import SimpleNamespace
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -27,6 +28,7 @@ from pydantic import (
     BaseModel,
     BeforeValidator,
     Field,
+    SerializeAsAny,
     SerializerFunctionWrapHandler,
     ValidationInfo,
     model_serializer,
@@ -64,8 +66,6 @@ from pydantic_zarr.core import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     import numpy.typing as npt
     import zarr
     from zarr.abc.store import Store
@@ -73,7 +73,11 @@ if TYPE_CHECKING:
     from zarr_metadata.v3.definition import ZarrV3Context
 
 
-type TBaseAttr = Mapping[str, object] | BaseModel
+# The BaseModel arm is SerializeAsAny so that an attribute model held by a
+# spec whose attributes type is not narrowed (a bare ArraySpec / GroupSpec)
+# serializes with the model's own fields; annotated as plain BaseModel it
+# would serialize through the base schema, silently dumping {}.
+type TBaseAttr = Mapping[str, object] | SerializeAsAny[BaseModel]
 type TBaseItem = Union["GroupSpec", "ArraySpec", "BaseGroupSpec"]
 
 # Convenience aliases for ArraySpecs and GroupSpecs with unknown type parameters.
@@ -241,6 +245,33 @@ def canonicalize_fill_value(fill_value: object) -> object:
     return fill_value
 
 
+def _numpy_dtype_from_v3(data_type: str | Mapping[str, object]) -> np.dtype[Any] | None:
+    """
+    Best-effort inverse of `parse_dtype_v3`: the numpy data type equivalent to
+    a Zarr V3 data type declaration, or `None` when there is none (an unknown
+    extension data type).
+    """
+    if isinstance(data_type, str):
+        try:
+            return np.dtype(data_type)
+        except TypeError:
+            return None
+    name = data_type.get("name")
+    config = data_type.get("configuration")
+    if name in ("numpy.datetime64", "numpy.timedelta64") and isinstance(config, Mapping):
+        unit = config.get("unit")
+        scale = config.get("scale_factor", 1)
+        code = "M8" if name == "numpy.datetime64" else "m8"
+        try:
+            return np.dtype(f"{code}[{unit}]" if scale == 1 else f"{code}[{scale}{unit}]")
+        except TypeError:
+            return None
+    return None
+
+
+_SINGLE_BYTE_DATA_TYPES = ("bool", "int8", "uint8")
+
+
 DTypeLike = Annotated[str | AnyNamedConfig, BeforeValidator(parse_dtype_v3)]
 """A data type declaration (name or named configuration), accepting numpy data types as input."""
 CodecTuple = Annotated[tuple[CodecLike, ...], BeforeValidator(ensure_multiple)]
@@ -316,6 +347,45 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     codecs: CodecTuple
     storage_transformers: tuple[AnyNamedConfig, ...] = ()
     dimension_names: tuple[str | None, ...] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def canonicalize_bytes_codec(cls, data: object) -> object:
+        """
+        Normalize the `bytes` codec the way zarr-python stores it: for a
+        single-byte data type the `endian` configuration is a no-op and
+        zarr-python omits it from written metadata, so it is dropped here at
+        validation time. A spec constructed with either spelling then compares
+        equal — to one constructed with the other, and to what `from_zarr`
+        reads back. (`zarr-metadata`'s canonical document model does not yet
+        equate the two spellings; once it does, this normalization becomes
+        redundant but stays harmless.)
+        """
+        if not isinstance(data, Mapping) or "codecs" not in data or "data_type" not in data:
+            return data
+        try:
+            parsed = parse_dtype_v3(data["data_type"])
+        except (ValueError, TypeError):
+            return data
+        if parsed not in _SINGLE_BYTE_DATA_TYPES:
+            return data
+        codecs = data["codecs"]
+        if isinstance(codecs, (str, Mapping)):
+            codecs = (codecs,)
+        if not isinstance(codecs, Sequence):
+            return data
+        normalized = tuple(
+            {"name": "bytes"}
+            if (
+                isinstance(codec, Mapping)
+                and codec.get("name") == "bytes"
+                and isinstance(config := codec.get("configuration"), Mapping)
+                and set(config) == {"endian"}
+            )
+            else codec
+            for codec in codecs
+        )
+        return {**data, "codecs": normalized}
 
     @model_validator(mode="after")
     def validate_dimension_names(self) -> Self:
@@ -478,6 +548,82 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             codecs=tuple(codecs_actual),
             storage_transformers=tuple(storage_transformers_actual),
             dimension_names=dimension_names_actual,
+        )
+
+    @classmethod
+    def from_shape(
+        cls,
+        shape: Sequence[int],
+        data_type: npt.DTypeLike | Mapping[str, object],
+        *,
+        chunks: Literal["auto"] | Sequence[int] = "auto",
+        attributes: Literal["auto"] | TAttr = "auto",
+        chunk_key_encoding: Literal["auto"] | AnyNamedConfig = "auto",
+        fill_value: Literal["auto"] | FillValue = "auto",
+        codecs: Literal["auto"] | Sequence[CodecLike] = "auto",
+        storage_transformers: Sequence[AnyNamedConfig] = (),
+        dimension_names: Sequence[str | None] | None = None,
+    ) -> Self:
+        """
+        Create an `ArraySpec` from a shape and a data type alone: the
+        metadata-only counterpart to `from_array`, for when there is no array
+        object to describe.
+
+        Every other field has a spec default or is derived from the data type:
+        `chunks` defaults to the whole shape, the chunk key encoding to the
+        `default` encoding with the `/` separator, and the fill value and
+        codecs to the same values `from_array` derives (`"NaN"` / `0` /
+        `False` / NaT fills; a `bytes` codec, carrying explicit endianness for
+        multi-byte data types). A fill value or codec default cannot be
+        derived for a data type with no numpy equivalent (an unknown extension
+        data type): pass `fill_value` and `codecs` explicitly there.
+
+        Examples
+        --------
+        >>> from pydantic_zarr.v3 import ArraySpec
+        >>> ArraySpec.from_shape((10, 10), "uint16", chunks=(5, 5), dimension_names=("y", "x"))
+        ArraySpec(zarr_format=3, node_type='array', attributes={}, shape=(10, 10), data_type='uint16', chunk_grid={'name': 'regular', 'configuration': {'chunk_shape': (5, 5)}}, chunk_key_encoding={'name': 'default', 'configuration': {'separator': '/'}}, fill_value=0, codecs=({'name': 'bytes', 'configuration': {'endian': 'little'}},), storage_transformers=(), dimension_names=('y', 'x'))
+        """
+        parsed_data_type = parse_dtype_v3(data_type)
+        chunk_shape = tuple(shape) if chunks == "auto" else tuple(chunks)
+        chunk_key_actual: AnyNamedConfig
+        if chunk_key_encoding == "auto":
+            chunk_key_actual = {"name": "default", "configuration": {"separator": "/"}}
+        else:
+            chunk_key_actual = chunk_key_encoding
+
+        fill_value_actual: FillValue = None
+        codecs_actual: tuple[CodecLike, ...] = ()
+        if fill_value == "auto" or codecs == "auto":
+            np_dtype = _numpy_dtype_from_v3(parsed_data_type)
+            if np_dtype is None:
+                underived = " and ".join(
+                    name
+                    for name, value in (("fill_value", fill_value), ("codecs", codecs))
+                    if value == "auto"
+                )
+                msg = (
+                    f"Data type {parsed_data_type!r} has no numpy equivalent, so no default "
+                    f"can be derived for it: pass {underived} explicitly."
+                )
+                raise ValueError(msg)
+            stand_in = SimpleNamespace(dtype=np_dtype)
+            fill_value_actual = auto_fill_value(stand_in) if fill_value == "auto" else fill_value
+            codecs_actual = auto_codecs(stand_in) if codecs == "auto" else tuple(codecs)
+        else:
+            fill_value_actual = fill_value
+            codecs_actual = tuple(codecs)
+
+        return cls(
+            attributes=cast("TAttr", {}) if attributes == "auto" else attributes,
+            shape=tuple(shape),
+            data_type=parsed_data_type,
+            chunk_grid={"name": "regular", "configuration": {"chunk_shape": chunk_shape}},
+            chunk_key_encoding=chunk_key_actual,
+            fill_value=fill_value_actual,
+            codecs=codecs_actual,
+            storage_transformers=tuple(storage_transformers),
+            dimension_names=dimension_names,
         )
 
     @classmethod
@@ -826,6 +972,51 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         result is validated.
         """
         return type(self).model_validate({**self.model_dump(), **changes})
+
+    def resolve_path(self, path: str) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec:
+        """
+        Return the node at a `/`-separated path of member names relative to
+        this group (`"a"`, `"a/b/c"`; leading and trailing `/` are ignored).
+        Metadata conventions that reference nodes by relative path (OME-Zarr
+        dataset paths, GeoZarr `grid_mapping` and multiscale assets) resolve
+        with this method.
+
+        Raises
+        ------
+        ValueError
+            If the path holds no member names, or an empty one (`"a//b"`).
+        KeyError
+            Naming the segment that failed: a member name that does not
+            exist, a segment that descends into a node that is not a group,
+            or a group whose members are unknown (`members=None`).
+        """
+        stripped = path.strip("/")
+        if stripped == "":
+            msg = f"Invalid path {path!r}: it holds no member names."
+            raise ValueError(msg)
+        node: AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec = self
+        resolved: list[str] = []
+        for segment in stripped.split("/"):
+            where = "/".join(resolved) if resolved else "this group"
+            if segment == "":
+                msg = f"Invalid path {path!r}: empty member name."
+                raise ValueError(msg)
+            if not isinstance(node, GroupSpec):
+                msg = f"Cannot resolve {segment!r}: {where} is not a group with members."
+                raise KeyError(msg)
+            if node.members is None:
+                msg = f"Cannot resolve {segment!r}: the members of {where} are unknown (members=None)."
+                raise KeyError(msg)
+            if segment not in node.members:
+                msg = f"No member named {segment!r} in {where}."
+                raise KeyError(msg)
+            node = node.members[segment]
+            resolved.append(segment)
+        return node
+
+    def __getitem__(self, path: str) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec:
+        """`group[path]` resolves a member path: see `resolve_path`."""
+        return self.resolve_path(path)
 
     @classmethod
     def from_flat(cls, data: Mapping[str, AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec]) -> Self:

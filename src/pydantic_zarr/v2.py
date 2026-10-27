@@ -23,7 +23,7 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, SerializeAsAny, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
 from typing_extensions import TypedDict, TypeIs, TypeVar
 from zarr_metadata import ZarrV2ArrayDimensionSeparator, ZarrV2ArrayOrder
@@ -43,7 +43,10 @@ if TYPE_CHECKING:
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
 
-type TBaseAttr = Mapping[str, object] | BaseModel
+# SerializeAsAny: see the note on the v3 TBaseAttr — a model held by a spec
+# with un-narrowed attributes must serialize with its own fields, not the
+# empty base schema.
+type TBaseAttr = Mapping[str, object] | SerializeAsAny[BaseModel]
 type TBaseItem = Union["GroupSpec", "ArraySpec", "BaseGroupSpec"]
 
 type AnyArraySpec = "ArraySpec[Any]"
@@ -644,6 +647,50 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         result is validated.
         """
         return type(self).model_validate({**self.model_dump(), **changes})
+
+    def resolve_path(self, path: str) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec:
+        """
+        Return the node at a `/`-separated path of member names relative to
+        this group (`"a"`, `"a/b/c"`; leading and trailing `/` are ignored).
+        Metadata conventions that reference nodes by relative path resolve
+        with this method.
+
+        Raises
+        ------
+        ValueError
+            If the path holds no member names, or an empty one (`"a//b"`).
+        KeyError
+            Naming the segment that failed: a member name that does not
+            exist, a segment that descends into a node that is not a group,
+            or a group whose members are unknown (`members=None`).
+        """
+        stripped = path.strip("/")
+        if stripped == "":
+            msg = f"Invalid path {path!r}: it holds no member names."
+            raise ValueError(msg)
+        node: AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec = self
+        resolved: list[str] = []
+        for segment in stripped.split("/"):
+            where = "/".join(resolved) if resolved else "this group"
+            if segment == "":
+                msg = f"Invalid path {path!r}: empty member name."
+                raise ValueError(msg)
+            if not isinstance(node, GroupSpec):
+                msg = f"Cannot resolve {segment!r}: {where} is not a group with members."
+                raise KeyError(msg)
+            if node.members is None:
+                msg = f"Cannot resolve {segment!r}: the members of {where} are unknown (members=None)."
+                raise KeyError(msg)
+            if segment not in node.members:
+                msg = f"No member named {segment!r} in {where}."
+                raise KeyError(msg)
+            node = node.members[segment]
+            resolved.append(segment)
+        return node
+
+    def __getitem__(self, path: str) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec:
+        """`group[path]` resolves a member path: see `resolve_path`."""
+        return self.resolve_path(path)
 
     @classmethod
     @override

@@ -7,11 +7,17 @@ from typing import (
     Literal,
     TypeVar,
     overload,
+    override,
 )
 
 import numpy as np
 import numpy.typing as npt
-from pydantic import BaseModel, ConfigDict
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+)
 
 if TYPE_CHECKING:
     import zarr
@@ -46,6 +52,62 @@ def tuplify_json(obj: object) -> object:
 
 class StrictBase(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+    @override
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        """
+        Serialize with `by_alias=True` unless told otherwise: a spec's own
+        fields declare no aliases, so this only affects attribute models,
+        whose aliases spell stored metadata keys that are not Python
+        identifiers (`_FillValue`, `image-label`, `proj:code`). Without this
+        default, a hierarchy would be silently written to storage under the
+        Python field names.
+        """
+        kwargs.setdefault("by_alias", True)
+        return super().model_dump(**kwargs)
+
+    @override
+    def model_dump_json(self, **kwargs: Any) -> str:
+        """Serialize to JSON with `by_alias=True` unless told otherwise; see `model_dump`."""
+        kwargs.setdefault("by_alias", True)
+        return super().model_dump_json(**kwargs)
+
+
+class AttributesBase(BaseModel):
+    """
+    A base class for models of stored attributes ("spec-style" attributes).
+
+    Models of the attribute conventions found in stored metadata (CF, OME,
+    STAC, ...) need two behaviors plain pydantic models lack by default,
+    which this class provides:
+
+    - Keys that are not Python identifiers (`_FillValue`, `image-label`,
+      `proj:code`) are declared as field aliases; serialization writes the
+      alias, and validation accepts both spellings.
+    - A field left unset whose value is `None` serializes as an absent key
+      rather than `null`, matching specs where optional keys are omitted.
+      A field explicitly set to `None` keeps its key, so a spec that
+      distinguishes absent from null can express both.
+
+    Unknown keys are preserved (`extra="allow"`), so re-serializing
+    attributes read from a store does not drop keys this model does not
+    declare. Subclasses can override any of this via `model_config`.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True, extra="allow")
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_none(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        dumped = handler(self)
+        for name, field in type(self).model_fields.items():
+            if name in self.model_fields_set:
+                continue
+            # the serialized key may be the field name or its alias,
+            # depending on the serialization flags in effect
+            for key in {name, field.serialization_alias or field.alias or name}:
+                if key in dumped and dumped[key] is None:
+                    del dumped[key]
+        return dumped
 
 
 def parse_dtype_v2(value: npt.DTypeLike) -> str | list[tuple[Any, ...]]:

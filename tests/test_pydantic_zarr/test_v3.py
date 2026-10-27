@@ -1053,3 +1053,131 @@ def test_dimension_names_omitted_when_none() -> None:
     json_dump = json.loads(group.model_dump_json())
     assert "dimension_names" not in json_dump["members"]["unnamed"]
     assert json_dump["members"]["named"]["dimension_names"] == ["x", "y"]
+
+
+@pytest.mark.parametrize(
+    ("data_type", "expected_fill", "expected_codecs"),
+    [
+        ("uint16", 0, ({"name": "bytes", "configuration": {"endian": "little"}},)),
+        ("float32", "NaN", ({"name": "bytes", "configuration": {"endian": "little"}},)),
+        ("bool", False, ({"name": "bytes"},)),
+        ("uint8", 0, ({"name": "bytes"},)),
+        (
+            {"name": "numpy.datetime64", "configuration": {"unit": "ns", "scale_factor": 1}},
+            -(2**63),
+            ({"name": "bytes", "configuration": {"endian": "little"}},),
+        ),
+    ],
+    ids=["uint16", "float32", "bool", "uint8", "datetime64"],
+)
+def test_from_shape(
+    data_type: str | dict[str, Any], expected_fill: object, expected_codecs: tuple[Any, ...]
+) -> None:
+    """
+    `from_shape` builds a valid `ArraySpec` from a shape and data type alone:
+    chunks default to the whole shape, the chunk key encoding to the default
+    `/` encoding, and fill value and codecs to the data type's derived
+    defaults, while explicit keyword arguments and dimension names pass
+    through.
+    """
+    spec: AnyArraySpec = ArraySpec.from_shape((10, 12), data_type, dimension_names=("y", "x"))
+    assert spec.shape == (10, 12)
+    assert spec.chunk_grid == {"name": "regular", "configuration": {"chunk_shape": (10, 12)}}
+    assert spec.chunk_key_encoding == {"name": "default", "configuration": {"separator": "/"}}
+    assert spec.fill_value == expected_fill
+    assert spec.codecs == expected_codecs
+    assert spec.dimension_names == ("y", "x")
+    chunked: AnyArraySpec = ArraySpec.from_shape((10, 12), data_type, chunks=(5, 6))
+    assert chunked.chunk_grid == {"name": "regular", "configuration": {"chunk_shape": (5, 6)}}
+    explicit: AnyArraySpec = ArraySpec.from_shape((10, 12), "uint16", fill_value=7)
+    assert explicit.fill_value == 7
+
+
+def test_from_shape_underivable_defaults_rejected() -> None:
+    """
+    `from_shape` refuses to guess a fill value or codecs for a data type with
+    no numpy equivalent, naming the arguments to pass explicitly.
+    """
+    with pytest.raises(ValueError, match="fill_value and codecs"):
+        ArraySpec.from_shape((2,), "some_extension_dtype")
+
+
+def test_bytes_codec_canonicalized_for_single_byte_dtypes() -> None:
+    """
+    For single-byte data types the `bytes` codec's no-op `endian`
+    configuration is dropped at validation, matching the spelling zarr-python
+    stores: specs constructed with either spelling are equal and alike, and
+    multi-byte data types keep their endianness.
+    """
+    endian_codecs = ({"name": "bytes", "configuration": {"endian": "little"}},)
+    for data_type in ("uint8", "int8", "bool"):
+        with_endian: AnyArraySpec = ArraySpec.from_shape((4,), data_type, codecs=endian_codecs)
+        bare: AnyArraySpec = ArraySpec.from_shape((4,), data_type)
+        assert with_endian.codecs == ({"name": "bytes"},)
+        assert with_endian == bare
+        assert with_endian.like(bare)
+    assert ArraySpec.from_shape((4,), "uint16", codecs=endian_codecs).codecs == endian_codecs
+
+
+def test_resolve_path() -> None:
+    """
+    `resolve_path` (and `group[path]`) returns the node at a `/`-separated
+    relative path, ignoring leading and trailing separators.
+    """
+    leaf: AnyArraySpec = ArraySpec.from_shape((4,), "uint8")
+    inner: AnyGroupSpec = GroupSpec(attributes={"level": 2}, members={"b": leaf})
+    root: AnyGroupSpec = GroupSpec(members={"a": inner, "arr": leaf})
+    assert root.resolve_path("arr") == leaf
+    assert root.resolve_path("a/b") == leaf
+    assert root["a"] == inner
+    assert root["/a/b/"] == leaf
+
+
+@pytest.mark.parametrize(
+    ("path", "exception", "match"),
+    [
+        ("a/zz", KeyError, "No member named 'zz' in a"),
+        ("arr/x", KeyError, "arr is not a group"),
+        pytest.param("", ValueError, "no member names", id="empty"),
+        ("a//b", ValueError, "empty member name"),
+    ],
+    ids=["missing_member", "through_array", "empty", "empty_segment"],
+)
+def test_resolve_path_invalid(path: str, exception: type[Exception], match: str) -> None:
+    """Failed resolution raises naming the failing segment, or rejects a malformed path."""
+    leaf: AnyArraySpec = ArraySpec.from_shape((4,), "uint8")
+    root: AnyGroupSpec = GroupSpec(members={"a": GroupSpec(members={"b": leaf}), "arr": leaf})
+    with pytest.raises(exception, match=match):
+        root.resolve_path(path)
+
+
+def test_resolve_path_unknown_members() -> None:
+    """Resolution through a group whose members are unknown raises `KeyError`."""
+    unknown: AnyGroupSpec = GroupSpec(members=None)
+    with pytest.raises(KeyError, match="unknown"):
+        unknown.resolve_path("x")
+
+
+def test_attributes_serialized_by_alias() -> None:
+    """
+    Dumping a spec serializes attribute models with their aliases, so stored
+    metadata keys that are not Python identifiers (`_FillValue`, `image-label`)
+    come out under the spec's spelling, and unset `None` fields of an
+    `AttributesBase` model are omitted while explicitly set ones are kept.
+    """
+    from pydantic import Field
+
+    from pydantic_zarr.core import AttributesBase
+
+    class CFAttrs(AttributesBase):
+        fill: float | None = Field(default=None, alias="_FillValue")
+        units: str | None = None
+
+    spec: AnyArraySpec = ArraySpec.from_shape(
+        (4,), "float32", attributes=CFAttrs(units="K", _FillValue=1.5)
+    )
+    assert spec.model_dump()["attributes"] == {"_FillValue": 1.5, "units": "K"}
+    unset: AnyArraySpec = ArraySpec.from_shape((4,), "float32", attributes=CFAttrs())
+    assert unset.model_dump()["attributes"] == {}
+    explicit: AnyArraySpec = ArraySpec.from_shape((4,), "float32", attributes=CFAttrs(units=None))
+    assert explicit.model_dump()["attributes"] == {"units": None}
