@@ -20,6 +20,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: Implementation :: CPython",
+    "Typing :: Typed",
 ]
 dependencies = [
     "pydantic>=2.10",
@@ -30,6 +31,7 @@ dependencies = [
 
 [project.urls]
 Documentation = "https://pydantic-zarr.readthedocs.io/"
+Changelog = "https://pydantic-zarr.readthedocs.io/en/latest/release-notes/"
 Issues = "https://github.com/zarr-developers/pydantic-zarr/issues"
 Source = "https://github.com/zarr-developers/pydantic-zarr"
 

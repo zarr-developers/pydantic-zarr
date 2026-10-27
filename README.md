@@ -58,6 +58,14 @@ print(spec.model_dump())
 """
 ```
 
+## Development
+
+Development tasks are driven by [`just`](https://just.systems) — run
+`just --list` for the available recipes — with environments managed by
+[hatch](https://hatch.pypa.io). See the
+[contributing guide](https://pydantic-zarr.readthedocs.io/en/latest/contributing/)
+for setup, testing, and changelog conventions.
+
 ## History
 
 This project was developed at [HHMI / Janelia Research Campus](https://www.janelia.org/). It was originally written by Davis Bennett to solve problems he encountered while working on the [Cellmap Project team](https://www.janelia.org/project-team/cellmap/members). In December of 2024 this project was migrated from the [`janelia-cellmap`](https://github.com/janelia-cellmap) github organization to [`zarr-developers`](https://github.com/zarr-developers) organization.
