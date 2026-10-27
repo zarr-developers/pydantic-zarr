@@ -14,6 +14,7 @@ from pydantic import BaseModel, ValidationError
 
 from pydantic_zarr.core import tuplify_json
 from pydantic_zarr.v3 import (
+    _SINGLE_BYTE_DATA_TYPES,
     AnyArraySpec,
     AnyBaseGroupSpec,
     AnyGroupSpec,
@@ -205,11 +206,20 @@ def test_arrayspec_from_zarr(dtype_example: DTypeExample) -> None:
 
     arr_spec: AnyArraySpec = ArraySpec.from_zarr(arr)
     expected = json.loads(store["zarr.json"].to_bytes(), object_hook=tuplify_json)
-    if data_type in ("bool", "int8", "uint8"):
+    if data_type in _SINGLE_BYTE_DATA_TYPES:
         # zarr-python 3.0 wrote a no-op endian configuration on the bytes
-        # codec for single-byte data types; the spec canonicalizes it away
+        # codec for single-byte data types; the spec canonicalizes it away.
+        # The rewrite mirrors the validator's exact condition, so a wrongly
+        # dropped non-endian configuration would still fail the comparison.
         expected["codecs"] = tuple(
-            {"name": "bytes"} if isinstance(codec, dict) and codec.get("name") == "bytes" else codec
+            {"name": "bytes"}
+            if (
+                isinstance(codec, dict)
+                and codec.get("name") == "bytes"
+                and isinstance(codec.get("configuration"), dict)
+                and set(codec["configuration"]) == {"endian"}
+            )
+            else codec
             for codec in expected["codecs"]
         )
     assert arr_spec.model_dump() == expected
@@ -1220,3 +1230,79 @@ def test_get_path() -> None:
         root.get_path("a//b")
     with pytest.raises(KeyError, match="Members: 'b'"):
         root.resolve_path("a/zz")
+
+
+def test_group_like_base_group_member_unalike() -> None:
+    """
+    In the canonical group comparison, a member `GroupSpec` (members known)
+    and a member `BaseGroupSpec` (no members) are not alike, even with equal
+    attributes: a depth-limited read differs structurally from a full one.
+    """
+    g_full: AnyGroupSpec = GroupSpec(attributes={"a": 1}, members={})
+    g_base = BaseGroupSpec(attributes={"a": 1})
+    outer_full: AnyGroupSpec = GroupSpec(members={"g": g_full})
+    outer_base: AnyGroupSpec = GroupSpec(members={"g": g_base})
+    members = outer_base.members
+    assert members is not None
+    assert isinstance(members["g"], BaseGroupSpec)
+    assert not isinstance(members["g"], GroupSpec)
+    assert not outer_full.like(outer_base)
+    assert not outer_base.like(outer_full)
+
+
+def test_bytes_codec_canonicalized_inside_sharding() -> None:
+    """
+    The single-byte `bytes` codec normalization reaches inside a sharding
+    codec's inner pipeline (same data type), while the index codecs, which
+    encode the uint64 index, keep their endianness.
+    """
+
+    def sharded(endian_config: bool) -> AnyArraySpec:
+        inner: tuple[CodecLike, ...] = (
+            {"name": "bytes", "configuration": {"endian": "little"}}
+            if endian_config
+            else {"name": "bytes"},
+        )
+        return ArraySpec.from_shape(
+            (8,),
+            "uint8",
+            chunks=(4,),
+            codecs=(
+                {
+                    "name": "sharding_indexed",
+                    "configuration": {
+                        "chunk_shape": (2,),
+                        "codecs": inner,
+                        "index_codecs": (
+                            {"name": "bytes", "configuration": {"endian": "little"}},
+                            {"name": "crc32c"},
+                        ),
+                        "index_location": "end",
+                    },
+                },
+            ),
+        )
+
+    with_endian = sharded(True)
+    bare = sharded(False)
+    assert with_endian == bare
+    assert with_endian.like(bare)
+    outer = with_endian.codecs[0]
+    assert isinstance(outer, dict)
+    config = outer["configuration"]
+    assert isinstance(config, dict)
+    assert config["codecs"] == ({"name": "bytes"},)
+    index_codecs = config["index_codecs"]
+    assert isinstance(index_codecs, tuple)
+    assert index_codecs[0] == {"name": "bytes", "configuration": {"endian": "little"}}
+
+
+def test_from_shape_non_numpy_v3_name_rejected() -> None:
+    """
+    A Zarr V3 data type name that numpy happens to parse as something else
+    (the variable-length `"bytes"` type reads as a zero-length bytestring
+    dtype) is not treated as a numpy equivalent: deriving defaults for it is
+    refused.
+    """
+    with pytest.raises(ValueError, match="fill_value and codecs"):
+        ArraySpec.from_shape((2,), "bytes")

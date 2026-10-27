@@ -255,9 +255,18 @@ def _numpy_dtype_from_v3(data_type: str | Mapping[str, object]) -> np.dtype[Any]
     """
     if isinstance(data_type, str):
         try:
-            return np.dtype(data_type)
+            candidate = np.dtype(data_type)
         except TypeError:
             return None
+        try:
+            # only names whose numpy reading maps back to the same Zarr V3
+            # name are equivalents; np.dtype accepts spellings (the V3
+            # variable-length "bytes", say) that mean something else entirely
+            if parse_dtype_v3(candidate) != data_type:
+                return None
+        except ValueError:
+            return None
+        return candidate
     name = data_type.get("name")
     config = data_type.get("configuration")
     if name in ("numpy.datetime64", "numpy.timedelta64") and isinstance(config, Mapping):
@@ -376,18 +385,25 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             codecs = (codecs,)
         if not isinstance(codecs, Sequence):
             return data
-        normalized = tuple(
-            {"name": "bytes"}
-            if (
-                isinstance(codec, Mapping)
-                and codec.get("name") == "bytes"
-                and isinstance(config := codec.get("configuration"), Mapping)
-                and set(config) == {"endian"}
-            )
-            else codec
-            for codec in codecs
-        )
-        return {**data, "codecs": normalized}
+
+        def normalize(codec: object) -> object:
+            if not isinstance(codec, Mapping):
+                return codec
+            name = codec.get("name")
+            config = codec.get("configuration")
+            if name == "bytes" and isinstance(config, Mapping) and set(config) == {"endian"}:
+                return {"name": "bytes"}
+            if name == "sharding_indexed" and isinstance(config, Mapping):
+                # the inner codecs encode chunks of the same data type, so
+                # the same normalization applies; the index codecs encode
+                # the uint64 index, where endianness is meaningful
+                inner = config.get("codecs")
+                if isinstance(inner, Sequence) and not isinstance(inner, str):
+                    inner_normalized = tuple(normalize(inner_codec) for inner_codec in inner)
+                    return {**codec, "configuration": {**config, "codecs": inner_normalized}}
+            return codec
+
+        return {**data, "codecs": tuple(normalize(codec) for codec in codecs)}
 
     @model_validator(mode="after")
     def validate_dimension_names(self) -> Self:
@@ -1352,7 +1368,15 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
                 if isinstance(member, ArraySpec):
                     if not isinstance(other_member, ArraySpec) or not member.like(other_member):
                         return False
-                elif isinstance(other_member, ArraySpec) or not member.like(other_member):
+                elif isinstance(other_member, ArraySpec):
+                    return False
+                elif isinstance(member, GroupSpec) != isinstance(other_member, GroupSpec):
+                    # a group with members and one without them (a
+                    # `BaseGroupSpec`, the shape a depth-limited `from_zarr`
+                    # leaves at its cutoff) differ structurally, whatever
+                    # their own metadata says
+                    return False
+                elif not member.like(other_member):
                     return False
             return True
 

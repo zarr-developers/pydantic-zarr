@@ -96,8 +96,11 @@ class AttributesBase(BaseModel):
     Unknown keys are preserved and round-trip (`extra="allow"`): attributes
     read from a store keep the keys this model does not declare, so the model
     is OPEN by default — declare `model_config` with `extra="forbid"` in a
-    subclass for a closed one. Subclasses can override any of this via
-    `model_config`.
+    subclass for a closed one. Subclasses can override this via
+    `model_config`, except alias serialization: a spec dumps its whole tree
+    with `by_alias=True`, so attributes dumped through a spec use aliases
+    whatever this model's own config says, unless the caller passes
+    `by_alias=False` to the spec's dump.
 
     What an explicitly assigned `None` serializes as is the class-level
     `explicit_none` policy; the default keeps it as `null`.
