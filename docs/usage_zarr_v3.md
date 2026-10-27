@@ -16,7 +16,7 @@ array_spec = ArraySpec(
     chunk_grid=NamedConfig(name="regular", configuration={"chunk_shape": [1000, 100]}),
     chunk_key_encoding=NamedConfig(name="default", configuration={"separator": "/"}),
     codecs=[
-        NamedConfig(name="bytes", configuration={"endian": "little"}),
+        NamedConfig(name="bytes"),
         NamedConfig(name="gzip", configuration={"level": 1}),
     ],
     storage_transformers=(),
@@ -67,10 +67,7 @@ print(spec.model_dump_json(indent=2))
       "fill_value": 0,
       "codecs": [
         {
-          "name": "bytes",
-          "configuration": {
-            "endian": "little"
-          }
+          "name": "bytes"
         },
         {
           "name": "gzip",
@@ -89,3 +86,7 @@ print(spec.model_dump_json(indent=2))
 }
 """
 ```
+
+For a single-byte data type like `uint8`, the `bytes` codec needs no `endian`
+configuration; a no-op `{"endian": ...}` configuration passed anyway is dropped
+at validation, matching the spelling `zarr-python` stores.

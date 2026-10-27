@@ -170,3 +170,5 @@ uv.lock
 
 # osx metadata
 .DS_Store
+# roborev snapshots
+/.roborev/

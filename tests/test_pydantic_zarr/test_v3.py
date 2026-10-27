@@ -204,9 +204,15 @@ def test_arrayspec_from_zarr(dtype_example: DTypeExample) -> None:
     arr = zarr.create_array(store=store, shape=(10,), dtype=data_type, zarr_format=3)
 
     arr_spec: AnyArraySpec = ArraySpec.from_zarr(arr)
-    assert arr_spec.model_dump() == json.loads(
-        store["zarr.json"].to_bytes(), object_hook=tuplify_json
-    )
+    expected = json.loads(store["zarr.json"].to_bytes(), object_hook=tuplify_json)
+    if data_type in ("bool", "int8", "uint8"):
+        # zarr-python 3.0 wrote a no-op endian configuration on the bytes
+        # codec for single-byte data types; the spec canonicalizes it away
+        expected["codecs"] = tuple(
+            {"name": "bytes"} if isinstance(codec, dict) and codec.get("name") == "bytes" else codec
+            for codec in expected["codecs"]
+        )
+    assert arr_spec.model_dump() == expected
 
 
 @pytest.mark.parametrize("path", ["", "foo"])
