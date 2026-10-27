@@ -81,9 +81,12 @@ if TYPE_CHECKING:
 type TBaseAttr = Mapping[str, object] | SerializeAsAny[BaseModel]
 type TBaseItem = Union["GroupSpec", "ArraySpec", "BaseGroupSpec"]
 
-# Convenience aliases for ArraySpecs and GroupSpecs with unknown type parameters.
-# The type variables carry defaults (PEP 696), so the bare class names mean the
-# same thing; these aliases predate the defaults and are kept for compatibility.
+# Aliases for specs of any specialization. NOT redundant with the bare class
+# names: through its PEP 696 default, bare `ArraySpec` means the *invariant*
+# `ArraySpec[TBaseAttr]`, which strict checkers (mypy) refuse to accept a
+# narrowed spec such as `ArraySpec[CFAttrs]` for. APIs that pass heterogeneous
+# trees through (`resolve_path`, `from_flat`, `like`, `is_array_spec`) must be
+# spelled with these.
 type AnyArraySpec = "ArraySpec[Any]"
 type AnyGroupSpec = "GroupSpec[Any, Any]"
 type AnyBaseGroupSpec = "BaseGroupSpec[Any]"

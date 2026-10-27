@@ -49,6 +49,9 @@ if TYPE_CHECKING:
 type TBaseAttr = Mapping[str, object] | SerializeAsAny[BaseModel]
 type TBaseItem = Union["GroupSpec", "ArraySpec", "BaseGroupSpec"]
 
+# Aliases for specs of any specialization; not redundant with the bare class
+# names — see the note on the v3 aliases (bare `ArraySpec` is the invariant
+# `ArraySpec[TBaseAttr]`, which mypy refuses narrowed specs for).
 type AnyArraySpec = "ArraySpec[Any]"
 type AnyGroupSpec = "GroupSpec[Any, Any]"
 type AnyBaseGroupSpec = "BaseGroupSpec[Any]"
