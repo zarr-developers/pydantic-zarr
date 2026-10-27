@@ -44,8 +44,8 @@ test-base = [
     "pytest==9.1.0",
     "pytest-cov",
     "pytest-examples",
-    "xarray==2025.10.0",
-    "dask==2025.11.0",
+    "xarray>=2025.10.0",
+    "dask>=2025.11.0",
 ]
 test = [
     {include-group = "test-base"},
@@ -59,8 +59,8 @@ docs = [
     "pydantic==2.12.*",
     "zarr>=3.1.0",
     "towncrier",
-    # reference implementations the example scripts compare their output against
-    "xarray",
+    # reference implementations the example scripts compare their output
+    # against (xarray comes from the test-base group)
     "ome-zarr>=0.21",
     "ngff-zarr>=0.50",
 ]
@@ -100,6 +100,9 @@ python = ["3.12", "3.13", "3.14"]
 
 [tool.hatch.envs.docs]
 dependency-groups = ['docs']
+python = "3.12"
+# pip's resolver gives up on the dask/ngff-zarr combination that uv resolves
+installer = "uv"
 
 [tool.hatch.envs.docs.scripts]
 build = "mkdocs build --clean --strict"
