@@ -241,6 +241,9 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
     shape: tuple[int, ...]
     chunks: tuple[int, ...]
     dtype: DtypeStr | list[tuple[Any, ...]]
+    # validation replaces this declared default with the dtype's (see
+    # `default_fill_value`); `model_construct` and the JSON schema, which do
+    # not validate, still report 0 for every dtype
     fill_value: Annotated[FillValue, BeforeValidator(canonicalize_fill_value)] = 0
     order: MemoryOrder = "C"
     filters: list[CodecDict] | None = None
@@ -255,8 +258,13 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         """
         Give a spec built without a `fill_value` the default for its dtype:
         `0` when the dtype accepts `0`, and `None` otherwise (a bool, complex
-        or structured dtype, say), as `zarr-metadata` does.
+        or structured dtype, say), as `zarr-metadata` does. A subclass that
+        declares its own `fill_value` default, or makes the field required,
+        keeps that instead.
         """
+        declared = cls.model_fields["fill_value"].default
+        if type(declared) is not int or declared != 0:
+            return data
         if isinstance(data, Mapping) and "fill_value" not in data and "dtype" in data:
             data = {**data, "fill_value": dtype_default_fill_value(data["dtype"])}
         return data
@@ -533,8 +541,9 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
             raise ContainsGroupError(store, path)
 
         document = self.model_dump()
-        # zarr-python reads a pair fill value (a complex number) from JSON as a
-        # list; before 3.1 it reads a tuple as an array of fill values instead
+        # zarr-python reads a complex fill value's (real, imaginary) pair from
+        # JSON as a list; before 3.1 it reads a tuple as an array of fill values.
+        # A v2 fill value nests no deeper than that pair.
         if isinstance(document["fill_value"], tuple):
             document["fill_value"] = list(document["fill_value"])
         meta: ArrayV2Metadata = ArrayV2Metadata.from_dict(document)
@@ -546,10 +555,12 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         """
         Return a revalidated copy of this model with `changes` applied.
 
-        All changes land in one validation pass, so correlated fields (for an
-        array, a new `data_type` with a matching `fill_value`, or a new
-        `shape` with a matching `chunk_grid`) change together atomically.
-        Unlike `model_copy(update=...)`, the result is validated. Passing
+        All changes land in one validation pass, so correlated fields (a new
+        `dtype` with a matching `fill_value`, or a new `shape` with matching
+        `chunks`) change together atomically. A new `dtype` keeps the current
+        `fill_value`, which is not re-derived: when the new dtype does not
+        accept it, pass a `fill_value` in the same call. Unlike
+        `model_copy(update=...)`, the result is validated. Passing
         `extra_fields` replaces the extra fields as a whole.
         """
         return self._updated(changes)

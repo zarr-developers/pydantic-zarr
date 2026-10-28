@@ -1023,6 +1023,36 @@ def test_fill_value_default(dtype: object, expected: object) -> None:
     assert ArraySpec.from_array(array).fill_value == expected
 
 
+class _NaNFillArraySpec(ArraySpec):
+    fill_value: Literal["NaN"] = "NaN"
+
+
+class _OneFillArraySpec(ArraySpec):
+    fill_value: float = 1.0
+
+
+@pytest.mark.parametrize(
+    ("cls", "expected"), [(_NaNFillArraySpec, "NaN"), (_OneFillArraySpec, 1.0)], ids=str
+)
+def test_fill_value_default_subclass(cls: type[AnyArraySpec], expected: object) -> None:
+    """
+    A subclass that declares its own fill value default keeps it, instead of
+    the dtype's default.
+    """
+    assert cls(shape=(4,), chunks=(2,), dtype="<f8").fill_value == expected
+
+
+def test_update_dtype_keeps_fill_value() -> None:
+    """
+    A new dtype keeps the current fill value, so changing to a dtype that
+    refuses it, without a matching fill value, is a validation error.
+    """
+    spec = ArraySpec(shape=(4,), chunks=(2,), dtype="<i4")
+    assert spec.update(dtype="|b1", fill_value=False).fill_value is False
+    with pytest.raises(ValidationError, match=r"fill_value: expected a boolean or null, got 0"):
+        spec.update(dtype="|b1")
+
+
 def test_fill_value_invalid_for_dtype() -> None:
     """
     A fill value the dtype does not accept is refused when the spec is

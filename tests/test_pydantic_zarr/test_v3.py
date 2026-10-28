@@ -661,6 +661,29 @@ def test_metadata_document_validation_fill_value_dtype_mismatch() -> None:
         ArraySpec(**_v3_array_kwargs(data_type="int8", fill_value="NaN"))
 
 
+@pytest.mark.parametrize(
+    ("data_type", "fill_value", "expected"),
+    [
+        ("complex64", complex(1, float("nan")), (1.0, "NaN")),
+        ("complex128", complex(float("-inf"), 2), ("-Infinity", 2.0)),
+        ("complex64", np.complex64(complex(float("nan"), float("inf"))), ("NaN", "Infinity")),
+        ("complex128", np.complex128(complex(1, 2)), (1.0, 2.0)),
+    ],
+)
+def test_complex_fill_value_stored(data_type: str, fill_value: object, expected: object) -> None:
+    """
+    A complex fill value, Python or numpy, is stored as its (real, imaginary)
+    pair, with non-finite parts spelled as the spec's strings, and survives a
+    round trip through zarr-python.
+    """
+    spec = ArraySpec.from_shape_and_data_type((4,), data_type, fill_value=cast("Any", fill_value))
+    assert spec.fill_value == expected
+    zarr = pytest.importorskip("zarr")
+    store = zarr.storage.MemoryStore()
+    spec.to_zarr(store, path="a")
+    assert ArraySpec.from_zarr(zarr.open_array(store, path="a")) == spec
+
+
 def test_metadata_document_validation_chunk_grid_rank_mismatch() -> None:
     """A chunk shape with the wrong number of dimensions is a validation error."""
     with pytest.raises(ValidationError, match="chunk length per dimension"):
