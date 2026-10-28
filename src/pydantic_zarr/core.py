@@ -4,9 +4,11 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import (
     TYPE_CHECKING,
+    Annotated,
     Any,
     Literal,
     Protocol,
+    Self,
     TypeVar,
     overload,
     override,
@@ -18,8 +20,17 @@ import numpy.typing as npt
 from pydantic import (
     AliasChoices,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
 )
+
+# pydantic resolves the `extra_fields` annotation at runtime
+from zarr_metadata import JSONValue  # noqa: TC002
 
 if TYPE_CHECKING:
     # both pydantic spellings below re-export pydantic_core's sentinel, and
@@ -37,6 +48,8 @@ else:
         from pydantic.experimental.missing_sentinel import MISSING
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     import zarr
     from zarr.storage._common import StoreLike
 
@@ -88,6 +101,109 @@ class StrictBase(BaseModel):
         """Serialize to JSON with `by_alias=True` unless told otherwise; see `model_dump`."""
         kwargs.setdefault("by_alias", True)
         return super().model_dump_json(**kwargs)
+
+
+EXTRA_FIELDS = "extra_fields"
+"""The name of the field in which `ExtraFieldsBase` keeps a document's extra fields."""
+
+
+def flatten_extra_fields(document: dict[str, Any]) -> dict[str, Any]:
+    """
+    Turn a dumped spec's `extra_fields` mapping back into top-level members
+    of the document, where the metadata document holds them.
+    """
+    extra = document.pop(EXTRA_FIELDS, None)
+    if extra:
+        document.update(extra)
+    return document
+
+
+class ExtraFieldsBase(StrictBase):
+    """
+    A base class for specs of metadata documents that may hold members the
+    spec class does not declare ("extra fields").
+
+    The members a document holds beyond the declared fields are gathered into
+    the `extra_fields` mapping, by key, and dumped back as top-level members:
+    `model_dump` and `model_dump_json` write the document as it was read.
+    They are held in a field of their own rather than as pydantic extras
+    (`extra="allow"`), because pydantic applies a model's `extra` setting to
+    every TypedDict the model holds, which would open the closed TypedDicts
+    of field and attribute types. Which extra fields a document may hold is
+    up to each subclass; a key nobody validates is still kept out of
+    `extra_fields` when it names a declared field.
+
+    Attributes
+    ----------
+    extra_fields: Mapping[str, JSONValue], default = {}
+        The document's members that this class does not declare, by key,
+        with arrays held as tuples.
+    """
+
+    extra_fields: Mapping[str, Annotated[JSONValue, BeforeValidator(tuplify_json)]] = Field(
+        default={}
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _collect_extra_fields(cls, data: object) -> object:
+        """
+        Gather the members of an input document that this class does not
+        declare into `extra_fields`, alongside any given there directly.
+        """
+        if not isinstance(data, Mapping):
+            return data
+        declared = cls.model_fields
+        extra = {key: value for key, value in data.items() if key not in declared}
+        if not extra:
+            return data
+        given = data.get(EXTRA_FIELDS, {})
+        if not isinstance(given, Mapping):
+            # field validation reports the malformed mapping
+            return data
+        twice = sorted(set(extra) & set(given))
+        if twice:
+            msg = f"Extra fields given both as members and in `{EXTRA_FIELDS}`: {twice}"
+            raise ValueError(msg)
+        return {
+            **{key: value for key, value in data.items() if key in declared},
+            EXTRA_FIELDS: {**given, **extra},
+        }
+
+    @field_validator(EXTRA_FIELDS, mode="after")
+    @classmethod
+    def _refuse_declared_keys(cls, value: Mapping[str, JSONValue]) -> Mapping[str, JSONValue]:
+        """Refuse an extra field named after a field this class declares."""
+        declared = sorted(set(value) & set(cls.model_fields))
+        if declared:
+            msg = f"{declared} name fields of this spec, so they are not extra fields"
+            raise ValueError(msg)
+        return value
+
+    @model_serializer(mode="wrap")
+    def _serialize_document(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """Write the extra fields as top-level members of the dumped document."""
+        return flatten_extra_fields(handler(self))
+
+    def __repr_args__(self) -> Iterator[tuple[str | None, Any]]:
+        """Show `extra_fields` last, and only when the document holds some."""
+        extra: object = None
+        for name, value in super().__repr_args__():
+            if name == EXTRA_FIELDS:
+                extra = value
+                continue
+            yield name, value
+        if extra:
+            yield EXTRA_FIELDS, extra
+
+    def _updated(self, changes: Mapping[str, object]) -> Self:
+        """
+        A revalidated copy of this spec with `changes` applied: the engine of
+        each subclass's `update`. The extra fields are passed as the
+        `extra_fields` mapping, so a change to `extra_fields` replaces them.
+        """
+        document = self.model_dump(exclude={EXTRA_FIELDS})
+        return type(self).model_validate({**document, EXTRA_FIELDS: self.extra_fields, **changes})
 
 
 class AttributesBase(BaseModel):

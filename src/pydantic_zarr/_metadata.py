@@ -57,7 +57,7 @@ def scope_from_context(context: object) -> ZarrV3Context | None:
     return None
 
 
-def format_problems(error: MetadataValidationError) -> str:
+def format_problems(error: MetadataValidationError, node_type: str = "array") -> str:
     """
     Format every problem in a ``MetadataValidationError`` as one message.
 
@@ -70,4 +70,9 @@ def format_problems(error: MetadataValidationError) -> str:
         loc = ".".join(str(part) for part in problem.loc)
         prefix = f"{loc}: " if loc else ""
         lines.append(f"{prefix}{problem.message}")
-    return "Invalid Zarr V3 array metadata:\n" + "\n".join(lines)
+    return format_lines(lines, node_type)
+
+
+def format_lines(lines: list[str], node_type: str) -> str:
+    """Format ``<loc>: <message>`` lines as one invalid-metadata message for a node type."""
+    return f"Invalid Zarr V3 {node_type} metadata:\n" + "\n".join(lines)

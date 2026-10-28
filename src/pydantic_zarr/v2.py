@@ -25,9 +25,10 @@ from packaging.version import Version
 from pydantic import BaseModel, Field, SerializeAsAny, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
 from typing_extensions import TypedDict, TypeIs, TypeVar
-from zarr_metadata import ZarrV2ArrayDimensionSeparator, ZarrV2ArrayOrder
+from zarr_metadata import JSONValue, ZarrV2ArrayDimensionSeparator, ZarrV2ArrayOrder
 
 from pydantic_zarr.core import (
+    ExtraFieldsBase,
     IncEx,
     StrictBase,
     ensure_key_no_path,
@@ -159,6 +160,7 @@ class ArraySpecUpdate(TypedDict, total=False):
     filters: Sequence[Mapping[str, Any]] | None
     dimension_separator: DimensionSeparator
     compressor: Mapping[str, Any] | None
+    extra_fields: Mapping[str, JSONValue]
 
 
 class BaseGroupSpecUpdate(TypedDict, total=False):
@@ -174,7 +176,7 @@ class GroupSpecUpdate(TypedDict, total=False):
     members: Mapping[str, TBaseItem] | None
 
 
-class ArraySpec(NodeSpec, Generic[TAttr]):
+class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
     """
     A model of a Zarr Version 2 Array. The specification for the data structure being modeled by
     this class can be found in the
@@ -209,6 +211,15 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         The character used for partitioning the different dimensions of a chunk key.
         Must be either "/" or ".", or absent, in which case it is interpreted as ".".
         The default is "/".
+    extra_fields: Mapping[str, JSONValue], default = {}
+        The members of the array metadata document that the Zarr V2 spec
+        does not define. The spec says such keys "SHOULD NOT be present
+        within the metadata object and SHOULD be ignored by implementations",
+        so any key with a JSON value is accepted, given no meaning, and kept
+        for `model_dump`, `model_dump_json`, `update` and `like`.
+        zarr-python drops them when it reads or writes an array, so
+        `from_zarr` never finds any and `to_zarr` does not write them. Group
+        metadata, where "Other keys MUST NOT be present", takes none.
     """
 
     attributes: TAttr = Field(default={}, validate_default=True)
@@ -442,7 +453,9 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
         extant_node = maybe_node(store, path, zarr_format=2)
         if isinstance(extant_node, zarr.Array):
-            if not self.like(extant_node) and not overwrite:
+            # zarr-python neither writes nor reads extra fields, so the stored
+            # array is this spec as written when it matches in everything else
+            if not self.like(extant_node, exclude={"extra_fields"}) and not overwrite:
                 raise ContainsArrayError(store, path)
             else:
                 # If there's an existing array that is identical to the model, and overwrite is False,
@@ -464,9 +477,10 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         All changes land in one validation pass, so correlated fields (for an
         array, a new `data_type` with a matching `fill_value`, or a new
         `shape` with a matching `chunk_grid`) change together atomically.
-        Unlike `model_copy(update=...)`, the result is validated.
+        Unlike `model_copy(update=...)`, the result is validated. Passing
+        `extra_fields` replaces the extra fields as a whole.
         """
-        return type(self).model_validate({**self.model_dump(), **changes})
+        return self._updated(changes)
 
     def like(
         self,
