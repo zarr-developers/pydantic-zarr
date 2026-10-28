@@ -48,9 +48,11 @@ if TYPE_CHECKING:
 # with un-narrowed attributes must serialize with its own fields, not the
 # empty base schema.
 type TBaseAttr = Mapping[str, object] | SerializeAsAny[BaseModel]
-# Any-parameterized so the TItem bound accepts narrowed member specs; see
-# the note on the v3 TBaseItem.
-type TBaseItem = Union["GroupSpec[Any, Any]", "ArraySpec[Any]", "BaseGroupSpec[Any]"]
+# the default (TBaseItem) stays bare for recursive runtime validation; the
+# bound (TAnyItem) is Any-parameterized to accept narrowed member specs —
+# see the notes on the v3 spellings.
+type TBaseItem = Union["GroupSpec", "ArraySpec", "BaseGroupSpec"]
+type TAnyItem = Union["GroupSpec[Any, Any]", "ArraySpec[Any]", "BaseGroupSpec[Any]"]
 
 # Aliases for specs of any specialization; not redundant with the bare class
 # names — see the note on the v3 aliases (bare `ArraySpec` is the invariant
@@ -60,7 +62,7 @@ type AnyGroupSpec = "GroupSpec[Any, Any]"
 type AnyBaseGroupSpec = "BaseGroupSpec[Any]"
 
 TAttr = TypeVar("TAttr", bound=TBaseAttr, default=TBaseAttr)
-TItem = TypeVar("TItem", bound=TBaseItem, default=TBaseItem)
+TItem = TypeVar("TItem", bound=TAnyItem, default=TBaseItem)
 TDefault = TypeVar("TDefault")
 
 DtypeStr = Annotated[str, BeforeValidator(parse_dtype_v2)]
