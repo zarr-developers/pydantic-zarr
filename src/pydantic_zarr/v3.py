@@ -38,13 +38,17 @@ from pydantic import (
 )
 from typing_extensions import TypedDict, TypeIs, TypeVar
 from zarr_metadata import (
+    ZARR_V3_ARRAY_METADATA_STORE_KEY,
     ZARR_V3_CONSOLIDATED_METADATA_KEY,
+    ZARR_V3_GROUP_METADATA_STORE_KEY,
     DefaultChunkKeyEncodingMetadata,
     JSONValue,
     MetadataValidationError,
     RegularChunkGridMetadata,
     V2ChunkKeyEncodingMetadata,
+    ZarrV3ArrayMetadataJSON,
     ZarrV3ExtensionField,
+    ZarrV3GroupMetadataJSON,
 )
 from zarr_metadata.definition._envelope import envelope_problems
 from zarr_metadata.model import ZarrV3ArrayMetadata as ZarrV3ArrayMetadataModel
@@ -91,7 +95,6 @@ if TYPE_CHECKING:
     import zarr
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
-    from zarr_metadata import ZarrV3ArrayMetadataJSON, ZarrV3GroupMetadataJSON
     from zarr_metadata.v3.definition import ZarrV3Context
 
 
@@ -128,6 +131,18 @@ TItem = TypeVar("TItem", bound=TBaseItem, default=TBaseItem, covariant=True)
 TDefault = TypeVar("TDefault")
 
 NodeType = Literal["group", "array"]
+
+# The documents a store holds for one node, keyed by store key. The key is
+# not an identifier, hence the functional syntax. The types are closed, so each
+# is assignable to a `Mapping[str, ...]` of its value type.
+ZarrV3ArrayStoredJSON = TypedDict(
+    "ZarrV3ArrayStoredJSON", {"zarr.json": ZarrV3ArrayMetadataJSON}, closed=True
+)
+"""A Zarr V3 array's metadata as a store holds it: its `zarr.json` document."""
+ZarrV3GroupStoredJSON = TypedDict(
+    "ZarrV3GroupStoredJSON", {"zarr.json": ZarrV3GroupMetadataJSON}, closed=True
+)
+"""A Zarr V3 group's metadata as a store holds it: its `zarr.json` document."""
 
 FillValue = JSONValue
 """
@@ -845,6 +860,13 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         """
         return cast("ZarrV3ArrayMetadataJSON", self.model_dump())
 
+    def to_stored_metadata_json(self) -> ZarrV3ArrayStoredJSON:
+        """
+        This array's Zarr V3 metadata as a store holds it: a mapping from its
+        one store key, `zarr.json`, to `to_metadata_json()`.
+        """
+        return {ZARR_V3_ARRAY_METADATA_STORE_KEY: self.to_metadata_json()}
+
     @classmethod
     def from_array(
         cls,
@@ -1462,6 +1484,14 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         document, so a `GroupSpec`'s `members` are left out.
         """
         return cast("ZarrV3GroupMetadataJSON", self.model_dump(exclude={"members"}))
+
+    def to_stored_metadata_json(self) -> ZarrV3GroupStoredJSON:
+        """
+        This group's Zarr V3 metadata as a store holds it: a mapping from its
+        one store key, `zarr.json`, to `to_metadata_json()`. Like
+        `to_metadata_json`, this leaves out a `GroupSpec`'s `members`.
+        """
+        return {ZARR_V3_GROUP_METADATA_STORE_KEY: self.to_metadata_json()}
 
     @classmethod
     def from_zarr(cls, group: zarr.Group) -> Self:

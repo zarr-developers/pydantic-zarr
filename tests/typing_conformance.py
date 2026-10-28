@@ -27,6 +27,9 @@ if TYPE_CHECKING:
     from zarr_metadata import (
         ZarrV2ArrayMetadataJSON,
         ZarrV2GroupMetadataJSON,
+        ZarrV2ZArrayJSON,
+        ZarrV2ZAttrsJSON,
+        ZarrV2ZGroupJSON,
         ZarrV3ArrayMetadataJSON,
         ZarrV3GroupMetadataJSON,
     )
@@ -113,3 +116,44 @@ def documents_v2(
 ) -> tuple[ZarrV2ArrayMetadataJSON, ZarrV2GroupMetadataJSON]:
     """Same contract on the v2 side."""
     return array.to_metadata_json(), group.to_metadata_json()
+
+
+def stored_documents_v3(
+    array: NarrowArrayV3, group: GroupOfUnionV3
+) -> tuple[ZarrV3ArrayMetadataJSON, ZarrV3GroupMetadataJSON]:
+    """`to_stored_metadata_json` types each store key's document."""
+    return array.to_stored_metadata_json()["zarr.json"], group.to_stored_metadata_json()[
+        "zarr.json"
+    ]
+
+
+def stored_documents_v2(
+    array: NarrowArrayV2, group: GroupOfUnionV2
+) -> tuple[ZarrV2ZArrayJSON, ZarrV2ZAttrsJSON, ZarrV2ZGroupJSON, ZarrV2ZAttrsJSON]:
+    """Same contract on the v2 side, with `.zattrs` always present."""
+    stored_array = array.to_stored_metadata_json()
+    stored_group = group.to_stored_metadata_json()
+    return (
+        stored_array[".zarray"],
+        stored_array[".zattrs"],
+        stored_group[".zgroup"],
+        stored_group[".zattrs"],
+    )
+
+
+def stored_documents_as_mapping(
+    array_v3: NarrowArrayV3, array_v2: NarrowArrayV2, group_v2: GroupOfUnionV2
+) -> tuple[
+    Mapping[str, ZarrV3ArrayMetadataJSON],
+    Mapping[str, ZarrV2ZArrayJSON | ZarrV2ZAttrsJSON],
+    Mapping[str, ZarrV2ZGroupJSON | ZarrV2ZAttrsJSON],
+]:
+    """
+    The stored-document types are closed, so each is a `Mapping` of its
+    value types, which lets nodes' documents be merged into one mapping.
+    """
+    return (
+        array_v3.to_stored_metadata_json(),
+        array_v2.to_stored_metadata_json(),
+        group_v2.to_stored_metadata_json(),
+    )

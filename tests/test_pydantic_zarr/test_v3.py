@@ -1858,3 +1858,45 @@ def test_to_metadata_json(
     assert json.dumps(model.from_json(document).to_json(), sort_keys=True) == json.dumps(
         document, sort_keys=True
     )
+
+
+@pytest.mark.parametrize(
+    ("spec", "expected"),
+    [
+        (
+            _TO_METADATA_JSON_ARRAY,
+            {"zarr.json": _TO_METADATA_JSON_ARRAY.to_metadata_json()},
+        ),
+        (
+            BaseGroupSpec(attributes={"a": [1, 2]}),
+            {"zarr.json": {"zarr_format": 3, "node_type": "group", "attributes": {"a": [1, 2]}}},
+        ),
+        (
+            GroupSpec(
+                attributes={"a": 1}, members={"x": _TO_METADATA_JSON_ARRAY, "g": GroupSpec()}
+            ),
+            {"zarr.json": {"zarr_format": 3, "node_type": "group", "attributes": {"a": 1}}},
+        ),
+    ],
+    ids=["array", "base-group", "group-with-members"],
+)
+def test_to_stored_metadata_json(
+    spec: AnyArraySpec | AnyBaseGroupSpec, expected: dict[str, object]
+) -> None:
+    """
+    `to_stored_metadata_json` returns the node's `to_metadata_json` document
+    under its one store key, `zarr.json`, with a group's members left out.
+    Read back from JSON, it is what `zarr-metadata`'s `to_key_value` writes
+    for the node, under the key zarr-python writes.
+    """
+    stored = spec.to_stored_metadata_json()
+    assert stored == expected
+    as_read = json.loads(json.dumps(stored))
+    model = ZarrV3ArrayMetadata if is_array_spec(spec) else ZarrV3GroupMetadata
+    key_value = model.from_json(spec.to_metadata_json()).to_key_value()
+    assert {key: json.loads(value) for key, value in key_value.items()} == as_read
+    zarr = pytest.importorskip("zarr")
+    store = zarr.storage.MemoryStore()
+    spec.to_zarr(store, path="")
+    # the node's own documents, not its members'
+    assert {key for key in store._store_dict if "/" not in key} == as_read.keys()

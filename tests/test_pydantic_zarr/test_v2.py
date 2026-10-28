@@ -1085,3 +1085,90 @@ def test_from_zarr_non_finite_fill_value(dtype: str, fill_value: object, expecte
     assert spec.update(fill_value=cast("Any", fill_value)) == spec
     spec.to_zarr(store, path="b")
     assert ArraySpec.from_zarr(zarr.open_array(store, path="b")) == spec
+
+
+@pytest.mark.parametrize(
+    ("spec", "expected"),
+    [
+        (
+            _TO_METADATA_JSON_ARRAY,
+            {
+                ".zarray": {
+                    "zarr_format": 2,
+                    "shape": (4,),
+                    "chunks": (2,),
+                    "dtype": "<f8",
+                    "fill_value": "NaN",
+                    "order": "C",
+                    "filters": ({"id": "delta", "dtype": "<f8"},),
+                    "dimension_separator": "/",
+                    "compressor": {"id": "zstd", "level": 1},
+                },
+                ".zattrs": {"a": [1, 2]},
+            },
+        ),
+        (
+            ArraySpec.model_validate({**_TO_METADATA_JSON_ARRAY.model_dump(), "attributes": {}}),
+            {
+                ".zarray": {
+                    k: v
+                    for k, v in _TO_METADATA_JSON_ARRAY.to_metadata_json().items()
+                    if k != "attributes"
+                },
+                ".zattrs": {},
+            },
+        ),
+        (
+            ArraySpec.model_validate({**_TO_METADATA_JSON_ARRAY.model_dump(), "foo": [1]}),
+            # extra fields are members of `.zarray`
+            {
+                ".zarray": {
+                    **{
+                        k: v
+                        for k, v in _TO_METADATA_JSON_ARRAY.to_metadata_json().items()
+                        if k != "attributes"
+                    },
+                    "foo": (1,),
+                },
+                ".zattrs": {"a": [1, 2]},
+            },
+        ),
+        (
+            BaseGroupSpec(attributes={"a": 1}),
+            {".zgroup": {"zarr_format": 2}, ".zattrs": {"a": 1}},
+        ),
+        (
+            GroupSpec(members={"x": _TO_METADATA_JSON_ARRAY, "g": GroupSpec()}),
+            {".zgroup": {"zarr_format": 2}, ".zattrs": {}},
+        ),
+    ],
+    ids=["array", "array-empty-attrs", "array-extra-field", "base-group", "group-with-members"],
+)
+def test_to_stored_metadata_json_v2(
+    spec: AnyArraySpec | AnyBaseGroupSpec, expected: dict[str, object]
+) -> None:
+    """
+    `to_stored_metadata_json` returns the node's Zarr V2 documents keyed by
+    store key: `.zarray` / `.zgroup`, and `.zattrs`, written even when the
+    attributes are empty, with a group's members left out. Read back from
+    JSON, the documents are the ones `zarr-metadata`'s `to_key_value` writes
+    for the node, under the keys zarr-python writes.
+    """
+    stored = spec.to_stored_metadata_json()
+    assert stored == expected
+    as_read = json.loads(json.dumps(stored))
+    model = ZarrV2ArrayMetadata if is_array_spec(spec) else ZarrV2GroupMetadata
+    key_value = model.from_json(spec.to_metadata_json()).to_key_value()
+    assert {key: json.loads(value) for key, value in key_value.items()} == as_read
+    # zarr-python writes the same keys, `.zattrs` included even when empty
+    # (it normalizes codec configurations, so `.zarray` is not compared)
+    zarr = pytest.importorskip("zarr")
+    store = zarr.storage.MemoryStore()
+    spec.to_zarr(store, path="")
+    written = {
+        key: json.loads(value.to_bytes())
+        for key, value in store._store_dict.items()
+        if "/" not in key  # the node's own documents, not its members'
+    }
+    assert written.keys() == as_read.keys()
+    assert written[".zattrs"] == as_read[".zattrs"]

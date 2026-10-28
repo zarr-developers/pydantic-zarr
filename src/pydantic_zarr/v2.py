@@ -26,10 +26,18 @@ from pydantic import BaseModel, Field, SerializeAsAny, field_validator, model_va
 from pydantic.functional_validators import BeforeValidator
 from typing_extensions import TypedDict, TypeIs, TypeVar
 from zarr_metadata import (
+    ZARR_V2_ARRAY_METADATA_STORE_KEY,
+    ZARR_V2_ATTRIBUTES_STORE_KEY,
+    ZARR_V2_GROUP_METADATA_STORE_KEY,
     JSONValue,
     MetadataValidationError,
     ZarrV2ArrayDimensionSeparator,
+    ZarrV2ArrayMetadataJSON,
     ZarrV2ArrayOrder,
+    ZarrV2GroupMetadataJSON,
+    ZarrV2ZArrayJSON,
+    ZarrV2ZAttrsJSON,
+    ZarrV2ZGroupJSON,
 )
 from zarr_metadata.model import ZarrV2ArrayMetadata as ZarrV2ArrayMetadataModel
 
@@ -54,7 +62,6 @@ if TYPE_CHECKING:
     from numcodecs.abc import Codec
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
-    from zarr_metadata import ZarrV2ArrayMetadataJSON, ZarrV2GroupMetadataJSON
 
 # SerializeAsAny: see the note on the v3 TBaseAttr — a model held by a spec
 # with un-narrowed attributes must serialize with its own fields, not the
@@ -91,6 +98,22 @@ FillValue = (
 
 DimensionSeparator = ZarrV2ArrayDimensionSeparator
 MemoryOrder = ZarrV2ArrayOrder
+
+# The documents a store holds for one node, keyed by store key. The keys are
+# not identifiers, hence the functional syntax. The types are closed, so each
+# is assignable to a `Mapping[str, ...]` of its value types.
+ZarrV2ArrayStoredJSON = TypedDict(
+    "ZarrV2ArrayStoredJSON",
+    {".zarray": ZarrV2ZArrayJSON, ".zattrs": ZarrV2ZAttrsJSON},
+    closed=True,
+)
+"""A Zarr V2 array's metadata as a store holds it: its `.zarray` and `.zattrs` documents."""
+ZarrV2GroupStoredJSON = TypedDict(
+    "ZarrV2GroupStoredJSON",
+    {".zgroup": ZarrV2ZGroupJSON, ".zattrs": ZarrV2ZAttrsJSON},
+    closed=True,
+)
+"""A Zarr V2 group's metadata as a store holds it: its `.zgroup` and `.zattrs` documents."""
 
 
 def dictify_codec(value: dict[str, Any] | Codec) -> dict[str, Any]:
@@ -329,6 +352,22 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         if document["filters"] is not None:
             document["filters"] = tuple(document["filters"])
         return cast("ZarrV2ArrayMetadataJSON", document)
+
+    def to_stored_metadata_json(self) -> ZarrV2ArrayStoredJSON:
+        """
+        This array's Zarr V2 metadata as a store holds it: a mapping from each
+        store key to the JSON document stored there.
+
+        The `.zarray` document is `to_metadata_json()` without `attributes`,
+        and the `.zattrs` document is `attributes`. `.zattrs` is written even
+        when the attributes are empty, as zarr-python writes it.
+        """
+        document = self.to_metadata_json()
+        zattrs = document.pop("attributes", {})
+        return {
+            ZARR_V2_ARRAY_METADATA_STORE_KEY: cast("ZarrV2ZArrayJSON", document),
+            ZARR_V2_ATTRIBUTES_STORE_KEY: zattrs,
+        }
 
     @classmethod
     def from_array(
@@ -666,6 +705,23 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         `GroupSpec`'s `members` are left out.
         """
         return cast("ZarrV2GroupMetadataJSON", self.model_dump(exclude={"members"}))
+
+    def to_stored_metadata_json(self) -> ZarrV2GroupStoredJSON:
+        """
+        This group's Zarr V2 metadata as a store holds it: a mapping from each
+        store key to the JSON document stored there.
+
+        The `.zgroup` document is `to_metadata_json()` without `attributes`,
+        and the `.zattrs` document is `attributes`. `.zattrs` is written even
+        when the attributes are empty, as zarr-python writes it. Like
+        `to_metadata_json`, this leaves out a `GroupSpec`'s `members`.
+        """
+        document = self.to_metadata_json()
+        return {
+            # `.zgroup` holds no other members
+            ZARR_V2_GROUP_METADATA_STORE_KEY: {"zarr_format": document["zarr_format"]},
+            ZARR_V2_ATTRIBUTES_STORE_KEY: document.get("attributes", {}),
+        }
 
     @classmethod
     def from_zarr(cls, group: zarr.Group) -> Self:

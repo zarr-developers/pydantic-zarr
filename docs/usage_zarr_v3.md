@@ -112,6 +112,23 @@ print(group.to_metadata_json())
 #> {'zarr_format': 3, 'node_type': 'group', 'attributes': {'foo': 42}}
 ```
 
+## Stored metadata documents
+
+`to_stored_metadata_json` returns a node's metadata the way a Zarr store holds
+it: a mapping from each store key to the JSON document stored there. A Zarr V3
+node stores one document, so the mapping has one key, `zarr.json`, typed as
+`pydantic_zarr.v3.ZarrV3ArrayStoredJSON` for an array and
+`pydantic_zarr.v3.ZarrV3GroupStoredJSON` for a group. Like `to_metadata_json`,
+it leaves out a group's members.
+
+```python
+from pydantic_zarr.v3 import GroupSpec
+
+group = GroupSpec(attributes={"foo": 42})
+print(group.to_stored_metadata_json())
+#> {'zarr.json': {'zarr_format': 3, 'node_type': 'group', 'attributes': {'foo': 42}}}
+```
+
 ## Validation scopes
 
 Constructing an `ArraySpec` validates its fields as a whole Zarr V3 array
