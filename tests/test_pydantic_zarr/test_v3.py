@@ -960,7 +960,7 @@ def test_group_member_names_accepted() -> None:
     array: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
     names = ("plain", "with.dots", "with spaces", "ünïcode", "_single_underscore", "0", "a..b")
     group: AnyGroupSpec = GroupSpec(attributes={}, members=dict.fromkeys(names, array))
-    assert tuple(group.members or {}) == names
+    assert tuple(group.members) == names
 
 
 @pytest.mark.parametrize(
@@ -989,7 +989,6 @@ def test_typevar_defaults() -> None:
 
     array = ArraySpec(**_v3_array_kwargs())
     group = GroupSpec(attributes={"a": 1}, members={"x": array})
-    assert group.members is not None
     assert tuple(group.members) == ("x",)
 
     class MyAttrs(BaseModel):

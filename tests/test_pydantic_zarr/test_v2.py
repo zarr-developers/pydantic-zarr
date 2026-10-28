@@ -738,7 +738,6 @@ def test_typevar_defaults_v2() -> None:
     """The v2 generic type parameters carry defaults, so the bare class names are usable."""
     array = ArraySpec(shape=(4,), dtype="uint8", chunks=(2,), attributes={})
     group = GroupSpec(attributes={"a": 1}, members={"x": array})
-    assert group.members is not None
     assert tuple(group.members) == ("x",)
 
 
