@@ -1931,6 +1931,8 @@ def test_to_stored_metadata_json(
         node_key = key.rpartition("/")[2]
         assert json.loads(model.from_json(document).to_key_value()[node_key]) == document
     zarr = pytest.importorskip("zarr")
+    if is_array_spec(spec) and spec.extra_fields and ZARR_PYTHON_VERSION < Version("3.1.0"):
+        pytest.skip("zarr-python stores an array's extra fields from 3.1")
     store = zarr.storage.MemoryStore()
     spec.to_zarr(store, path="")
     assert store._store_dict.keys() == stored.keys()
