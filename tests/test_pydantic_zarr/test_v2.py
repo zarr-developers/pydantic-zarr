@@ -771,12 +771,12 @@ def test_narrowing_helpers_v2() -> None:
     group: AnyGroupSpec = GroupSpec(attributes={}, members={"a": array})
     base = BaseGroupSpec(attributes={})
     assert is_array_spec(array)
-    assert not is_array_spec(group)  # type: ignore[unreachable]
+    assert not is_array_spec(group)
     assert is_group_spec(group)
     assert not is_group_spec(base)
     assert is_base_group_spec(base)
     assert is_base_group_spec(group)
-    assert not is_base_group_spec(array)  # type: ignore[unreachable]
+    assert not is_base_group_spec(array)
 
 
 def test_member_name_validation_survives_narrowing_v2() -> None:

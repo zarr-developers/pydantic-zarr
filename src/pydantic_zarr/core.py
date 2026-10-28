@@ -24,7 +24,7 @@ from pydantic import (
 if TYPE_CHECKING:
     # both pydantic spellings below re-export pydantic_core's sentinel, and
     # unlike them this import resolves statically on every supported pydantic;
-    # `as MISSING` marks the explicit re-export strict mypy requires
+    # `as MISSING` marks the re-export explicit for strict checkers
     from pydantic_core import MISSING as MISSING
 else:
     try:

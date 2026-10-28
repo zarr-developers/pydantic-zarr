@@ -125,15 +125,18 @@ test = "pytest tests/test_docs"
 [tool.hatch.envs.types]
 dependency-groups = ["test"]
 # three checkers on purpose, each covering the others' blind spots: pyrefly
-# is variance-lenient, and mypy does not apply PEP 696 TypeVar defaults
-# inside the lazy `type` aliases, so an invariant bound refusing narrowed
-# downstream parameterizations (#190) was visible only to pyright, which
-# checks the downstream-shaped tests/typing_conformance.py
-extra-dependencies = ["pyrefly==1.4.0", "mypy==2.3.0", "pyright==1.1.414"]
+# (the project checker) is variance-lenient, so an invariant TypeVar bound
+# refusing narrowed downstream parameterizations (#190) was invisible to it
+# (and to mypy, which does not apply PEP 696 defaults inside lazy `type`
+# aliases). ty and pyright both catch that class of bug and check the
+# downstream-shaped tests/typing_conformance.py; pyright because it is what
+# pyright-checked downstreams run, ty also over the modules it is clean on
+# today (TODO: widen ty's scope as it and the zarr/numpy stubs mature).
+extra-dependencies = ["pyrefly==1.4.0", "ty==0.0.93", "pyright==1.1.414"]
 [tool.hatch.envs.types.scripts]
-check = ["check-pyrefly", "check-mypy", "check-conformance"]
+check = ["check-pyrefly", "check-ty", "check-conformance"]
 check-pyrefly = "pyrefly check {args:}"
-check-mypy = "mypy --install-types --non-interactive src/pydantic_zarr tests"
+check-ty = "ty check src/pydantic_zarr/core.py src/pydantic_zarr/_metadata.py tests/typing_conformance.py"
 check-conformance = "pyright tests/typing_conformance.py"
 
 [tool.coverage.run]
@@ -269,7 +272,7 @@ filterwarnings = [
 
 [tool.repo-review]
 ignore = [
-    "MY100",  # mypy runs from the types hatch env (alongside pyrefly), not per-module config checks
+    "MY100",  # type checking uses pyrefly, ty and pyright, not mypy
     "PC111",  # black formatting for docs, not sure if want,
     "PC140",  # type checking (pyrefly) runs via the `types` hatch env and the typecheck CI job, not pre-commit
     "PC180",  # markdown formatter, no thanks
@@ -303,18 +306,3 @@ filename = "docs/release-notes.md"
 title_format = "## {name} {version} ({project_date})"
 issue_format = "[#{issue}](https://github.com/zarr-developers/pydantic-zarr/issues/{issue})"
 start_string = "<!-- towncrier release notes start -->\n"
-
-[tool.mypy]
-python_version = "3.12"
-ignore_missing_imports = true
-namespace_packages = false
-warn_unreachable = true
-plugins = "pydantic.mypy"
-enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
-strict = true
-# pyrefly and mypy need ignores in different places, so neither checker may
-# demand the other's ignores be removed
-warn_unused_ignores = false
-# TODO: remove each of these and fix any errors:
-disallow_any_generics = false
-warn_return_any = false

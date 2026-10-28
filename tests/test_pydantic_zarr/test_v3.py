@@ -1079,12 +1079,12 @@ def test_narrowing_helpers() -> None:
     group: AnyGroupSpec = GroupSpec(attributes={}, members={"a": array})
     base = BaseGroupSpec(attributes={})
     assert is_array_spec(array)
-    assert not is_array_spec(group)  # type: ignore[unreachable]
+    assert not is_array_spec(group)
     assert is_group_spec(group)
     assert not is_group_spec(base)
     assert is_base_group_spec(base)
     assert is_base_group_spec(group)
-    assert not is_base_group_spec(array)  # type: ignore[unreachable]
+    assert not is_base_group_spec(array)
 
 
 def test_typed_members() -> None:
@@ -1400,8 +1400,8 @@ def test_attributes_serialized_by_alias() -> None:
     from pydantic_zarr.core import MISSING, AttributesBase
 
     class CFAttrs(AttributesBase):
-        fill: float | MISSING = Field(default=MISSING, alias="_FillValue")  # type: ignore[valid-type]
-        units: str | MISSING | None = MISSING  # type: ignore[valid-type]
+        fill: float | MISSING = Field(default=MISSING, alias="_FillValue")
+        units: str | MISSING | None = MISSING
 
     spec: AnyArraySpec = ArraySpec.from_shape_and_data_type(
         (4,), "float32", attributes=CFAttrs(units="K", _FillValue=1.5)
@@ -1543,7 +1543,7 @@ def test_bare_codec_rejected() -> None:
         ArraySpec.from_shape_and_data_type(
             (4,),
             "uint16",
-            codecs={"name": "bytes"},  # type: ignore[arg-type,typeddict-item]
+            codecs={"name": "bytes"},  # type: ignore[typeddict-item]
         )
     with pytest.raises(ValidationError, match="sequence of codecs"):
         ArraySpec.from_shape_and_data_type((4,), "uint16", codecs="bytes")

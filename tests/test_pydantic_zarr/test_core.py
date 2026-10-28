@@ -117,9 +117,9 @@ def test_attributes_base() -> None:
     from pydantic_zarr.core import MISSING, AttributesBase
 
     class CF(AttributesBase):
-        fill: float | MISSING = Field(default=MISSING, alias="_FillValue")  # type: ignore[valid-type]
-        units: str | MISSING = MISSING  # type: ignore[valid-type]
-        path: str | MISSING | None = MISSING  # type: ignore[valid-type]
+        fill: float | MISSING = Field(default=MISSING, alias="_FillValue")
+        units: str | MISSING = MISSING
+        path: str | MISSING | None = MISSING
 
     assert CF().model_dump() == {}
     assert CF(path=None).model_dump() == {"path": None}
@@ -127,7 +127,7 @@ def test_attributes_base() -> None:
         "_FillValue": 1.5,
         "proj:code": "x",
     }
-    assert CF.model_validate({"_FillValue": 1.5}).units is MISSING  # type: ignore[comparison-overlap]
+    assert CF.model_validate({"_FillValue": 1.5}).units is MISSING
 
 
 def test_attributes_base_refuses_none_outside_annotation() -> None:
@@ -138,7 +138,7 @@ def test_attributes_base_refuses_none_outside_annotation() -> None:
     from pydantic_zarr.core import MISSING, AttributesBase
 
     class Attrs(AttributesBase):
-        unit: str | MISSING = MISSING  # type: ignore[valid-type]
+        unit: str | MISSING = MISSING
 
     assert Attrs().model_dump() == {}
     with pytest.raises(ValidationError, match="Input should be a valid string"):
@@ -156,7 +156,7 @@ def test_get_attribute() -> None:
     from pydantic_zarr.core import MISSING, AttributesBase, get_attribute
 
     class CF(AttributesBase):
-        fill: float | MISSING | None = Field(default=MISSING, alias="_FillValue")  # type: ignore[valid-type]
+        fill: float | MISSING | None = Field(default=MISSING, alias="_FillValue")
 
     model = CF(**{"_FillValue": 1.5, "proj:code": "EPSG:32632"})
     assert get_attribute(model, "_FillValue") == 1.5
@@ -174,7 +174,7 @@ def test_get_attribute() -> None:
     from pydantic import AliasChoices
 
     class Choosy(AttributesBase):
-        name_field: str | MISSING = Field(default=MISSING, validation_alias=AliasChoices("a", "b"))  # type: ignore[valid-type]
+        name_field: str | MISSING = Field(default=MISSING, validation_alias=AliasChoices("a", "b"))
 
     assert get_attribute(Choosy(a="x"), "b", "dflt") == "x"
     assert get_attribute(Choosy(), "a", "dflt") == "dflt"
