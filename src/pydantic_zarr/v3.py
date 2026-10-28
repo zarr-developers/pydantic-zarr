@@ -79,6 +79,7 @@ from pydantic_zarr._metadata import format_lines, format_problems, scope_from_co
 from pydantic_zarr.core import (
     ExtraFieldsBase,
     IncEx,
+    StoredNodes,
     canonicalize_fill_value,
     ensure_multiple,
     flatten_extra_fields,
@@ -86,6 +87,10 @@ from pydantic_zarr.core import (
     maybe_node,
     model_like,
     resolve_member_path,
+    split_store_key,
+    stored_array,
+    stored_flat,
+    stored_root,
     tuplify_json,
     walk_zarr_hierarchy,
 )
@@ -886,13 +891,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         `zarr.json` at the root, or holds documents of any other node, and
         `ValidationError` when the document is not a valid array.
         """
-        nodes = _stored_nodes(data)
-        document = _stored_root(nodes, "array")
-        if len(nodes) > 1:
-            others = ", ".join(repr(path) for path in nodes if path)
-            msg = f"An array has no members, but the layout holds documents at {others}."
-            raise ValueError(msg)
-        return cls.model_validate(document)
+        return cls.model_validate(stored_array(_stored_nodes(data)))
 
     @classmethod
     def from_array(
@@ -1532,7 +1531,7 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         the document is not a valid group.
         """
         own = {key: document for key, document in data.items() if "/" not in key}
-        return cls.model_validate(_stored_root(_stored_nodes(own), "group"))
+        return cls.model_validate(stored_root(_stored_nodes(own), "group"))
 
     @classmethod
     def from_zarr(cls, group: zarr.Group) -> Self:
@@ -1719,26 +1718,13 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         `GroupSpec`, with the members the layout holds.
 
         Raises `ValueError` when `data` holds no group's `zarr.json` at the
-        root, a key other than a `zarr.json`, or a node whose parent is not a
-        group in `data` (a store holds no implicit groups), and
-        `ValidationError` when a document is not a valid node.
+        root, a key with a leading `/` or an empty segment, a key other than a
+        `zarr.json`, or a node whose parent is not a group in `data` (a store
+        holds no implicit groups), and `ValidationError` when a document is
+        not a valid node (one whose `node_type` is neither `"array"` nor
+        `"group"` is validated as a group).
         """
-        nodes = _stored_nodes(data)
-        _stored_root(nodes, "group")
-        flat: dict[str, AnyArraySpec | AnyBaseGroupSpec] = {}
-        for path, (node_type, document) in nodes.items():
-            if path:
-                parent = path.rpartition("/")[0]
-                if nodes.get(parent, ("array",))[0] != "group":
-                    where = repr(parent) if parent else "the root"
-                    msg = (
-                        f"The layout holds documents at {path!r}, but no group's at {where}, "
-                        "its parent."
-                    )
-                    raise ValueError(msg)
-            spec_class = ArraySpec if node_type == "array" else BaseGroupSpec
-            flat[f"/{path}" if path else ""] = spec_class.model_validate(document)
-        return cls.from_flat(flat)
+        return cls.from_flat(stored_flat(_stored_nodes(data), ArraySpec, BaseGroupSpec))
 
     @classmethod
     def from_flat(cls, data: Mapping[str, AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec]) -> Self:
@@ -2052,43 +2038,29 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
 
-def _stored_nodes(data: Mapping[str, object]) -> dict[str, tuple[NodeType, object]]:
+def _stored_nodes(data: Mapping[str, object]) -> StoredNodes:
     """
     Read a stored layout, a mapping from store key to parsed JSON document,
     as each node's type and metadata document, keyed by the node's path (the
-    root's is `""`). Raises `ValueError` naming a key other than a node's
-    `zarr.json`.
+    root's is `""`). The type is the document's `node_type` when that is
+    `"array"` or `"group"`, and `None` otherwise. Raises `ValueError` naming a
+    malformed key, or a key other than a node's `zarr.json`.
     """
-    nodes: dict[str, tuple[NodeType, object]] = {}
+    nodes: dict[str, tuple[Literal["array", "group"] | None, object]] = {}
     for key, document in data.items():
-        path, _, name = key.rpartition("/")
+        path, name = split_store_key(key)
         if name != ZARR_V3_GROUP_METADATA_STORE_KEY:
             msg = (
                 f"Unrecognized store key {key!r}: a Zarr V3 node's metadata is stored at "
                 f"{ZARR_V3_GROUP_METADATA_STORE_KEY!r}."
             )
             raise ValueError(msg)
-        is_array = isinstance(document, Mapping) and document.get("node_type") == "array"
-        nodes[path] = ("array" if is_array else "group", document)
+        node_type = document.get("node_type") if isinstance(document, Mapping) else None
+        nodes[path] = (
+            node_type if node_type == "array" or node_type == "group" else None,
+            document,
+        )
     return nodes
-
-
-_A_NODE = {"array": "an array", "group": "a group"}
-
-
-def _stored_root(nodes: Mapping[str, tuple[NodeType, object]], node_type: NodeType) -> object:
-    """
-    The root's metadata document among `nodes`, as `_stored_nodes` reads them.
-    Raises `ValueError` when there is none, or the root is not a `node_type`.
-    """
-    if "" not in nodes:
-        msg = f"The layout holds no {node_type}'s metadata at the root."
-        raise ValueError(msg)
-    root_type, document = nodes[""]
-    if root_type != node_type:
-        msg = f"The layout's root is {_A_NODE[root_type]}, not {_A_NODE[node_type]}."
-        raise ValueError(msg)
-    return document
 
 
 def _check_storable_tree(node: AnyArraySpec | AnyBaseGroupSpec, path: str = "") -> None:

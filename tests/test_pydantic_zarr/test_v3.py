@@ -1961,6 +1961,36 @@ def test_from_stored_metadata_json_unrecognized_key() -> None:
         GroupSpec.from_stored_metadata_json(stored)
 
 
+@pytest.mark.parametrize("key", ["/zarr.json", "/x/zarr.json", "g//zarr.json"])
+def test_from_stored_metadata_json_malformed_key(key: str) -> None:
+    """A key with a leading `/` or an empty segment, which would alias another node's, is refused."""
+    stored = {**_STORED_LAYOUT_GROUP.to_stored_metadata_json(), key: _STORED_LAYOUT_GROUP_DOCUMENT}
+    with pytest.raises(ValueError, match=f"Invalid store key '{key}'"):
+        GroupSpec.from_stored_metadata_json(stored)
+
+
+@pytest.mark.parametrize(
+    ("spec_class", "stored"),
+    [
+        # a node_type that is neither "array" nor "group" is read as the
+        # class's own node type, for validation to refuse
+        (ArraySpec, {"zarr.json": {**_TO_METADATA_JSON_ARRAY.to_metadata_json(), "node_type": 1}}),
+        (GroupSpec, {"zarr.json": _STORED_LAYOUT_GROUP_DOCUMENT, "x/zarr.json": []}),
+        (
+            GroupSpec,
+            {"zarr.json": _STORED_LAYOUT_GROUP_DOCUMENT, "x/zarr.json": {"node_type": "array"}},
+        ),
+    ],
+    ids=["array-unknown-node-type", "member-not-object", "member-invalid-array"],
+)
+def test_from_stored_metadata_json_invalid_document(
+    spec_class: type[AnyArraySpec | AnyGroupSpec], stored: dict[str, object]
+) -> None:
+    """A document that is not a valid node is refused by validation."""
+    with pytest.raises(ValidationError):
+        spec_class.from_stored_metadata_json(stored)
+
+
 def test_from_stored_metadata_json_no_root() -> None:
     """A layout without the root's `zarr.json` is refused."""
     stored = dict(_STORED_LAYOUT_GROUP.to_stored_metadata_json())

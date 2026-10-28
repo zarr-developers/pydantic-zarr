@@ -526,6 +526,93 @@ def json_eq(a: object, b: object) -> bool:
     return a == b
 
 
+type StoredNodeType = Literal["array", "group"]
+"""The type of a node in a stored layout."""
+
+type StoredNodes = Mapping[str, tuple[StoredNodeType | None, object]]
+"""
+A stored layout read as each node's type and metadata document, keyed by the
+node's path (the root's is `""`). The type is `None` when the document does
+not say, and the document is then left for validation to judge.
+"""
+
+_A_NODE: dict[StoredNodeType, str] = {"array": "an array", "group": "a group"}
+
+
+def split_store_key(key: str) -> tuple[str, str]:
+    """
+    Split a store key in a stored layout into the node's path (the root's is
+    `""`) and the document's name. Raises `ValueError` when the key starts
+    with `/` or has an empty path segment, which would alias another node's
+    key.
+    """
+    *segments, name = key.split("/")
+    if "" in segments:
+        msg = f"Invalid store key {key!r}: a store key has no leading '/' and no empty segment."
+        raise ValueError(msg)
+    return "/".join(segments), name
+
+
+def stored_root(nodes: StoredNodes, node_type: StoredNodeType) -> object:
+    """
+    The root's metadata document among `nodes`. Raises `ValueError` when there
+    is none, or the root's document says it is not a `node_type`.
+    """
+    if "" not in nodes:
+        msg = f"The layout holds no {node_type}'s metadata at the root."
+        raise ValueError(msg)
+    root_type, document = nodes[""]
+    if root_type is not None and root_type != node_type:
+        msg = f"The layout's root is {_A_NODE[root_type]}, not {_A_NODE[node_type]}."
+        raise ValueError(msg)
+    return document
+
+
+def stored_array(nodes: StoredNodes) -> object:
+    """
+    The metadata document of the array `nodes` describe. Raises `ValueError`
+    when `nodes` hold no array at the root, or hold any other node.
+    """
+    document = stored_root(nodes, "array")
+    if len(nodes) > 1:
+        others = ", ".join(repr(path) for path in nodes if path)
+        msg = f"An array has no members, but the layout holds documents at {others}."
+        raise ValueError(msg)
+    return document
+
+
+def stored_flat[A: BaseModel, G: BaseModel](
+    nodes: StoredNodes, array_class: type[A], group_class: type[G]
+) -> dict[str, A | G]:
+    """
+    The hierarchy `nodes` describe, as `from_flat` reads one: each node
+    validated as an `array_class` or a `group_class` (a node whose type is not
+    stated as the latter), keyed by `"/"` and its path (the root's is `""`).
+
+    Raises `ValueError` when `nodes` hold no group at the root, or a node whose
+    parent is not a group among `nodes` (a store holds no implicit groups),
+    and `ValidationError` when a node's document is not valid.
+    """
+    stored_root(nodes, "group")
+    flat: dict[str, A | G] = {
+        f"/{path}" if path else "": (
+            array_class if node_type == "array" else group_class
+        ).model_validate(document)
+        for path, (node_type, document) in nodes.items()
+    }
+    for path in nodes:
+        if path:
+            parent = path.rpartition("/")[0]
+            if not isinstance(flat.get(f"/{parent}" if parent else ""), group_class):
+                where = repr(parent) if parent else "the root"
+                msg = (
+                    f"The layout holds documents at {path!r}, but no group's at {where}, "
+                    "its parent."
+                )
+                raise ValueError(msg)
+    return flat
+
+
 def walk_zarr_hierarchy(
     node: zarr.Array | zarr.Group, *, depth: int = -1
 ) -> Iterator[tuple[str, zarr.Array | zarr.Group]]:

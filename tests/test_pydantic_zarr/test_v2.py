@@ -1253,6 +1253,30 @@ def test_from_stored_metadata_json_v2_orphan_zattrs() -> None:
         GroupSpec.from_stored_metadata_json(stored)
 
 
+@pytest.mark.parametrize("key", ["/.zattrs", "/x/.zarray", "g//.zgroup"])
+def test_from_stored_metadata_json_v2_malformed_key(key: str) -> None:
+    """A key with a leading `/` or an empty segment, which would alias another node's, is refused."""
+    stored = {**_STORED_LAYOUT_GROUP.to_stored_metadata_json(), key: {}}
+    with pytest.raises(ValueError, match=f"Invalid store key '{key}'"):
+        GroupSpec.from_stored_metadata_json(stored)
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        {"x/.zarray": []},
+        {"x/.zgroup": {"zarr_format": 2}, "x/.zattrs": []},
+        {"x/.zarray": {"zarr_format": 2}},
+    ],
+    ids=["zarray-not-object", "zattrs-not-object", "zarray-invalid"],
+)
+def test_from_stored_metadata_json_v2_invalid_document(member: dict[str, object]) -> None:
+    """A node whose documents are not a valid node is refused by validation."""
+    stored = {".zgroup": {"zarr_format": 2}, **member}
+    with pytest.raises(ValidationError):
+        GroupSpec.from_stored_metadata_json(stored)
+
+
 def test_from_stored_metadata_json_v2_no_root() -> None:
     """A layout without the root's `.zgroup` is refused."""
     stored = dict(_STORED_LAYOUT_GROUP.to_stored_metadata_json())
