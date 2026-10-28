@@ -35,8 +35,8 @@ reproduced by running the same `just` command locally. The test matrix job
 runs `just py=<python> zarr=<zarr> test-cov` for each cell (and
 `just py=<python> test-base-cov` for the cell without zarr). `just ci` runs
 all of the checks in one go, using the test matrix without coverage. The
-only `run:` steps in the workflows that are not `just` recipes install
-hatch.
+only `run:` steps in the CI workflows that are not `just` recipes install
+hatch (the release workflow, `cd.yml`, builds with hatch directly).
 
 ## Changelog entries
 
