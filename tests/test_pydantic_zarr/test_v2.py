@@ -51,6 +51,7 @@ from pydantic_zarr.v2 import (
     auto_order,
     from_flat,
     from_zarr,
+    from_zarr_flat,
     is_array_spec,
     is_group_spec,
     to_flat,
@@ -631,12 +632,8 @@ def test_group_like() -> None:
     assert group.like(group.model_copy(update={"attributes": None}), include={"members"})
 
 
-def _depth_hierarchy() -> tuple[zarr_mod.Group, dict[int, object]]:
-    """
-    Store a three-level hierarchy and return it with the spec `from_zarr`
-    should read from it at each depth: a group at the depth limit is a
-    `BaseGroupSpec`, whose members were not read.
-    """
+def _stored_hierarchy() -> tuple[zarr_mod.Group, dict[str, AnyArraySpec | AnyBaseGroupSpec]]:
+    """Store a three-level hierarchy, and return it with its flat form as read back."""
     zarr = pytest.importorskip("zarr")
     array: AnyArraySpec = ArraySpec.from_array(np.arange(20), attributes={"level": 3})
     tree: dict[str, AnyArraySpec | AnyBaseGroupSpec] = {
@@ -648,77 +645,53 @@ def _depth_hierarchy() -> tuple[zarr_mod.Group, dict[int, object]]:
     }
     stored = GroupSpec.from_flat(tree).to_zarr(zarr.storage.MemoryStore(), path="test")
     array_read = ArraySpec.from_zarr(cast("zarr_mod.Array", stored["1/2/2"]))
-    level_3 = {"1": GroupSpec(attributes={"level": 3}), "2": array_read}
-    expected: dict[int, object] = {
-        0: tree[""],
-        1: GroupSpec(attributes={"level": 0}, members={"1": tree["/1"]}),
-        2: GroupSpec(
-            attributes={"level": 0},
-            members={"1": GroupSpec(attributes={"level": 1}, members={"2": tree["/1/2"]})},
-        ),
-        3: GroupSpec(
-            attributes={"level": 0},
-            members={
-                "1": GroupSpec(
-                    attributes={"level": 1},
-                    members={
-                        "2": GroupSpec(
-                            attributes={"level": 2},
-                            members={"1": tree["/1/2/1"], "2": array_read},
-                        )
-                    },
-                )
-            },
-        ),
-        -1: GroupSpec(
-            attributes={"level": 0},
-            members={
-                "1": GroupSpec(
-                    attributes={"level": 1},
-                    members={"2": GroupSpec(attributes={"level": 2}, members=level_3)},
-                )
-            },
-        ),
-    }
-    return stored, expected
+    return stored, {**tree, "/1/2/2": array_read}
 
 
-@pytest.mark.parametrize("depth", [0, 1, 2, 3, -1])
-def test_from_zarr_depth(depth: int) -> None:
+@pytest.mark.parametrize(
+    ("path", "depth", "expected_keys"),
+    [
+        ("", 0, [""]),
+        ("", 1, ["", "/1"]),
+        ("", 2, ["", "/1", "/1/2"]),
+        ("", -1, ["", "/1", "/1/2", "/1/2/1", "/1/2/2"]),
+        ("1", 1, ["/1", "/1/2"]),
+        ("1/2/2", -1, ["/1/2/2"]),
+    ],
+)
+def test_from_zarr_flat(path: str, depth: int, expected_keys: list[str]) -> None:
     """
-    `from_zarr` reads `depth` levels of members, and a group at the depth
-    limit is a `BaseGroupSpec`; at depth 0 that is the group itself.
-    `GroupSpec.from_zarr` agrees for every depth that reads members. A
-    `BaseGroupSpec` member survives a dump and validation, and writing it
-    back stores a hierarchy that reads back the same.
+    `from_zarr_flat` reads a node and `depth` levels of members under it,
+    keyed by path relative to that node. Read in full, it is the flat form
+    of what `from_zarr` reads.
     """
-    zarr = pytest.importorskip("zarr")
-    stored, expected = _depth_hierarchy()
-    observed = from_zarr(stored, depth=depth)
-    assert observed == expected[depth]
-    assert type(observed).model_validate(observed.model_dump()) == observed
-    assert type(observed).model_validate_json(observed.model_dump_json()) == observed
-    if depth != 0:
-        assert GroupSpec.from_zarr(stored, depth=depth) == observed
-    # array keyword arguments reach the arrays, not the groups whose members were not read
-    kwargs: dict[str, Any] = {} if depth == 0 else {"config": {"order": "C"}}
-    copy = observed.to_zarr(zarr.storage.MemoryStore(), path="copy", **kwargs)
-    assert from_zarr(copy, depth=depth) == observed
+    stored, flat = _stored_hierarchy()
+    node = stored[path] if path else stored
+    prefix = f"/{path}" if path else ""
+    expected = {key.removeprefix(prefix): flat[key] for key in expected_keys}
+    observed = from_zarr_flat(node, depth=depth)
+    assert observed == expected
+    if depth == -1:
+        assert from_flat(observed) == from_zarr(node)
 
 
-@pytest.mark.parametrize("depth", [0, -2])
-def test_group_from_zarr_invalid_depth(depth: int) -> None:
-    """`GroupSpec.from_zarr` refuses a depth that reads no members, or below -1."""
-    zarr = pytest.importorskip("zarr")
-    group = zarr.group(store=zarr.storage.MemoryStore(), zarr_format=2)
+def test_from_zarr_flat_invalid_depth() -> None:
+    """`from_zarr_flat` refuses a depth below -1."""
+    stored, _ = _stored_hierarchy()
     with pytest.raises(ValueError, match="Invalid value for depth"):
-        GroupSpec.from_zarr(group, depth=depth)
+        from_zarr_flat(stored, depth=-2)
 
 
 def test_members_none_refused() -> None:
     """`members` may not be `None`: a group without members is a `BaseGroupSpec`."""
     with pytest.raises(ValidationError, match="members"):
         GroupSpec(members=None)  # type: ignore[arg-type]
+
+
+def test_base_group_member_refused() -> None:
+    """A `GroupSpec` is a complete hierarchy, so a `BaseGroupSpec` is not a member."""
+    with pytest.raises(ValidationError, match="members"):
+        GroupSpec(members={"a": BaseGroupSpec()})  # type: ignore[dict-item]
 
 
 @pytest.mark.parametrize(("dtype_example"), DTYPE_EXAMPLES_V2, ids=str)
@@ -883,10 +856,3 @@ def test_resolve_path_v2() -> None:
     assert root["a/b"] == leaf
     with pytest.raises(KeyError, match="No member named 'zz' in a"):
         root.resolve_path("a/zz")
-
-
-def test_resolve_path_through_base_group_v2() -> None:
-    """Resolution through a `BaseGroupSpec`, whose members were not read, raises `KeyError`."""
-    root: AnyGroupSpec = GroupSpec(members={"a": BaseGroupSpec()})
-    with pytest.raises(KeyError, match="a is not a group with members"):
-        root.resolve_path("a/b")

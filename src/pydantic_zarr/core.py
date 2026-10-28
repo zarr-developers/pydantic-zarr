@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -186,8 +186,7 @@ def resolve_member_path(node: object, path: str) -> object:
         If the path holds no member names, or an empty one (`"a//b"`).
     KeyError
         Naming the segment that failed: a member name that does not exist, or
-        a segment that descends into a node that is not a group with members
-        (an array, or a `BaseGroupSpec`, whose members were not read).
+        a segment that descends into a node that is not a group.
     """
     stripped = path.strip("/")
     if stripped == "":
@@ -384,19 +383,36 @@ def json_eq(a: object, b: object) -> bool:
     return a == b
 
 
-def validate_group_depth(depth: int) -> None:
+def walk_zarr_hierarchy(
+    node: zarr.Array | zarr.Group, *, depth: int = -1
+) -> Iterator[tuple[str, zarr.Array | zarr.Group]]:
     """
-    Check the `depth` of a `GroupSpec.from_zarr` traversal: -1 (the whole
-    hierarchy) or a positive number of levels. Depth 0 reads no members, so
-    it cannot produce a `GroupSpec`; `BaseGroupSpec.from_zarr` reads a group
-    without its members.
+    Yield `(path, node)` for a zarr array or group and the members under it,
+    `depth` levels deep, with paths in the flat-hierarchy form `to_flat` uses:
+    `""` for `node` itself, then `"/a"`, `"/a/b"` and so on. A `depth` of -1
+    walks the whole hierarchy and 0 yields `node` alone. The shared engine of
+    the v2 and v3 `from_zarr_flat`.
+
+    Raises
+    ------
+    ValueError
+        If `depth` is lower than -1.
     """
     if depth < -1:
         msg = f"Invalid value for depth. Got {depth}, expected an integer greater than or equal to -1."
         raise ValueError(msg)
-    if depth == 0:
-        msg = (
-            "Invalid value for depth. Got 0, which reads no members; use "
-            "BaseGroupSpec.from_zarr to model a group without its members."
-        )
-        raise ValueError(msg)
+    yield "", node
+    yield from _walk_members(node, "", depth)
+
+
+def _walk_members(
+    node: zarr.Array | zarr.Group, prefix: str, depth: int
+) -> Iterator[tuple[str, zarr.Array | zarr.Group]]:
+    import zarr
+
+    if depth == 0 or not isinstance(node, zarr.Group):
+        return
+    for name, member in node.members():
+        path = f"{prefix}/{name}"
+        yield path, member
+        yield from _walk_members(member, path, max(depth - 1, -1))

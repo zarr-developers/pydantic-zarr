@@ -74,7 +74,7 @@ from pydantic_zarr.core import (
     model_like,
     resolve_member_path,
     tuplify_json,
-    validate_group_depth,
+    walk_zarr_hierarchy,
 )
 
 if TYPE_CHECKING:
@@ -90,13 +90,9 @@ if TYPE_CHECKING:
 # serializes with the model's own fields; annotated as plain BaseModel it
 # would serialize through the base schema, silently dumping {}.
 type TBaseAttr = Mapping[str, object] | SerializeAsAny[BaseModel]
-# BaseGroupSpec comes first: a member document without a `members` key
-# validates as both GroupSpec (whose `members` defaults to {}) and
-# BaseGroupSpec, and pydantic's smart-mode union breaks that tie by order.
-# BaseGroupSpec first keeps a group whose members were not read from
-# turning into a group with no members when dumped and validated again; a
-# narrowed TItem that admits both should list BaseGroupSpec first as well.
-type TBaseItem = Union["BaseGroupSpec", "GroupSpec", "ArraySpec"]
+# BaseGroupSpec is not a member type: a GroupSpec is a complete hierarchy,
+# and a group whose members are unknown is never part of one.
+type TBaseItem = Union["GroupSpec", "ArraySpec"]
 
 # Aliases for specs of any specialization. Since the spec parameters are
 # covariant (specs are frozen, so a narrowed spec IS-A wider one), these are
@@ -1270,9 +1266,9 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         The user-defined attributes of this group.
     members: dict[str, TItem], default = {}
         The members of this group: a `Mapping` with string keys and values that are
-        `ArraySpec`, `GroupSpec`, or `BaseGroupSpec`. A `BaseGroupSpec` member is a
-        group whose own members were not read, e.g. because `from_zarr` stopped at
-        its `depth` limit.
+        `ArraySpec` or `GroupSpec`. A `GroupSpec` is a complete hierarchy, so an empty
+        mapping means the group has no members. A group whose members are unknown is a
+        `BaseGroupSpec`, which has no `members` field and is never a member.
     """
 
     members: Mapping[str, TItem] = {}
@@ -1315,8 +1311,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         KeyError
             Naming the segment that failed: a member name that does not
             exist, or a segment that descends into a node that is not a
-            group with members (an array, or a `BaseGroupSpec`, whose
-            members were not read).
+            group.
         """
         node = resolve_member_path(self, path)
         return cast("AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec", node)
@@ -1330,8 +1325,8 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
     ) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec | TDefault | None:
         """
         `resolve_path` that returns `default` instead of raising when the path
-        does not resolve (a missing member, or an array or `BaseGroupSpec` on
-        the way); a malformed path still raises `ValueError`. This non-raising
+        does not resolve (a missing member, or a non-group on the way); a
+        malformed path still raises `ValueError`. This non-raising
         form suits pydantic validators, which turn `ValueError` into a
         validation error but let `KeyError` escape.
         """
@@ -1433,32 +1428,24 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
 
     @classmethod
     @override
-    def from_zarr(cls, group: zarr.Group, *, depth: int = -1) -> Self:
+    def from_zarr(cls, group: zarr.Group) -> Self:
         """
         Create a GroupSpec from a zarr group. Subgroups and arrays contained in the zarr
         group will be converted to instances of GroupSpec and ArraySpec, respectively,
         and these spec instances will be stored in the .members attribute of the parent
         GroupSpec. This occurs recursively, so the entire zarr hierarchy below a given
-        group can be represented as a GroupSpec. A subgroup at the `depth` limit becomes a
-        `BaseGroupSpec`: its own metadata, with its members unread.
+        group can be represented as a GroupSpec. Reading the entire hierarchy may be slow
+        for large hierarchies on high-latency storage. To read part of a hierarchy, use
+        `from_zarr_flat`; to read a group without its members, use `BaseGroupSpec.from_zarr`.
 
         Parameters
         ----------
         group : zarr.Group
             The Zarr group to model.
-        depth : int, default = -1
-            Either -1, which parses the entire hierarchy, or a positive integer, which parses
-            that many levels of members. To read a group without its members, use
-            `BaseGroupSpec.from_zarr`.
 
         Returns
         -------
         An instance of GroupSpec that represents the structure of the zarr hierarchy.
-
-        Raises
-        ------
-        ValueError
-            If `depth` is 0 or lower than -1.
         """
         try:
             import zarr
@@ -1468,24 +1455,20 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         attributes = group.attrs.asdict()
         members = {}
 
-        validate_group_depth(depth)
-        new_depth = max(depth - 1, -1)
         for name, item in group.members():
-            # convert to dict before the final typed GroupSpec construction
             if isinstance(item, zarr.Array):
+                # convert to dict before the final typed GroupSpec construction
                 item_out = ArraySpec.from_zarr(item).model_dump()
-            elif isinstance(item, zarr.Group) and new_depth == 0:
-                # a group at the depth limit, whose members are not read
-                item_out = BaseGroupSpec.from_zarr(item).model_dump()
             elif isinstance(item, zarr.Group):
-                item_out = GroupSpec.from_zarr(item, depth=new_depth).model_dump()
+                # convert to dict before the final typed GroupSpec construction
+                item_out = GroupSpec.from_zarr(item).model_dump()
             else:
                 msg = (  # type: ignore[unreachable]
                     f"Unparsable object encountered: {type(item)}. Expected zarr.Array"
                     " or zarr.Group."
                 )
 
-                raise ValueError(msg)
+                raise ValueError(msg)  # noqa: TRY004
             members[name] = item_out
 
         return cls(attributes=attributes, members=members)
@@ -1557,11 +1540,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         result.attrs.put(attrs)
         for name, member in self.members.items():
             subpath = f"{path.rstrip('/')}/{name.lstrip('/')}"
-            if isinstance(member, BaseGroupSpec) and not isinstance(member, GroupSpec):
-                # a group whose members were not read writes its own metadata only
-                member.to_zarr(store, subpath, overwrite=overwrite)
-            else:
-                member.to_zarr(store, subpath, overwrite=overwrite, **kwargs)
+            member.to_zarr(store, subpath, overwrite=overwrite, **kwargs)
 
         return result
 
@@ -1582,8 +1561,8 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         documents (a fill value written `"NaN"` equals one written
         `"0x7fc00000"`), exactly as `ArraySpec.like` judges them directly.
         A `BaseGroupSpec` — a group considered without members — compares as
-        that projection at any depth: by the group's own metadata alone,
-        whatever this side's members hold.
+        that projection: by the group's own metadata alone, whatever this
+        side's members hold.
         With filters, models are converted to `dict` via the `model_dump`
         method of `pydantic.BaseModel` and compared with the `==` operator.
 
@@ -1655,12 +1634,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
                 if isinstance(member, ArraySpec):
                     if not isinstance(other_member, ArraySpec) or not member.like(other_member):
                         return False
-                elif isinstance(other_member, ArraySpec):
-                    return False
-                elif not member.like(other_member):
-                    # a `BaseGroupSpec` member is the projection it is
-                    # everywhere else: it compares by the group's own
-                    # metadata, at any depth, exactly as at the top level.
+                elif isinstance(other_member, ArraySpec) or not member.like(other_member):
                     return False
             return True
 
@@ -1668,46 +1642,75 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
 
 
 @overload
-def from_zarr(element: zarr.Array, *, depth: int = ...) -> AnyArraySpec: ...
+def from_zarr(element: zarr.Array) -> AnyArraySpec: ...
 
 
 @overload
-def from_zarr(element: zarr.Group, *, depth: Literal[0]) -> AnyBaseGroupSpec: ...
+def from_zarr(element: zarr.Group) -> AnyGroupSpec: ...
 
 
-@overload
-def from_zarr(element: zarr.Group, *, depth: int = ...) -> AnyGroupSpec: ...
-
-
-def from_zarr(
-    element: zarr.Array | zarr.Group, *, depth: int = -1
-) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec:
+def from_zarr(element: zarr.Array | zarr.Group) -> AnyArraySpec | AnyGroupSpec:
     """
-    Recursively parse a Zarr group or Zarr array into an ArraySpec, GroupSpec, or
-    BaseGroupSpec.
+    Recursively parse a Zarr group or Zarr array into an ArraySpec or GroupSpec.
+    A group is read with its entire hierarchy; to read part of one, use `from_zarr_flat`.
 
     Parameters
     ----------
     element : a zarr Array or zarr Group
 
-    depth : int, default = -1
-        An integer which may be no lower than -1. Determines how far into the tree to parse.
-        The default value of -1 indicates that the entire hierarchy should be parsed; 0
-        parses none of a group's members, returning a BaseGroupSpec.
-
     Returns
     -------
-    An instance of ArraySpec, GroupSpec, or (for a group read at `depth=0`) BaseGroupSpec
-    that represents the structure of the zarr group or array.
+    An instance of GroupSpec or ArraySpec that represents the
+    structure of the zarr group or array.
     """
 
     import zarr
 
     if isinstance(element, zarr.Array):
         return ArraySpec.from_zarr(element)
-    if depth == 0:
-        return BaseGroupSpec.from_zarr(element)
-    return GroupSpec.from_zarr(element, depth=depth)
+    else:
+        return GroupSpec.from_zarr(element)
+
+
+def from_zarr_flat(
+    element: zarr.Array | zarr.Group, *, depth: int = -1
+) -> dict[str, AnyArraySpec | AnyBaseGroupSpec]:
+    """
+    Read a zarr array or group, and the members under it up to `depth` levels deep, into a
+    flat hierarchy: a `dict` from paths to `ArraySpec` and `BaseGroupSpec` values, in the form
+    `to_flat` produces and `from_flat` takes.
+
+    This is how to read part of a hierarchy. A `GroupSpec` is always a complete hierarchy, so
+    `GroupSpec.from_zarr` reads every member; a flat hierarchy makes no claim that it lists
+    every node, so it can stop at any depth. `from_flat` turns a complete one into a
+    `GroupSpec`.
+
+    Parameters
+    ----------
+    element : zarr.Array | zarr.Group
+        The zarr array or group to read. Its path in the result is `""`.
+    depth : int, default = -1
+        How many levels of members to read: -1 reads the whole hierarchy, 0 reads `element`
+        alone, 1 its members, and so on. This has no effect if `element` is an array.
+
+    Returns
+    -------
+    dict[str, ArraySpec | BaseGroupSpec]
+        The nodes read, keyed by path relative to `element`.
+
+    Raises
+    ------
+    ValueError
+        If `depth` is lower than -1.
+    """
+    import zarr
+
+    return {
+        path: ArraySpec.from_zarr(node)
+        if isinstance(node, zarr.Array)
+        else BaseGroupSpec.from_zarr(node)
+        for path, node in walk_zarr_hierarchy(element, depth=depth)
+    }
 
 
 @overload
