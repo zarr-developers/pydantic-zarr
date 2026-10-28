@@ -124,9 +124,17 @@ test = "pytest tests/test_docs"
 
 [tool.hatch.envs.types]
 dependency-groups = ["test"]
-extra-dependencies = ["pyrefly==1.4.0"]
+# three checkers on purpose, each covering the others' blind spots: pyrefly
+# is variance-lenient, and mypy does not apply PEP 696 TypeVar defaults
+# inside the lazy `type` aliases, so an invariant bound refusing narrowed
+# downstream parameterizations (#190) was visible only to pyright, which
+# checks the downstream-shaped tests/typing_conformance.py
+extra-dependencies = ["pyrefly==1.4.0", "mypy==2.3.0", "pyright==1.1.414"]
 [tool.hatch.envs.types.scripts]
-check = "pyrefly check {args:}"
+check = ["check-pyrefly", "check-mypy", "check-conformance"]
+check-pyrefly = "pyrefly check {args:}"
+check-mypy = "mypy --install-types --non-interactive src/pydantic_zarr tests"
+check-conformance = "pyright tests/typing_conformance.py"
 
 [tool.coverage.run]
 source_pkgs = ["pydantic_zarr", "tests"]
@@ -261,7 +269,7 @@ filterwarnings = [
 
 [tool.repo-review]
 ignore = [
-    "MY100",  # type checking uses pyrefly, not mypy
+    "MY100",  # mypy runs from the types hatch env (alongside pyrefly), not per-module config checks
     "PC111",  # black formatting for docs, not sure if want,
     "PC140",  # type checking (pyrefly) runs via the `types` hatch env and the typecheck CI job, not pre-commit
     "PC180",  # markdown formatter, no thanks
@@ -295,3 +303,18 @@ filename = "docs/release-notes.md"
 title_format = "## {name} {version} ({project_date})"
 issue_format = "[#{issue}](https://github.com/zarr-developers/pydantic-zarr/issues/{issue})"
 start_string = "<!-- towncrier release notes start -->\n"
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+namespace_packages = false
+warn_unreachable = true
+plugins = "pydantic.mypy"
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+strict = true
+# pyrefly and mypy need ignores in different places, so neither checker may
+# demand the other's ignores be removed
+warn_unused_ignores = false
+# TODO: remove each of these and fix any errors:
+disallow_any_generics = false
+warn_return_any = false
