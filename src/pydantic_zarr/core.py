@@ -23,8 +23,9 @@ from pydantic import (
 
 if TYPE_CHECKING:
     # both pydantic spellings below re-export pydantic_core's sentinel, and
-    # unlike them this import resolves statically on every supported pydantic
-    from pydantic_core import MISSING
+    # unlike them this import resolves statically on every supported pydantic;
+    # `as MISSING` marks the re-export explicit for strict checkers
+    from pydantic_core import MISSING as MISSING
 else:
     try:
         # the MISSING sentinel is stable from pydantic 2.14

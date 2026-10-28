@@ -1331,7 +1331,9 @@ def test_bytes_codec_canonicalized_for_single_byte_dtypes() -> None:
     stores: specs constructed with either spelling are equal and alike, and
     multi-byte data types keep their endianness.
     """
-    endian_codecs = ({"name": "bytes", "configuration": {"endian": "little"}},)
+    endian_codecs: tuple[CodecLike, ...] = (
+        {"name": "bytes", "configuration": {"endian": "little"}},
+    )
     for data_type in ("uint8", "int8", "bool"):
         with_endian: AnyArraySpec = ArraySpec.from_shape_and_data_type(
             (4,), data_type, codecs=endian_codecs
