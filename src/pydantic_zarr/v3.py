@@ -54,7 +54,14 @@ from zarr_metadata.v3.chunk_key_encoding.v2 import (
     V2ChunkKeyEncodingConfiguration,
     V2ChunkKeyEncodingObject,
 )
-from zarr_metadata.v3.definition import CORE_AND_EXTENSIONS, DataTypeDefinition
+from zarr_metadata.v3.definition import (
+    CORE_AND_EXTENSIONS,
+    ChunkGridDefinition,
+    ChunkKeyEncodingDefinition,
+    CodecDefinition,
+    DataTypeDefinition,
+    StorageTransformerDefinition,
+)
 
 from pydantic_zarr._metadata import CONTEXT_KEY as CONTEXT_KEY
 from pydantic_zarr._metadata import format_problems, scope_from_context
@@ -179,10 +186,25 @@ class NodeSpec(StrictBase):
         own classes, so a scoped tree narrows its member types to
         scope-bearing classes (an explicit context, which pydantic carries
         into nested validation, reaches the members either way).
+    zarr_scope_strict: ClassVar[bool]
+        When true, validation additionally refuses every extension-point
+        name — data type, chunk grid, chunk key encoding, codec (a sharding
+        codec's inner and index pipelines included) and storage transformer
+        — that nothing in the operative scope claims, where the default is
+        to leave such names unjudged. Together with `zarr_scope` this makes
+        a class a conformance contract: ``zarr_scope = CORE`` plus strict
+        accepts exactly the documents built from names the core spec
+        defines. The variable-length data types and their codecs are
+        extensions (and zarr-python's legacy spellings are claimed by no
+        scope), so a strict core class refuses them. Enforced by
+        `ArraySpec`'s document validation; a group document has no
+        extension points, and its members are validated as their own
+        classes.
     """
 
     zarr_format: Literal[3] = 3
     zarr_scope: ClassVar[ZarrV3Context | None] = None
+    zarr_scope_strict: ClassVar[bool] = False
 
     @classmethod
     def _scope(cls, context: object) -> ZarrV3Context | None:
@@ -380,6 +402,61 @@ A data type declaration in Zarr V3 form (name or named configuration).
 `parse_dtype_v3` in a model validator, so the scope the conversion reads
 in can come from the class's `zarr_scope` as well as the validation context.
 """
+
+
+def _unclaimed_extension_point_names(
+    document: Mapping[str, object], scope: ZarrV3Context
+) -> list[str]:
+    """
+    The extension-point names in a dumped array metadata document that nothing
+    in `scope` claims, each as a ``<loc>: <message>`` line. These are the
+    names document validation leaves unjudged; a strict class refuses them
+    instead. Codec pipelines are walked through a sharding codec's inner and
+    index pipelines.
+    """
+    problems: list[str] = []
+
+    def check(kind: type[Any], label: str, name: object, loc: str) -> None:
+        if isinstance(name, str) and scope.claimant(kind, name) is None:
+            problems.append(f"{loc}: {name!r} names no {label} in the scope")
+
+    def walk_codecs(codecs: object, loc: str) -> None:
+        if isinstance(codecs, str) or not isinstance(codecs, Sequence):
+            return
+        for index, codec in enumerate(codecs):
+            if not isinstance(codec, Mapping):
+                continue
+            here = f"{loc}.{index}"
+            check(CodecDefinition, "codec", codec.get("name"), f"{here}.name")
+            config = codec.get("configuration")
+            if codec.get("name") == "sharding_indexed" and isinstance(config, Mapping):
+                walk_codecs(config.get("codecs"), f"{here}.configuration.codecs")
+                walk_codecs(config.get("index_codecs"), f"{here}.configuration.index_codecs")
+
+    data_type = document.get("data_type")
+    if isinstance(data_type, Mapping):
+        check(DataTypeDefinition, "data type", data_type.get("name"), "data_type.name")
+    else:
+        check(DataTypeDefinition, "data type", data_type, "data_type")
+    for field, kind, label in (
+        ("chunk_grid", ChunkGridDefinition, "chunk grid"),
+        ("chunk_key_encoding", ChunkKeyEncodingDefinition, "chunk key encoding"),
+    ):
+        value = document.get(field)
+        if isinstance(value, Mapping):
+            check(kind, label, value.get("name"), f"{field}.name")
+    walk_codecs(document.get("codecs"), "codecs")
+    transformers = document.get("storage_transformers")
+    if isinstance(transformers, Sequence) and not isinstance(transformers, str):
+        for index, transformer in enumerate(transformers):
+            if isinstance(transformer, Mapping):
+                check(
+                    StorageTransformerDefinition,
+                    "storage transformer",
+                    transformer.get("name"),
+                    f"storage_transformers.{index}.name",
+                )
+    return problems
 
 
 def reject_bare_codec(data: object) -> object:
@@ -583,10 +660,25 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         under the key `pydantic_zarr.v3.CONTEXT_KEY`), falling back to this
         class's `zarr_scope`, then to `zarr_metadata`'s `CORE_AND_EXTENSIONS`.
 
+        On a class with `zarr_scope_strict` set, names the scope leaves
+        unjudged are refused instead: the document must be built from
+        extension-point names the operative scope claims.
+
         The `attributes` field is not part of this check: its type and
         contents are governed by this class's `TAttr` parameter alone.
         """
-        self._canonical_document(context=self._scope(info.context))
+        scope = self._scope(info.context)
+        self._canonical_document(context=scope)
+        if type(self).zarr_scope_strict:
+            unclaimed = _unclaimed_extension_point_names(
+                self.model_dump(), CORE_AND_EXTENSIONS if scope is None else scope
+            )
+            if unclaimed:
+                msg = (
+                    "Names the scope leaves unjudged, refused because this class "
+                    "sets `zarr_scope_strict`:\n" + "\n".join(unclaimed)
+                )
+                raise ValueError(msg)
         return self
 
     def _canonical_document(

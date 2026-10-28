@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 from packaging.version import Version
 from pydantic import BaseModel, ValidationError
+from zarr_metadata.v3.definition import CORE
 
 from pydantic_zarr.core import tuplify_json
 from pydantic_zarr.v3 import (
@@ -800,6 +801,78 @@ def test_zarr_scope_reaches_dtype_guard() -> None:
 
     with pytest.raises(ValidationError, match="names no data type in the scope"):
         EmptyScopeSpec(**_v3_array_kwargs())
+
+
+class _StrictCoreArraySpec(ArraySpec):
+    """Accepts exactly the documents built from names the core scope claims."""
+
+    zarr_scope = CORE
+    zarr_scope_strict = True
+
+
+# a valid zstd codec: unclaimed by the core scope, claimed by the extensions
+_ZSTD_KWARGS = _v3_array_kwargs(
+    codecs=(
+        {"name": "bytes", "configuration": {"endian": "little"}},
+        {"name": "zstd", "configuration": {"level": 0, "checksum": False}},
+    )
+)
+
+
+def test_zarr_scope_strict_core_conformance() -> None:
+    """
+    `zarr_scope = CORE` plus `zarr_scope_strict` is a core-conformance
+    contract: a document of core names passes, through derived operations
+    (sharding, whose inner and index pipelines the strict check walks) too,
+    and an explicit validation context re-scopes the conformance check, so
+    the same class judges strictly against the context's scope instead.
+    """
+    from zarr_metadata.v3.definition import CORE_AND_EXTENSIONS
+
+    spec = _StrictCoreArraySpec(**_v3_array_kwargs())
+    sharded = spec.with_sharding_codec((2, 2))
+    assert sharded.codecs[0]["name"] == "sharding_indexed"  # type: ignore[index]
+    # zstd is claimed by the extensions scope, so under that context the
+    # strict check passes where the class's own scope refuses (test below)
+    document = {"zarr_format": 3, "node_type": "array", **_ZSTD_KWARGS}
+    accepted = _StrictCoreArraySpec.model_validate(document, context=CORE_AND_EXTENSIONS)
+    assert accepted.codecs[-1]["name"] == "zstd"  # type: ignore[index]
+
+
+def test_zarr_scope_strict_refuses_unclaimed_codec() -> None:
+    """A codec name the scope does not claim is refused instead of unjudged."""
+    with pytest.raises(ValidationError, match="'zstd' names no codec in the scope"):
+        _StrictCoreArraySpec(**_ZSTD_KWARGS)
+
+
+def test_zarr_scope_strict_refuses_unclaimed_data_type() -> None:
+    """
+    A data type name no scope claims — zarr-python 3.0's legacy `"str"`
+    spelling of the variable-length string — is refused by a strict class,
+    although the lenient path recognizes it.
+    """
+    with pytest.raises(ValidationError, match="'str' names no data type in the scope"):
+        _StrictCoreArraySpec(**_v3_array_kwargs(data_type="str", fill_value=""))
+
+
+def test_zarr_scope_strict_reaches_sharding_inner_codecs() -> None:
+    """An unclaimed codec hiding inside a sharding codec's inner pipeline is found."""
+    sharded = _StrictCoreArraySpec(**_v3_array_kwargs()).with_sharding_codec((2, 2))
+    document = sharded.model_dump()
+    config = dict(document["codecs"][0]["configuration"])
+    config["codecs"] = (
+        *config["codecs"],
+        {"name": "zstd", "configuration": {"level": 0, "checksum": False}},
+    )
+    document["codecs"] = ({"name": "sharding_indexed", "configuration": config},)
+    with pytest.raises(ValidationError, match=r"codecs\.0\.configuration\.codecs\.1\.name"):
+        _StrictCoreArraySpec.model_validate(document)
+
+
+def test_zarr_scope_strict_refuses_unclaimed_storage_transformer() -> None:
+    """A storage transformer name the scope does not claim is refused."""
+    with pytest.raises(ValidationError, match="names no storage transformer in the scope"):
+        _StrictCoreArraySpec(**_v3_array_kwargs(storage_transformers=({"name": "chunk-manifest"},)))
 
 
 def test_like_compares_documents_canonically() -> None:
