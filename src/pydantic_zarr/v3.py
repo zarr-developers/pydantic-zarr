@@ -89,7 +89,18 @@ if TYPE_CHECKING:
 # serializes with the model's own fields; annotated as plain BaseModel it
 # would serialize through the base schema, silently dumping {}.
 type TBaseAttr = Mapping[str, object] | SerializeAsAny[BaseModel]
+# TBaseItem is TItem's *default*: what a bare `GroupSpec`'s members mean at
+# runtime. It must stay spelled with the bare class names, which recurse, so
+# pydantic validates a member's own members as specs all the way down —
+# Any-parameterized members would leave nested dicts unvalidated.
 type TBaseItem = Union["GroupSpec", "ArraySpec", "BaseGroupSpec"]
+# TAnyItem is TItem's *bound*, a purely static role, and must be the opposite:
+# Any-parameterized, so it accepts *narrowed* member specs — `GroupSpec[Attrs,
+# GroupSpec[Any, Any] | MyArraySpec]` — where the bare names resolve through
+# their PEP 696 defaults to invariant TBaseAttr specializations, which strict
+# checkers (mypy, pyright) refuse narrowed specs for
+# (tests/typing_conformance.py guards this).
+type TAnyItem = Union["GroupSpec[Any, Any]", "ArraySpec[Any]", "BaseGroupSpec[Any]"]
 
 # Aliases for specs of any specialization. NOT redundant with the bare class
 # names: through its PEP 696 default, bare `ArraySpec` means the *invariant*
@@ -102,7 +113,7 @@ type AnyGroupSpec = "GroupSpec[Any, Any]"
 type AnyBaseGroupSpec = "BaseGroupSpec[Any]"
 
 TAttr = TypeVar("TAttr", bound=TBaseAttr, default=TBaseAttr)
-TItem = TypeVar("TItem", bound=TBaseItem, default=TBaseItem)
+TItem = TypeVar("TItem", bound=TAnyItem, default=TBaseItem)
 TDefault = TypeVar("TDefault")
 
 NodeType = Literal["group", "array"]

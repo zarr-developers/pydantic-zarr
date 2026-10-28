@@ -124,9 +124,20 @@ test = "pytest tests/test_docs"
 
 [tool.hatch.envs.types]
 dependency-groups = ["test"]
-extra-dependencies = ["pyrefly==1.4.0"]
+# three checkers on purpose, each covering the others' blind spots: pyrefly
+# (the project checker) is variance-lenient, so an invariant TypeVar bound
+# refusing narrowed downstream parameterizations (#190) was invisible to it
+# (and to mypy, which does not apply PEP 696 defaults inside lazy `type`
+# aliases). ty and pyright both catch that class of bug and check the
+# downstream-shaped tests/typing_conformance.py; pyright because it is what
+# pyright-checked downstreams run, ty also over the modules it is clean on
+# today (TODO: widen ty's scope as it and the zarr/numpy stubs mature).
+extra-dependencies = ["pyrefly==1.4.0", "ty==0.0.93", "pyright==1.1.414"]
 [tool.hatch.envs.types.scripts]
-check = "pyrefly check {args:}"
+check = ["check-pyrefly", "check-ty", "check-conformance"]
+check-pyrefly = "pyrefly check {args:}"
+check-ty = "ty check src/pydantic_zarr/core.py src/pydantic_zarr/_metadata.py tests/typing_conformance.py"
+check-conformance = "pyright tests/typing_conformance.py"
 
 [tool.coverage.run]
 source_pkgs = ["pydantic_zarr", "tests"]
@@ -261,7 +272,7 @@ filterwarnings = [
 
 [tool.repo-review]
 ignore = [
-    "MY100",  # type checking uses pyrefly, not mypy
+    "MY100",  # type checking uses pyrefly, ty and pyright, not mypy
     "PC111",  # black formatting for docs, not sure if want,
     "PC140",  # type checking (pyrefly) runs via the `types` hatch env and the typecheck CI job, not pre-commit
     "PC180",  # markdown formatter, no thanks
