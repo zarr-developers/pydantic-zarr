@@ -141,19 +141,48 @@ def stored_documents_v2(
     )
 
 
+def stored_member_documents(
+    group_v3: GroupOfUnionV3, group_v2: GroupOfUnionV2
+) -> tuple[v3.ZarrV3StoredDocumentJSON, v2.ZarrV2StoredDocumentJSON]:
+    """A member's document, at a key the type does not name, is any stored document."""
+    return (
+        group_v3.to_stored_metadata_json()["a/zarr.json"],
+        group_v2.to_stored_metadata_json()["a/.zattrs"],
+    )
+
+
 def stored_documents_as_mapping(
-    array_v3: NarrowArrayV3, array_v2: NarrowArrayV2, group_v2: GroupOfUnionV2
+    array_v3: NarrowArrayV3,
+    group_v3: GroupOfUnionV3,
+    array_v2: NarrowArrayV2,
+    group_v2: GroupOfUnionV2,
 ) -> tuple[
     Mapping[str, ZarrV3ArrayMetadataJSON],
+    Mapping[str, v3.ZarrV3StoredDocumentJSON],
     Mapping[str, ZarrV2ZArrayJSON | ZarrV2ZAttrsJSON],
-    Mapping[str, ZarrV2ZGroupJSON | ZarrV2ZAttrsJSON],
+    Mapping[str, v2.ZarrV2StoredDocumentJSON],
 ]:
     """
-    The stored-document types are closed, so each is a `Mapping` of its
-    value types, which lets nodes' documents be merged into one mapping.
+    An array's stored type is closed, and a group's admits only stored
+    documents beyond its own, so each is a `Mapping` of its value types.
     """
     return (
         array_v3.to_stored_metadata_json(),
+        group_v3.to_stored_metadata_json(),
         array_v2.to_stored_metadata_json(),
         group_v2.to_stored_metadata_json(),
+    )
+
+
+def stored_layout_round_trip(
+    group_v3: GroupOfUnionV3, group_v2: GroupOfUnionV2
+) -> tuple[GroupOfUnionV3, GroupOfUnionV2, v3.AnyBaseGroupSpec]:
+    """
+    `from_stored_metadata_json` reads a stored layout back at the class it is
+    called on, and a `GroupSpec`'s layout is a `BaseGroupSpec`'s.
+    """
+    return (
+        GroupOfUnionV3.from_stored_metadata_json(group_v3.to_stored_metadata_json()),
+        GroupOfUnionV2.from_stored_metadata_json(group_v2.to_stored_metadata_json()),
+        v3.BaseGroupSpec.from_stored_metadata_json(group_v3.to_stored_metadata_json()),
     )
