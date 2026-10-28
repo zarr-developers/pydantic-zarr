@@ -23,9 +23,14 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "pydantic>=2.10",
+    # >= 2.12 for the MISSING sentinel (experimental there, stable in 2.14;
+    # pydantic_zarr.core imports whichever spelling exists). The floor stays
+    # below 2.13 so pydantic-zarr remains co-installable with downstreams
+    # that cap pydantic (ome-zarr-models, and through it ome-zarr-py).
+    "pydantic>=2.12",
     "numpy>=2.0.0",
     "packaging>=21.0",
+    "zarr-metadata>=0.6.0",
     "typing-extensions>=4.6",
 ]
 
@@ -41,11 +46,12 @@ zarr = ["zarr>=3.0.0"]
 [dependency-groups]
 test-base = [
     "coverage",
+    "hypothesis>=6.100",
     "pytest==9.1.0",
     "pytest-cov",
     "pytest-examples",
-    "xarray==2025.10.0",
-    "dask==2025.11.0",
+    "xarray>=2025.10.0",
+    "dask>=2025.11.0",
 ]
 test = [
     {include-group = "test-base"},
@@ -56,9 +62,16 @@ docs = [
     "mkdocs-material",
     "mkdocstrings[python]",
     "pytest-examples",
+    # docs pages embed pydantic error URLs (errors.pydantic.dev/<version>/...)
+    # in print-checked output, so the docs build pins the minor version; it
+    # cannot move past 2.12 while ome-zarr (via ome-zarr-models) caps pydantic
     "pydantic==2.12.*",
     "zarr>=3.1.0",
     "towncrier",
+    # reference implementations the example scripts compare their output
+    # against (xarray comes from the test-base group)
+    "ome-zarr>=0.21",
+    "ngff-zarr>=0.50",
 ]
 dev = [
     {include-group = "test"},
@@ -99,6 +112,9 @@ installer = "uv"
 
 [tool.hatch.envs.docs]
 dependency-groups = ['docs']
+python = "3.12"
+# pip's resolver gives up on the dask/ngff-zarr combination that uv resolves
+installer = "uv"
 
 [tool.hatch.envs.docs.scripts]
 build = "mkdocs build --clean --strict"
@@ -203,10 +219,17 @@ ignore = [
 
 [tool.ruff.lint.extend-per-file-ignores]
 "tests/**" = ["ANN001", "ANN201", "RUF029", "SIM117", "SIM300"]
+# example scripts assert on refused ValidationErrors by design (they are not
+# pytest tests), and their literate sections import the reference libraries
+# where the rendered docs section uses them
+"examples/**" = ["PT017", "E402"]
 
 [tool.pyrefly]
-project-includes = ["src", "tests"]
-search-path = ["src", "tests"]
+project-includes = ["src", "tests", "examples"]
+search-path = ["src", "tests", "examples"]
+# the reference implementations the example scripts import are docs-only
+# dependencies; the types environment does not install them
+replace-imports-with-any = ["ome_zarr.*", "ngff_zarr", "ome_zarr"]
 python-version = "3.12"
 
 [tool.pyrefly.errors]

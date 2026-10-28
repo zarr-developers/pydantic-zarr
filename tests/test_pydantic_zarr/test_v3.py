@@ -10,10 +10,12 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 import pytest
 from packaging.version import Version
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
+from zarr_metadata.v3.definition import CORE
 
 from pydantic_zarr.core import tuplify_json
 from pydantic_zarr.v3 import (
+    _SINGLE_BYTE_DATA_TYPES,
     AnyArraySpec,
     AnyBaseGroupSpec,
     AnyGroupSpec,
@@ -74,7 +76,10 @@ def test_serialize_deserialize() -> None:
         data_type="float64",
         chunk_grid=NamedConfig(name="regular", configuration={"chunk_shape": [1000, 100]}),
         chunk_key_encoding=NamedConfig(name="default", configuration={"separator": "/"}),
-        codecs=[NamedConfig(name="GZip", configuration={"level": 1})],
+        codecs=[
+            NamedConfig(name="bytes", configuration={"endian": "little"}),
+            NamedConfig(name="gzip", configuration={"level": 1}),
+        ],
         fill_value="NaN",
         storage_transformers=[],
     )
@@ -204,9 +209,31 @@ def test_arrayspec_from_zarr(dtype_example: DTypeExample) -> None:
     arr = zarr.create_array(store=store, shape=(10,), dtype=data_type, zarr_format=3)
 
     arr_spec: AnyArraySpec = ArraySpec.from_zarr(arr)
-    assert arr_spec.model_dump() == json.loads(
-        store["zarr.json"].to_bytes(), object_hook=tuplify_json
+    expected = json.loads(store["zarr.json"].to_bytes(), object_hook=tuplify_json)
+    # The spec canonicalizes two codec spellings zarr-python writes: an empty
+    # configuration mapping (any codec), and the no-op endian configuration on
+    # the bytes codec for single-byte data types (zarr-python 3.0 wrote it).
+    # The rewrites mirror the validator's exact conditions, so any other
+    # wrongly dropped configuration would still fail the comparison.
+    expected["codecs"] = tuple(
+        {k: v for k, v in codec.items() if k != "configuration"}
+        if isinstance(codec, dict) and codec.get("configuration") == {}
+        else codec
+        for codec in expected["codecs"]
     )
+    if data_type in _SINGLE_BYTE_DATA_TYPES:
+        expected["codecs"] = tuple(
+            {"name": "bytes"}
+            if (
+                isinstance(codec, dict)
+                and codec.get("name") == "bytes"
+                and isinstance(codec.get("configuration"), dict)
+                and set(codec["configuration"]) == {"endian"}
+            )
+            else codec
+            for codec in expected["codecs"]
+        )
+    assert arr_spec.model_dump() == expected
 
 
 @pytest.mark.parametrize("path", ["", "foo"])
@@ -388,7 +415,10 @@ def test_v2_chunk_key_encoding() -> None:
         data_type="float64",
         chunk_grid=NamedConfig(name="regular", configuration={"chunk_shape": [1000, 100]}),
         chunk_key_encoding=NamedConfig(name="v2", configuration={"separator": "."}),
-        codecs=[NamedConfig(name="GZip", configuration={"level": 1})],
+        codecs=[
+            NamedConfig(name="bytes", configuration={"endian": "little"}),
+            NamedConfig(name="gzip", configuration={"level": 1}),
+        ],
         fill_value="NaN",
         storage_transformers=[],
     )
@@ -506,6 +536,425 @@ def _v3_array_kwargs(**overrides: object) -> dict[str, Any]:
     return kwargs
 
 
+def test_parse_dtype_v3_passes_v3_declarations_through() -> None:
+    """
+    `parse_dtype_v3` parses only numpy data types; a declaration already in
+    Zarr V3 form passes through, for document validation to judge in scope: a
+    claimed name, a name claimed by pattern (`r16`), a claimed name numpy
+    would misread (`bytes` is numpy's zero-length bytestring spelling), an
+    unclaimed extension name numpy cannot read, and a named configuration.
+    """
+    assert parse_dtype_v3("int8") == "int8"
+    assert parse_dtype_v3("r16") == "r16"
+    assert parse_dtype_v3("bytes") == "bytes"
+    assert parse_dtype_v3("variable_length_bytes") == "variable_length_bytes"
+    # zarr-python 3.0 stored "str" for the variable-length string data type;
+    # numpy reads the same string as a unicode type, but documents zarr-python
+    # wrote must keep passing through
+    assert parse_dtype_v3("str") == "str"
+    declaration = {"name": "numpy.datetime64", "configuration": {"unit": "s", "scale_factor": 1}}
+    assert parse_dtype_v3(declaration) == declaration
+
+
+def test_parse_dtype_v3_refuses_ambiguous_numpy_spelling() -> None:
+    """
+    A string that names no data type in the scope but that numpy reads as a
+    data type is refused with the Zarr V3 spelling suggested — on any spec
+    construction, not only through `from_shape_and_data_type`.
+    """
+    with pytest.raises(ValueError, match="Zarr V3 form is 'int64'"):
+        parse_dtype_v3("i8")
+    with pytest.raises(ValidationError, match="Zarr V3 form is 'float32'"):
+        ArraySpec(**_v3_array_kwargs(data_type=">f4"))
+
+
+def test_parse_dtype_v3_refuses_numpy_spelling_without_v3_form() -> None:
+    """A numpy-readable string with no Zarr V3 equivalent (`"S10"`) is refused too."""
+    with pytest.raises(ValueError, match="no Zarr V3 form"):
+        parse_dtype_v3("S10")
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        # a plain core document
+        {},
+        # integer dtype with an integer fill value
+        {"data_type": "int8", "fill_value": 0},
+        # a non-finite float fill value given as a float is canonicalized and accepted
+        {"fill_value": float("nan")},
+        # a hexadecimal float fill value
+        {"fill_value": "0x7fc00000"},
+        # a datetime dtype in its named-configuration form, with an integer fill value
+        {
+            "data_type": {
+                "name": "numpy.datetime64",
+                "configuration": {"unit": "ns", "scale_factor": 1},
+            },
+            "fill_value": -(2**63),
+        },
+        # a sharding codec holding a nested pipeline
+        {
+            "codecs": (
+                {
+                    "name": "sharding_indexed",
+                    "configuration": {
+                        "chunk_shape": (1, 1),
+                        "codecs": ({"name": "bytes", "configuration": {"endian": "little"}},),
+                        "index_codecs": (
+                            {"name": "bytes", "configuration": {"endian": "little"}},
+                            {"name": "crc32c"},
+                        ),
+                        "index_location": "end",
+                    },
+                },
+            )
+        },
+        # a codec name nothing in the scope claims is left unjudged
+        {
+            "codecs": (
+                {"name": "bytes", "configuration": {"endian": "little"}},
+                {"name": "a-codec-nobody-claims", "configuration": {"whatever": True}},
+            )
+        },
+    ],
+    ids=str,
+)
+def test_metadata_document_validation_accepts(overrides: dict[str, object]) -> None:
+    """
+    ArraySpec accepts specs whose fields assemble into a valid Zarr V3 metadata
+    document, across data types, fill value spellings, and codec pipelines.
+    """
+    spec: AnyArraySpec = ArraySpec(**_v3_array_kwargs(**overrides))
+    # the document round-trips through model validation unchanged
+    assert ArraySpec(**spec.model_dump()) == spec
+
+
+def test_metadata_document_validation_fill_value_dtype_mismatch() -> None:
+    """A fill value that the named data type refuses is a validation error."""
+    with pytest.raises(ValidationError, match="fill_value"):
+        ArraySpec(**_v3_array_kwargs(data_type="int8", fill_value="NaN"))
+
+
+def test_metadata_document_validation_chunk_grid_rank_mismatch() -> None:
+    """A chunk shape with the wrong number of dimensions is a validation error."""
+    with pytest.raises(ValidationError, match="chunk length per dimension"):
+        ArraySpec(
+            **_v3_array_kwargs(
+                chunk_grid={"name": "regular", "configuration": {"chunk_shape": (2, 2, 2)}}
+            )
+        )
+
+
+def test_metadata_document_validation_pipeline_shape() -> None:
+    """A codec pipeline with two array -> bytes codecs is a validation error."""
+    with pytest.raises(ValidationError, match="array -> bytes"):
+        ArraySpec(
+            **_v3_array_kwargs(
+                codecs=(
+                    {"name": "bytes", "configuration": {"endian": "little"}},
+                    {"name": "bytes", "configuration": {"endian": "little"}},
+                )
+            )
+        )
+
+
+def test_metadata_document_validation_invalid_extension_name() -> None:
+    """A codec whose name is not a legal extension name is a validation error."""
+    with pytest.raises(ValidationError, match="extension name"):
+        ArraySpec(
+            **_v3_array_kwargs(
+                codecs=(
+                    {"name": "bytes", "configuration": {"endian": "little"}},
+                    {"name": "Not/A/Name"},
+                )
+            )
+        )
+
+
+def test_metadata_document_validation_claimed_codec_bad_config() -> None:
+    """A codec the scope claims, with a configuration its definition refuses, is refused."""
+    with pytest.raises(ValidationError, match=r"codecs\.1\.configuration\.level"):
+        ArraySpec(
+            **_v3_array_kwargs(
+                codecs=(
+                    {"name": "bytes", "configuration": {"endian": "little"}},
+                    {"name": "gzip", "configuration": {"level": "very"}},
+                )
+            )
+        )
+
+
+def test_metadata_document_validation_scope_from_context() -> None:
+    """
+    The validation scope comes from the pydantic validation context: in a scope
+    that claims a codec name, an invalid configuration is refused; in one that
+    does not, the same codec is left unjudged and the spec is accepted.
+    """
+    from zarr_metadata.v3.definition import CORE, CORE_AND_EXTENSIONS
+
+    from pydantic_zarr._metadata import CONTEXT_KEY
+
+    document = {
+        "zarr_format": 3,
+        "node_type": "array",
+        **_v3_array_kwargs(
+            codecs=(
+                {"name": "bytes", "configuration": {"endian": "little"}},
+                # claimed by the zarr-extensions scope, with an unknown config key
+                {"name": "scale_offset", "configuration": {"bogus": 1}},
+            )
+        ),
+    }
+    # CORE does not claim scale_offset, so the field is unjudged and the spec valid
+    spec: AnyArraySpec = ArraySpec.model_validate(document, context=CORE)
+    assert spec.codecs[-1]["name"] == "scale_offset"  # type: ignore[index]
+    # the same scope travels under CONTEXT_KEY in a mapping context
+    assert ArraySpec.model_validate(document, context={CONTEXT_KEY: CORE}) == spec
+    # CORE_AND_EXTENSIONS claims it and refuses the configuration
+    with pytest.raises(ValidationError, match="scale_offset|bogus"):
+        ArraySpec.model_validate(document, context={CONTEXT_KEY: CORE_AND_EXTENSIONS})
+
+
+def test_metadata_document_validation_context_key_type_error() -> None:
+    """A validation context holding a non-scope under CONTEXT_KEY is a TypeError."""
+    from pydantic_zarr._metadata import CONTEXT_KEY
+
+    document = {"zarr_format": 3, "node_type": "array", **_v3_array_kwargs()}
+    with pytest.raises(TypeError, match=CONTEXT_KEY):
+        ArraySpec.model_validate(document, context={CONTEXT_KEY: "not a scope"})
+
+
+def _scale_offset_kwargs() -> dict[str, Any]:
+    """
+    Kwargs whose validity depends on the scope: the `scale_offset` codec is
+    claimed by the zarr-extensions scope, where its unknown configuration key
+    is refused; a scope that does not claim it (`CORE`) leaves it unjudged.
+    """
+    return _v3_array_kwargs(
+        codecs=(
+            {"name": "bytes", "configuration": {"endian": "little"}},
+            {"name": "scale_offset", "configuration": {"bogus": 1}},
+        )
+    )
+
+
+def test_zarr_scope_class_default() -> None:
+    """
+    A class-level `zarr_scope` is the scope validation reads in when the
+    validation context carries none, making the scope a property of the
+    model rather than of each call: it applies at direct construction,
+    sticks through derived operations (which re-validate as the class),
+    and reaches members validated as the class.
+    """
+    from collections.abc import Mapping
+
+    from zarr_metadata.v3.definition import CORE
+
+    class CoreArraySpec(ArraySpec):
+        zarr_scope = CORE
+
+    spec = CoreArraySpec(**_scale_offset_kwargs())
+    assert spec.codecs[-1]["name"] == "scale_offset"  # type: ignore[index]
+    # derived operations re-validate as the class, so the scope sticks
+    assert spec.update(attributes={"a": 1}).attributes == {"a": 1}
+    # from_shape_and_data_type validates in the class scope too
+    derived = CoreArraySpec.from_shape_and_data_type(
+        (4, 4), "float32", codecs=_scale_offset_kwargs()["codecs"]
+    )
+    assert derived.codecs[-1]["name"] == "scale_offset"  # type: ignore[index]
+    # a group's members are validated as their own classes, scope included
+    group = GroupSpec[Mapping[str, object], CoreArraySpec].model_validate(
+        {"attributes": {}, "members": {"x": _scale_offset_kwargs()}}
+    )
+    assert isinstance(group.members["x"], CoreArraySpec)  # type: ignore[index]
+
+
+def test_zarr_scope_context_overrides_classvar() -> None:
+    """An explicit validation context wins over the class's `zarr_scope`."""
+    from zarr_metadata.v3.definition import CORE, CORE_AND_EXTENSIONS
+
+    class CoreArraySpec(ArraySpec):
+        zarr_scope = CORE
+
+    document = {"zarr_format": 3, "node_type": "array", **_scale_offset_kwargs()}
+    with pytest.raises(ValidationError, match="scale_offset|bogus"):
+        CoreArraySpec.model_validate(document, context=CORE_AND_EXTENSIONS)
+
+
+def test_zarr_scope_absent_falls_back_to_default_scope() -> None:
+    """With no class scope and no context, the default scope judges claimed names."""
+    with pytest.raises(ValidationError, match="scale_offset|bogus"):
+        ArraySpec(**_scale_offset_kwargs())
+
+
+def test_zarr_scope_reaches_dtype_guard() -> None:
+    """
+    The ambiguous-numpy-spelling guard in data type parsing reads the class
+    scope: a scope claiming nothing leaves `"float32"` unclaimed, and numpy
+    reads it as a data type, so it is refused.
+    """
+    from zarr_metadata.v3.definition import ZarrV3Context
+
+    class EmptyScopeSpec(ArraySpec):
+        zarr_scope = ZarrV3Context()
+
+    with pytest.raises(ValidationError, match="names no data type in the scope"):
+        EmptyScopeSpec(**_v3_array_kwargs())
+
+
+class _StrictCoreArraySpec(ArraySpec):
+    """Accepts exactly the documents built from names the core scope claims."""
+
+    zarr_scope = CORE
+    zarr_scope_strict = True
+
+
+# a valid zstd codec: unclaimed by the core scope, claimed by the extensions
+_ZSTD_KWARGS = _v3_array_kwargs(
+    codecs=(
+        {"name": "bytes", "configuration": {"endian": "little"}},
+        {"name": "zstd", "configuration": {"level": 0, "checksum": False}},
+    )
+)
+
+
+def test_zarr_scope_strict_core_conformance() -> None:
+    """
+    `zarr_scope = CORE` plus `zarr_scope_strict` is a core-conformance
+    contract: a document of core names passes, through derived operations
+    (sharding, whose inner and index pipelines the strict check walks) too,
+    and an explicit validation context re-scopes the conformance check, so
+    the same class judges strictly against the context's scope instead.
+    """
+    from zarr_metadata.v3.definition import CORE_AND_EXTENSIONS
+
+    spec = _StrictCoreArraySpec(**_v3_array_kwargs())
+    sharded = spec.with_sharding_codec((2, 2))
+    assert sharded.codecs[0]["name"] == "sharding_indexed"  # type: ignore[index]
+    # zstd is claimed by the extensions scope, so under that context the
+    # strict check passes where the class's own scope refuses (test below)
+    document = {"zarr_format": 3, "node_type": "array", **_ZSTD_KWARGS}
+    accepted = _StrictCoreArraySpec.model_validate(document, context=CORE_AND_EXTENSIONS)
+    assert accepted.codecs[-1]["name"] == "zstd"  # type: ignore[index]
+
+
+def test_zarr_scope_strict_refuses_unclaimed_codec() -> None:
+    """A codec name the scope does not claim is refused instead of unjudged."""
+    with pytest.raises(ValidationError, match="'zstd' names no codec in the scope"):
+        _StrictCoreArraySpec(**_ZSTD_KWARGS)
+
+
+def test_zarr_scope_strict_refuses_unclaimed_data_type() -> None:
+    """
+    A data type name no scope claims — zarr-python 3.0's legacy `"str"`
+    spelling of the variable-length string — is refused by a strict class,
+    although the lenient path recognizes it.
+    """
+    with pytest.raises(ValidationError, match="'str' names no data type in the scope"):
+        _StrictCoreArraySpec(**_v3_array_kwargs(data_type="str", fill_value=""))
+
+
+def test_zarr_scope_strict_reaches_sharding_inner_codecs() -> None:
+    """An unclaimed codec hiding inside a sharding codec's inner pipeline is found."""
+    sharded = _StrictCoreArraySpec(**_v3_array_kwargs()).with_sharding_codec((2, 2))
+    document = sharded.model_dump()
+    config = dict(document["codecs"][0]["configuration"])
+    config["codecs"] = (
+        *config["codecs"],
+        {"name": "zstd", "configuration": {"level": 0, "checksum": False}},
+    )
+    document["codecs"] = ({"name": "sharding_indexed", "configuration": config},)
+    with pytest.raises(ValidationError, match=r"codecs\.0\.configuration\.codecs\.1\.name"):
+        _StrictCoreArraySpec.model_validate(document)
+
+
+def test_zarr_scope_strict_refuses_unclaimed_storage_transformer() -> None:
+    """A storage transformer name the scope does not claim is refused."""
+    with pytest.raises(ValidationError, match="names no storage transformer in the scope"):
+        _StrictCoreArraySpec(**_v3_array_kwargs(storage_transformers=({"name": "chunk-manifest"},)))
+
+
+def test_like_compares_documents_canonically() -> None:
+    """
+    With no include/exclude filters, `like` compares the metadata documents by
+    meaning: two spellings of one float32 NaN fill value are alike, and specs
+    that differ only in attributes are not.
+    """
+    a: AnyArraySpec = ArraySpec(**_v3_array_kwargs(fill_value="NaN"))
+    b: AnyArraySpec = ArraySpec(**_v3_array_kwargs(fill_value="0x7fc00000"))
+    assert a.like(b)
+    assert b.like(a)
+    # attributes still participate in the comparison
+    assert not a.like(ArraySpec(**_v3_array_kwargs(fill_value="NaN", attributes={"x": 1})))
+    # filtered comparisons keep the literal field semantics
+    assert not a.like(b, exclude={"attributes"})
+
+
+@pytest.mark.parametrize(
+    ("dtype", "expected"),
+    [
+        (np.dtype("bool"), "bool"),
+        (
+            np.dtype("datetime64[ns]"),
+            {"name": "numpy.datetime64", "configuration": {"unit": "ns", "scale_factor": 1}},
+        ),
+        (
+            np.dtype("timedelta64[s]"),
+            {"name": "numpy.timedelta64", "configuration": {"unit": "s", "scale_factor": 1}},
+        ),
+    ],
+    ids=str,
+)
+def test_parse_dtype_v3_named_configs(
+    dtype: np.dtype[Any], expected: str | dict[str, object]
+) -> None:
+    """The bool and numpy time dtypes map to their Zarr V3 forms."""
+    assert parse_dtype_v3(dtype) == expected
+
+
+def test_from_array_time_dtype() -> None:
+    """`from_array` handles numpy time dtypes, emitting the named-configuration form."""
+    spec: AnyArraySpec = ArraySpec.from_array(np.zeros((3,), dtype="datetime64[ns]"))
+    assert spec.data_type == {
+        "name": "numpy.datetime64",
+        "configuration": {"unit": "ns", "scale_factor": 1},
+    }
+    assert spec.fill_value == -(2**63)
+
+
+def test_from_array_bool_dtype() -> None:
+    """`from_array` handles bool arrays: previously auto_fill_value checked the dtype
+    char '?' where numpy reports kind 'b', so bool arrays always raised."""
+    spec: AnyArraySpec = ArraySpec.from_array(np.zeros((3,), dtype=bool))
+    assert spec.data_type == "bool"
+    assert spec.fill_value is False
+
+
+def test_group_member_names_accepted() -> None:
+    """GroupSpec accepts member names the Zarr V3 node-name rules allow."""
+    array: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
+    names = ("plain", "with.dots", "with spaces", "ünïcode", "_single_underscore", "0", "a..b")
+    group: AnyGroupSpec = GroupSpec(attributes={}, members=dict.fromkeys(names, array))
+    assert tuple(group.members or {}) == names
+
+
+@pytest.mark.parametrize(
+    "invalid_name",
+    ["", "a/b", ".", "..", "...", "__reserved"],
+    ids=repr,
+)
+def test_group_member_names_rejected(invalid_name: str) -> None:
+    """
+    GroupSpec rejects member names the Zarr V3 node-name rules refuse: the
+    empty string (it names the root node), names holding "/", names composed
+    of periods alone, and names starting with the reserved "__" prefix.
+    """
+    array: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
+    with pytest.raises(ValidationError, match="member name"):
+        GroupSpec(attributes={}, members={invalid_name: array})
+
+
 def test_typevar_defaults() -> None:
     """
     The generic type parameters carry defaults, so the bare class names are
@@ -536,11 +985,13 @@ def test_typevar_defaults() -> None:
     [
         ("attributes", {"new": True}),
         ("shape", (8, 8)),
-        ("data_type", "int16"),
+        # float64 keeps the base spec's "NaN" fill value valid for the new dtype
+        ("data_type", "float64"),
         ("chunk_grid", {"name": "regular", "configuration": {"chunk_shape": (4, 4)}}),
         ("chunk_key_encoding", {"name": "v2", "configuration": {"separator": "."}}),
         ("fill_value", "Infinity"),
-        ("codecs", ({"name": "bytes"},)),
+        # the endian configuration keeps the bytes codec valid for a multi-byte dtype
+        ("codecs", ({"name": "bytes", "configuration": {"endian": "big"}},)),
         ("storage_transformers", ()),
         ("dimension_names", ("y", "x")),
     ],
@@ -634,3 +1085,647 @@ def test_narrowing_helpers() -> None:
     assert is_base_group_spec(base)
     assert is_base_group_spec(group)
     assert not is_base_group_spec(array)
+
+
+def test_typed_members() -> None:
+    """
+    A subclass can declare its members as a closed `TypedDict` of specs, so
+    the shape of the hierarchy is enforced: member values are validated into
+    specs, an undeclared member name is refused, and a missing required
+    member is refused.
+    """
+    from typing_extensions import TypedDict
+
+    array: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
+
+    class Members(TypedDict, closed=True):
+        r10m: ArraySpec
+        r20m: ArraySpec
+
+    class Measurements(GroupSpec):
+        members: Members  # type: ignore[assignment]
+
+    group = Measurements(attributes={}, members={"r10m": array, "r20m": array.model_dump()})
+    assert isinstance(group.members["r20m"], ArraySpec)
+    with pytest.raises(ValidationError, match="extra"):
+        Measurements(attributes={}, members={"r10m": array, "r20m": array, "extra": array})
+    with pytest.raises(ValidationError, match="r20m"):
+        Measurements(attributes={}, members={"r10m": array})
+
+
+def test_member_name_validation_survives_narrowing() -> None:
+    """
+    Member names are validated by a model validator, so a subclass that
+    narrows the `members` annotation cannot drop the node-name rules.
+    """
+
+    class Narrowed(GroupSpec):
+        members: dict[str, ArraySpec]  # type: ignore[assignment]
+
+    array: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
+    with pytest.raises(ValidationError, match="member name"):
+        Narrowed(attributes={}, members={"__reserved": array})
+
+
+def test_group_like_canonical() -> None:
+    """
+    With no `include`/`exclude` filters, `GroupSpec.like` compares each member
+    by that member's own `like`, so member arrays whose metadata documents
+    differ only in spelling (a fill value written "NaN" against its
+    hexadecimal byte form) are alike, at any depth, exactly as they are when
+    compared directly. With filters, the comparison is the raw field
+    comparison, where the spellings differ.
+    """
+    a_nan: AnyArraySpec = ArraySpec(**_v3_array_kwargs(fill_value="NaN"))
+    a_hex: AnyArraySpec = ArraySpec(**_v3_array_kwargs(fill_value="0x7fc00000"))
+    assert a_nan.like(a_hex)
+    g_nan: AnyGroupSpec = GroupSpec(attributes={}, members={"x": a_nan})
+    g_hex: AnyGroupSpec = GroupSpec(attributes={}, members={"x": a_hex})
+    assert g_nan.like(g_hex)
+    assert g_hex.like(g_nan)
+    nested_nan: AnyGroupSpec = GroupSpec(attributes={}, members={"g": g_nan})
+    nested_hex: AnyGroupSpec = GroupSpec(attributes={}, members={"g": g_hex})
+    assert nested_nan.like(nested_hex)
+    assert g_nan.like(g_hex, include={"attributes"})
+    assert not g_nan.like(g_hex, include={"members"})
+
+
+@pytest.mark.parametrize(
+    "other_members",
+    [
+        {},
+        None,
+        {"y": ArraySpec(**_v3_array_kwargs())},
+        {"x": GroupSpec(attributes={})},
+        {"x": ArraySpec(**_v3_array_kwargs(shape=(8, 8)))},
+    ],
+    ids=["no_members", "none_members", "renamed_member", "kind_mismatch", "unalike_member"],
+)
+def test_group_like_canonical_unalike(other_members: dict[str, object] | None) -> None:
+    """
+    The canonical group comparison still distinguishes groups that differ in
+    substance: a missing, renamed or unalike member, members of different node
+    kinds, and unknown (`None`) against empty members are all not alike.
+    """
+    group: AnyGroupSpec = GroupSpec(attributes={}, members={"x": ArraySpec(**_v3_array_kwargs())})
+    other = GroupSpec.model_validate(
+        {"zarr_format": 3, "node_type": "group", "attributes": {}, "members": other_members}
+    )
+    assert not group.like(other)
+    assert not other.like(group)
+
+
+@pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr is required for this test")
+def test_from_array_zarr_array_fidelity() -> None:
+    """
+    `from_array` on a `zarr.Array` reads the array's whole stored metadata
+    document, so the chunk grid, chunk key encoding and attributes survive,
+    and an explicit (non-"auto") keyword argument overrides the stored value.
+    """
+    import zarr
+
+    arr = zarr.create_array(
+        store={},
+        shape=(64, 64),
+        dtype="float32",
+        chunks=(16, 16),
+        chunk_key_encoding={"name": "v2", "separator": "."},
+        zarr_format=3,
+    )
+    arr.attrs.put({"a": 1})
+    spec: AnyArraySpec = ArraySpec.from_array(arr)
+    assert spec == ArraySpec.from_zarr(arr)
+    assert spec.chunk_grid == {"name": "regular", "configuration": {"chunk_shape": (16, 16)}}
+    assert spec.chunk_key_encoding == {"name": "v2", "configuration": {"separator": "."}}
+    assert spec.attributes == {"a": 1}
+    overridden: AnyArraySpec = ArraySpec.from_array(arr, attributes={"b": 2}, fill_value=1.5)
+    assert overridden.attributes == {"b": 2}
+    assert overridden.fill_value == 1.5
+    assert overridden.chunk_grid == spec.chunk_grid
+
+
+@pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr is required for this test")
+def test_from_array_zarr_v2_array_rejected() -> None:
+    """A Zarr V2 `zarr.Array` is refused by the v3 `from_array`."""
+    import zarr
+
+    arr = zarr.create_array(store={}, shape=(4,), dtype="uint8", chunks=(2,), zarr_format=2)
+    with pytest.raises(ValueError, match="Only zarr v3 arrays"):
+        ArraySpec.from_array(arr)
+
+
+def test_attributes_default() -> None:
+    """
+    `attributes` defaults to the empty dict on every node class, and a stored
+    metadata document without the `attributes` key (which the Zarr V3 spec
+    makes optional) parses.
+    """
+    array_kwargs = _v3_array_kwargs()
+    array_kwargs.pop("attributes")
+    assert ArraySpec(**array_kwargs).attributes == {}
+    assert GroupSpec().attributes == {}
+    assert BaseGroupSpec().attributes == {}
+    assert GroupSpec.model_validate({"zarr_format": 3, "node_type": "group"}).attributes == {}
+    array_document = {"zarr_format": 3, "node_type": "array", **array_kwargs}
+    assert ArraySpec.model_validate(array_document).attributes == {}
+
+
+def test_attributes_default_narrowed_type_rejected() -> None:
+    """
+    The `attributes` default is validated, so a model whose attributes type
+    does not accept the empty dict refuses construction without attributes
+    instead of silently holding a value of the wrong type.
+    """
+
+    class RequiredAttrs(BaseModel):
+        required: int
+
+    with pytest.raises(ValidationError):
+        GroupSpec[RequiredAttrs]()
+
+
+def test_like_filters_keyword_only() -> None:
+    """`like` takes its `include`/`exclude` filters as keyword arguments only."""
+    group: AnyGroupSpec = GroupSpec()
+    with pytest.raises(TypeError):
+        group.like(group, {"attributes"})  # type: ignore[call-arg]
+
+
+def test_dimension_names_omitted_when_none() -> None:
+    """
+    `dimension_names` is omitted from serialization when it is `None` (the
+    Zarr V3 spec allows the key to be absent, not null), including for arrays
+    nested as members in a group's dump and in JSON serialization, while set
+    dimension names are kept at every depth.
+    """
+    unnamed: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
+    named: AnyArraySpec = ArraySpec(**_v3_array_kwargs(dimension_names=("x", "y")))
+    assert "dimension_names" not in unnamed.model_dump()
+    group: AnyGroupSpec = GroupSpec(members={"unnamed": unnamed, "named": named})
+    dump = group.model_dump()
+    assert "dimension_names" not in dump["members"]["unnamed"]
+    assert dump["members"]["named"]["dimension_names"] == ("x", "y")
+    json_dump = json.loads(group.model_dump_json())
+    assert "dimension_names" not in json_dump["members"]["unnamed"]
+    assert json_dump["members"]["named"]["dimension_names"] == ["x", "y"]
+
+
+@pytest.mark.parametrize(
+    ("data_type", "expected_fill", "expected_codecs"),
+    [
+        ("uint16", 0, ({"name": "bytes", "configuration": {"endian": "little"}},)),
+        ("float32", "NaN", ({"name": "bytes", "configuration": {"endian": "little"}},)),
+        ("bool", False, ({"name": "bytes"},)),
+        ("uint8", 0, ({"name": "bytes"},)),
+        (
+            {"name": "numpy.datetime64", "configuration": {"unit": "ns", "scale_factor": 1}},
+            -(2**63),
+            ({"name": "bytes", "configuration": {"endian": "little"}},),
+        ),
+    ],
+    ids=["uint16", "float32", "bool", "uint8", "datetime64"],
+)
+def test_from_shape_and_data_type(
+    data_type: str | dict[str, Any], expected_fill: object, expected_codecs: tuple[Any, ...]
+) -> None:
+    """
+    `from_shape_and_data_type` builds a valid `ArraySpec` from a shape and
+    data type alone: the chunk grid is guessed (one whole-array chunk for a
+    shape this small), the chunk key encoding defaults to the `/` encoding,
+    fill value and codecs are derived from the data type, and overrides pass
+    through into the same validation pass.
+    """
+    spec: AnyArraySpec = ArraySpec.from_shape_and_data_type(
+        (10, 12), data_type, dimension_names=("y", "x")
+    )
+    assert spec.shape == (10, 12)
+    assert spec.chunk_grid == {"name": "regular", "configuration": {"chunk_shape": (10, 12)}}
+    assert spec.chunk_key_encoding == {"name": "default", "configuration": {"separator": "/"}}
+    assert spec.fill_value == expected_fill
+    assert spec.codecs == expected_codecs
+    assert spec.dimension_names == ("y", "x")
+    chunked: AnyArraySpec = ArraySpec.from_shape_and_data_type(
+        (10, 12),
+        data_type,
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (5, 6)}},
+    )
+    assert chunked.chunk_grid == {"name": "regular", "configuration": {"chunk_shape": (5, 6)}}
+    explicit: AnyArraySpec = ArraySpec.from_shape_and_data_type((10, 12), "uint16", fill_value=7)
+    assert explicit.fill_value == 7
+
+
+def test_from_shape_and_data_type_underivable_rejected() -> None:
+    """
+    `from_shape_and_data_type` refuses to guess a fill value or codecs for a
+    data type with
+    no numpy equivalent, naming the arguments to pass explicitly.
+    """
+    with pytest.raises(ValueError, match="fill_value and codecs"):
+        ArraySpec.from_shape_and_data_type((2,), "some_extension_dtype")
+
+
+def test_bytes_codec_canonicalized_for_single_byte_dtypes() -> None:
+    """
+    For single-byte data types the `bytes` codec's no-op `endian`
+    configuration is dropped at validation, matching the spelling zarr-python
+    stores: specs constructed with either spelling are equal and alike, and
+    multi-byte data types keep their endianness.
+    """
+    endian_codecs = ({"name": "bytes", "configuration": {"endian": "little"}},)
+    for data_type in ("uint8", "int8", "bool"):
+        with_endian: AnyArraySpec = ArraySpec.from_shape_and_data_type(
+            (4,), data_type, codecs=endian_codecs
+        )
+        bare: AnyArraySpec = ArraySpec.from_shape_and_data_type((4,), data_type)
+        assert with_endian.codecs == ({"name": "bytes"},)
+        assert with_endian == bare
+        assert with_endian.like(bare)
+    assert (
+        ArraySpec.from_shape_and_data_type((4,), "uint16", codecs=endian_codecs).codecs
+        == endian_codecs
+    )
+
+
+def test_resolve_path() -> None:
+    """
+    `resolve_path` (and `group[path]`) returns the node at a `/`-separated
+    relative path, ignoring leading and trailing separators.
+    """
+    leaf: AnyArraySpec = ArraySpec.from_shape_and_data_type((4,), "uint8")
+    inner: AnyGroupSpec = GroupSpec(attributes={"level": 2}, members={"b": leaf})
+    root: AnyGroupSpec = GroupSpec(members={"a": inner, "arr": leaf})
+    assert root.resolve_path("arr") == leaf
+    assert root.resolve_path("a/b") == leaf
+    assert root["a"] == inner
+    assert root["/a/b/"] == leaf
+
+
+@pytest.mark.parametrize(
+    ("path", "exception", "match"),
+    [
+        ("a/zz", KeyError, "No member named 'zz' in a"),
+        ("arr/x", KeyError, "arr is not a group"),
+        pytest.param("", ValueError, "no member names", id="empty"),
+        ("a//b", ValueError, "empty member name"),
+    ],
+    ids=["missing_member", "through_array", "empty", "empty_segment"],
+)
+def test_resolve_path_invalid(path: str, exception: type[Exception], match: str) -> None:
+    """Failed resolution raises naming the failing segment, or rejects a malformed path."""
+    leaf: AnyArraySpec = ArraySpec.from_shape_and_data_type((4,), "uint8")
+    root: AnyGroupSpec = GroupSpec(members={"a": GroupSpec(members={"b": leaf}), "arr": leaf})
+    with pytest.raises(exception, match=match):
+        root.resolve_path(path)
+
+
+def test_resolve_path_unknown_members() -> None:
+    """Resolution through a group whose members are unknown raises `KeyError`."""
+    unknown: AnyGroupSpec = GroupSpec(members=None)
+    with pytest.raises(KeyError, match="unknown"):
+        unknown.resolve_path("x")
+
+
+def test_attributes_serialized_by_alias() -> None:
+    """
+    Dumping a spec serializes attribute models with their aliases, so stored
+    metadata keys that are not Python identifiers (`_FillValue`, `image-label`)
+    come out under the spec's spelling, and fields of an `AttributesBase`
+    model left at `MISSING` are omitted while assigned ones — an assigned
+    `None` included, where the annotation admits it — are kept.
+    """
+    from pydantic import Field
+
+    from pydantic_zarr.core import MISSING, AttributesBase
+
+    class CFAttrs(AttributesBase):
+        fill: float | MISSING = Field(default=MISSING, alias="_FillValue")
+        units: str | MISSING | None = MISSING
+
+    spec: AnyArraySpec = ArraySpec.from_shape_and_data_type(
+        (4,), "float32", attributes=CFAttrs(units="K", _FillValue=1.5)
+    )
+    assert spec.model_dump()["attributes"] == {"_FillValue": 1.5, "units": "K"}
+    unset: AnyArraySpec = ArraySpec.from_shape_and_data_type((4,), "float32", attributes=CFAttrs())
+    assert unset.model_dump()["attributes"] == {}
+    explicit: AnyArraySpec = ArraySpec.from_shape_and_data_type(
+        (4,), "float32", attributes=CFAttrs(units=None)
+    )
+    assert explicit.model_dump()["attributes"] == {"units": None}
+
+
+def test_from_shape_and_data_type_guessed_chunks() -> None:
+    """
+    With no `chunk_grid` override, `from_shape_and_data_type` guesses a chunk
+    shape from the array size the way zarr-python does, rather than defaulting
+    to one whole-array chunk: a large array gets chunks smaller than its shape, in a sane byte
+    range, while a small array keeps its whole shape.
+    """
+    big: AnyArraySpec = ArraySpec.from_shape_and_data_type((10980, 10980), "uint16")
+    chunk_shape = big.chunk_grid["configuration"]["chunk_shape"]
+    assert all(c <= s for c, s in zip(chunk_shape, big.shape, strict=True))
+    nbytes = 2 * chunk_shape[0] * chunk_shape[1]
+    assert 128 * 1024 <= nbytes <= 64 * 1024 * 1024
+    small: AnyArraySpec = ArraySpec.from_shape_and_data_type((10, 12), "uint16")
+    assert small.chunk_grid["configuration"]["chunk_shape"] == (10, 12)
+    # an extension data type has no knowable element size: whole-shape chunks
+    ext: AnyArraySpec = ArraySpec.from_shape_and_data_type(
+        (10980, 10980),
+        {"name": "example.ext"},
+        fill_value=0,
+        codecs=({"name": "example.serializer"},),
+    )
+    assert ext.chunk_grid["configuration"]["chunk_shape"] == (10980, 10980)
+
+
+def test_get_path() -> None:
+    """
+    `get_path` resolves like `resolve_path` but returns the default instead of
+    raising on an unresolvable path, while a malformed path still raises
+    `ValueError`; `resolve_path`'s missing-member error lists the member names.
+    """
+    leaf: AnyArraySpec = ArraySpec.from_shape_and_data_type((4,), "uint8")
+    root: AnyGroupSpec = GroupSpec(members={"a": GroupSpec(members={"b": leaf})})
+    assert root.get_path("a/b") == leaf
+    assert root.get_path("a/zz") is None
+    assert root.get_path("a/zz", default="sentinel") == "sentinel"
+    with pytest.raises(ValueError, match="empty member name"):
+        root.get_path("a//b")
+    with pytest.raises(KeyError, match="Members: 'b'"):
+        root.resolve_path("a/zz")
+
+
+def test_group_like_base_group_member_projection() -> None:
+    """
+    A `BaseGroupSpec` compares as the projection it is — by the group's own
+    metadata alone — at the top level and in member position alike, so the
+    comparison does not depend on depth. A `GroupSpec` with unknown members
+    (`members=None`) is a different state: it matches the same, or a
+    projection, never a group with known members.
+    """
+    g_full: AnyGroupSpec = GroupSpec(attributes={"a": 1}, members={})
+    g_base = BaseGroupSpec(attributes={"a": 1})
+    assert g_full.like(g_base)
+    outer_full: AnyGroupSpec = GroupSpec(members={"g": g_full})
+    outer_base: AnyGroupSpec = GroupSpec(members={"g": g_base})
+    members = outer_base.members
+    assert members is not None
+    assert isinstance(members["g"], BaseGroupSpec)
+    assert not isinstance(members["g"], GroupSpec)
+    assert outer_full.like(outer_base)
+    assert outer_base.like(outer_full)
+    # differing own metadata still distinguishes the projection
+    other_attrs: AnyGroupSpec = GroupSpec(members={"g": BaseGroupSpec(attributes={"a": 2})})
+    assert not outer_full.like(other_attrs)
+    # members=None matches members=None or a projection, never known members
+    outer_unknown: AnyGroupSpec = GroupSpec(
+        members={"g": GroupSpec(attributes={"a": 1}, members=None)}
+    )
+    assert not outer_full.like(outer_unknown)
+    assert outer_unknown.like(outer_unknown)
+    assert outer_unknown.like(outer_base)
+
+
+def test_bytes_codec_canonicalized_inside_sharding() -> None:
+    """
+    The single-byte `bytes` codec normalization reaches inside a sharding
+    codec's inner pipeline (same data type), while the index codecs, which
+    encode the uint64 index, keep their endianness.
+    """
+
+    def sharded(endian_config: bool) -> AnyArraySpec:
+        inner: tuple[CodecLike, ...] = (
+            {"name": "bytes", "configuration": {"endian": "little"}}
+            if endian_config
+            else {"name": "bytes"},
+        )
+        return ArraySpec.from_shape_and_data_type(
+            (8,),
+            "uint8",
+            chunk_grid={"name": "regular", "configuration": {"chunk_shape": (4,)}},
+            codecs=(
+                {
+                    "name": "sharding_indexed",
+                    "configuration": {
+                        "chunk_shape": (2,),
+                        "codecs": inner,
+                        "index_codecs": (
+                            {"name": "bytes", "configuration": {"endian": "little"}},
+                            {"name": "crc32c"},
+                        ),
+                        "index_location": "end",
+                    },
+                },
+            ),
+        )
+
+    with_endian = sharded(True)
+    bare = sharded(False)
+    assert with_endian == bare
+    assert with_endian.like(bare)
+    outer = with_endian.codecs[0]
+    assert isinstance(outer, dict)
+    config = outer["configuration"]
+    assert isinstance(config, dict)
+    assert config["codecs"] == ({"name": "bytes"},)
+    index_codecs = config["index_codecs"]
+    assert isinstance(index_codecs, tuple)
+    assert index_codecs[0] == {"name": "bytes", "configuration": {"endian": "little"}}
+
+
+def test_bare_codec_rejected() -> None:
+    """
+    A single codec where a pipeline is expected is refused with a clear
+    message, instead of being iterated into its keys or characters.
+    """
+    with pytest.raises(ValidationError, match="sequence of codecs"):
+        ArraySpec.from_shape_and_data_type(
+            (4,),
+            "uint16",
+            codecs={"name": "bytes"},  # type: ignore[typeddict-item]
+        )
+    with pytest.raises(ValidationError, match="sequence of codecs"):
+        ArraySpec.from_shape_and_data_type((4,), "uint16", codecs="bytes")
+
+
+def test_from_shape_and_data_type_numpy_style_name_suggestion() -> None:
+    """
+    A numpy-style data type string that is not a Zarr V3 name fails with a
+    message suggesting the V3 spelling.
+    """
+    with pytest.raises(ValueError, match="Zarr V3 form is 'int64'"):
+        ArraySpec.from_shape_and_data_type((4,), "i8")
+
+
+@pytest.mark.parametrize(
+    ("data_type", "expected_codecs"),
+    [
+        ("string", ({"name": "vlen-utf8"},)),
+        ("bytes", ({"name": "vlen-bytes"},)),
+        ("variable_length_bytes", ({"name": "vlen-bytes"},)),
+    ],
+    ids=str,
+)
+def test_from_shape_and_data_type_variable_length(
+    data_type: str, expected_codecs: tuple[Any, ...]
+) -> None:
+    """
+    The variable-length data types derive their defaults the way zarrs does:
+    an empty fill value and the matching variable-length codec, with chunks
+    guessed from a nominal element size.
+    """
+    spec: AnyArraySpec = ArraySpec.from_shape_and_data_type((4,), data_type)
+    assert spec.fill_value == ""
+    assert spec.codecs == expected_codecs
+    assert spec.chunk_grid == {"name": "regular", "configuration": {"chunk_shape": (4,)}}
+
+
+def test_empty_codec_configuration_canonicalized() -> None:
+    """
+    An empty codec `configuration` mapping is dropped at validation, matching
+    the spelling difference zarr-python writes, so specs constructed with
+    either spelling compare equal.
+    """
+    with_empty: AnyArraySpec = ArraySpec.from_shape_and_data_type(
+        (4,), "string", codecs=({"name": "vlen-utf8", "configuration": {}},)
+    )
+    bare: AnyArraySpec = ArraySpec.from_shape_and_data_type((4,), "string")
+    assert with_empty.codecs == ({"name": "vlen-utf8"},)
+    assert with_empty == bare
+
+    def sharded_uint16(empty_configs: bool) -> AnyArraySpec:
+        crc: CodecLike = (
+            {"name": "crc32c", "configuration": {}} if empty_configs else {"name": "crc32c"}
+        )
+        return ArraySpec.from_shape_and_data_type(
+            (8,),
+            "uint16",
+            chunk_grid={"name": "regular", "configuration": {"chunk_shape": (4,)}},
+            codecs=(
+                {
+                    "name": "sharding_indexed",
+                    "configuration": {
+                        "chunk_shape": (2,),
+                        "codecs": (
+                            {"name": "bytes", "configuration": {"endian": "little"}},
+                            crc,
+                        ),
+                        "index_codecs": (
+                            {"name": "bytes", "configuration": {"endian": "little"}},
+                            crc,
+                        ),
+                        "index_location": "end",
+                    },
+                },
+            ),
+        )
+
+    # the rule reaches the inner pipeline and the index codecs of a sharding
+    # codec, where endianness is kept (uint16 inner data; uint64 index)
+    assert sharded_uint16(True) == sharded_uint16(False)
+    outer = sharded_uint16(True).codecs[0]
+    assert isinstance(outer, dict)
+    config = outer["configuration"]
+    assert isinstance(config, dict)
+    inner_codecs = config["codecs"]
+    assert isinstance(inner_codecs, tuple)
+    assert inner_codecs[1] == {"name": "crc32c"}
+    assert config["index_codecs"] == (
+        {"name": "bytes", "configuration": {"endian": "little"}},
+        {"name": "crc32c"},
+    )
+
+
+@pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr is required for this test")
+@pytest.mark.filterwarnings("ignore:The data type")
+@pytest.mark.filterwarnings("ignore:The codec `vlen-utf8`:UserWarning")
+@pytest.mark.filterwarnings("ignore:The codec `vlen-bytes`:UserWarning")
+@pytest.mark.parametrize("data_type", ["string", "variable_length_bytes"])
+def test_variable_length_round_trip(data_type: str) -> None:
+    """
+    A derived variable-length spec round-trips a store with plain equality:
+    zarr-python writes the vlen codecs with an explicit empty configuration,
+    which canonicalization reconciles.
+    """
+    import zarr
+
+    if data_type == "variable_length_bytes" and ZARR_PYTHON_VERSION < Version("3.1.0"):
+        pytest.skip("zarr-python < 3.1 does not know the variable_length_bytes data type")
+    spec: AnyArraySpec = ArraySpec.from_shape_and_data_type((4,), data_type)
+    arr = spec.to_zarr(zarr.storage.MemoryStore(), path="x")
+    assert ArraySpec.from_zarr(arr) == spec
+
+
+def test_with_sharding_codec() -> None:
+    """
+    `with_sharding_codec` moves the existing codec pipeline inside shards:
+    the chunk shape becomes the shard shape, the subchunk shape is the inner
+    chunk shape, the index takes the default encoding at the requested
+    location, and a compatible second application nests the shards.
+    """
+    spec: AnyArraySpec = ArraySpec.from_shape_and_data_type(
+        (16, 16),
+        "uint16",
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (8, 8)}},
+    )
+    sharded = spec.with_sharding_codec((4, 4))
+    assert sharded.chunk_grid == spec.chunk_grid
+    outer = sharded.codecs[0]
+    assert isinstance(outer, dict)
+    config = outer["configuration"]
+    assert isinstance(config, dict)
+    assert outer["name"] == "sharding_indexed"
+    assert config["chunk_shape"] == (4, 4)
+    assert config["codecs"] == spec.codecs
+    assert config["index_location"] == "end"
+    started = spec.with_sharding_codec((4, 4), index_location="start")
+    started_outer = started.codecs[0]
+    assert isinstance(started_outer, dict)
+    started_config = started_outer["configuration"]
+    assert isinstance(started_config, dict)
+    assert started_config["index_location"] == "start"
+    nested = sharded.with_sharding_codec((4, 4))
+    nested_outer = nested.codecs[0]
+    assert isinstance(nested_outer, dict)
+    nested_config = nested_outer["configuration"]
+    assert isinstance(nested_config, dict)
+    nested_inner = nested_config["codecs"]
+    assert isinstance(nested_inner, tuple)
+    first_inner = nested_inner[0]
+    assert isinstance(first_inner, dict)
+    assert first_inner["name"] == "sharding_indexed"
+
+
+def test_with_sharding_codec_non_dividing_rejected() -> None:
+    """A subchunk shape that does not divide the chunk shape is refused."""
+    spec: AnyArraySpec = ArraySpec.from_shape_and_data_type(
+        (16, 16),
+        "uint16",
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (8, 8)}},
+    )
+    with pytest.raises(ValidationError, match="divide"):
+        spec.with_sharding_codec((3, 3))
+
+
+def test_with_sharding_codec_nested_non_dividing_rejected() -> None:
+    """Nesting shards whose existing inner chunks do not divide the new subchunks is refused."""
+    spec: AnyArraySpec = ArraySpec.from_shape_and_data_type(
+        (16, 16),
+        "uint16",
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (8, 8)}},
+    )
+    with pytest.raises(ValidationError, match="divide"):
+        spec.with_sharding_codec((4, 4)).with_sharding_codec((2, 2))
+
+
+@pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr is required for this test")
+def test_with_sharding_codec_round_trip() -> None:
+    """A sharded spec round-trips a store with plain equality."""
+    import zarr
+
+    sharded: AnyArraySpec = ArraySpec.from_shape_and_data_type(
+        (16, 16),
+        "uint16",
+        chunk_grid={"name": "regular", "configuration": {"chunk_shape": (8, 8)}},
+    ).with_sharding_codec((4, 4))
+    arr = sharded.to_zarr(zarr.storage.MemoryStore(), path="x")
+    assert ArraySpec.from_zarr(arr) == sharded

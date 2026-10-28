@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import sys
 from collections.abc import Mapping, Sequence
 from importlib.metadata import version
@@ -23,17 +22,20 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
-from pydantic import AfterValidator, BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, SerializeAsAny, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
 from typing_extensions import TypedDict, TypeIs, TypeVar
+from zarr_metadata import ZarrV2ArrayDimensionSeparator, ZarrV2ArrayOrder
 
 from pydantic_zarr.core import (
     IncEx,
     StrictBase,
     ensure_key_no_path,
+    guess_chunks,
     maybe_node,
     model_like,
     parse_dtype_v2,
+    resolve_member_path,
 )
 
 if TYPE_CHECKING:
@@ -42,15 +44,22 @@ if TYPE_CHECKING:
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
 
-type TBaseAttr = Mapping[str, object] | BaseModel
+# SerializeAsAny: see the note on the v3 TBaseAttr — a model held by a spec
+# with un-narrowed attributes must serialize with its own fields, not the
+# empty base schema.
+type TBaseAttr = Mapping[str, object] | SerializeAsAny[BaseModel]
 type TBaseItem = Union["GroupSpec", "ArraySpec", "BaseGroupSpec"]
 
+# Aliases for specs of any specialization; not redundant with the bare class
+# names — see the note on the v3 aliases (bare `ArraySpec` is the invariant
+# `ArraySpec[TBaseAttr]`, which mypy refuses narrowed specs for).
 type AnyArraySpec = "ArraySpec[Any]"
 type AnyGroupSpec = "GroupSpec[Any, Any]"
 type AnyBaseGroupSpec = "BaseGroupSpec[Any]"
 
 TAttr = TypeVar("TAttr", bound=TBaseAttr, default=TBaseAttr)
 TItem = TypeVar("TItem", bound=TBaseItem, default=TBaseItem)
+TDefault = TypeVar("TDefault")
 
 DtypeStr = Annotated[str, BeforeValidator(parse_dtype_v2)]
 
@@ -65,8 +74,8 @@ FillValue = (
     BoolFillValue | IntFillValue | FloatFillValue | ComplexFillValue | RawFillValue | str | None
 )
 
-DimensionSeparator = Literal[".", "/"]
-MemoryOrder = Literal["C", "F"]
+DimensionSeparator = ZarrV2ArrayDimensionSeparator
+MemoryOrder = ZarrV2ArrayOrder
 
 
 def dictify_codec(value: dict[str, Any] | Codec) -> dict[str, Any]:
@@ -170,8 +179,12 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
     Attributes
     ----------
-    attributes: TAttr
-        User-defined metadata associated with this array. Should be JSON-serializable.
+    attributes: TAttr, default = {}
+        User-defined metadata associated with this array. Should be
+        JSON-serializable. The default is the empty dict, matching a stored
+        array with no attributes document; the default is validated against
+        `TAttr`, so a model whose attributes type does not accept the empty
+        dict still requires them.
     shape: tuple[int, ...]
         The shape of this array.
     dtype: str
@@ -195,7 +208,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         The default is "/".
     """
 
-    attributes: TAttr
+    attributes: TAttr = Field(default={}, validate_default=True)
     shape: tuple[int, ...]
     chunks: tuple[int, ...]
     dtype: DtypeStr | list[tuple[Any, ...]]
@@ -520,20 +533,21 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
 
     Attributes
     ----------
-    attributes: TAttr
-        The user-defined attributes of this group.
+    attributes: TAttr, default = {}
+        The user-defined attributes of this group. The default is the empty
+        dict, matching a stored group with no attributes document; the default
+        is validated against `TAttr`, so a model whose attributes type does
+        not accept the empty dict still requires them.
     """
 
-    attributes: TAttr
+    attributes: TAttr = Field(default={}, validate_default=True)
 
     def update(self, **changes: Unpack[BaseGroupSpecUpdate]) -> Self:
         """
         Return a revalidated copy of this model with `changes` applied.
 
-        All changes land in one validation pass, so correlated fields (for an
-        array, a new `data_type` with a matching `fill_value`, or a new
-        `shape` with a matching `chunk_grid`) change together atomically.
-        Unlike `model_copy(update=...)`, the result is validated.
+        Unlike `model_copy(update=...)`, the result is validated, so an
+        invalid change is refused.
         """
         return type(self).model_validate({**self.model_dump(), **changes})
 
@@ -575,6 +589,7 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
     def like(
         self,
         other: AnyBaseGroupSpec | AnyGroupSpec | zarr.Group,
+        *,
         include: IncEx = None,
         exclude: IncEx = None,
     ) -> bool:
@@ -613,19 +628,68 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         are either `ArraySpec` or `GroupSpec`.
     """
 
-    members: Annotated[Mapping[str, TItem] | None, AfterValidator(ensure_key_no_path)] = {}
+    members: Mapping[str, TItem] | None = {}
+
+    @model_validator(mode="after")
+    def validate_member_names(self) -> Self:
+        """
+        Validate member names (no ``"/"``, not empty, not ``"."``/``".."``).
+
+        This runs as a model validator rather than field metadata so that a
+        subclass narrowing the `members` annotation (for example to a closed
+        `TypedDict` of members) cannot drop it.
+        """
+        ensure_key_no_path(self.members)
+        return self
 
     @override
     def update(self, **changes: Unpack[GroupSpecUpdate]) -> Self:  # type: ignore[override]
         """
         Return a revalidated copy of this model with `changes` applied.
 
-        All changes land in one validation pass, so correlated fields (for an
-        array, a new `data_type` with a matching `fill_value`, or a new
-        `shape` with a matching `chunk_grid`) change together atomically.
-        Unlike `model_copy(update=...)`, the result is validated.
+        All changes land in one validation pass, so `attributes` and `members`
+        change together atomically. Unlike `model_copy(update=...)`, the
+        result is validated.
         """
         return type(self).model_validate({**self.model_dump(), **changes})
+
+    def resolve_path(self, path: str) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec:
+        """
+        Return the node at a `/`-separated path of member names relative to
+        this group (`"a"`, `"a/b/c"`; leading and trailing `/` are ignored).
+        Metadata conventions that reference nodes by relative path resolve
+        with this method.
+
+        Raises
+        ------
+        ValueError
+            If the path holds no member names, or an empty one (`"a//b"`).
+        KeyError
+            Naming the segment that failed: a member name that does not
+            exist, a segment that descends into a node that is not a group,
+            or a group whose members are unknown (`members=None`).
+        """
+        node = resolve_member_path(self, path)
+        return cast("AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec", node)
+
+    def __getitem__(self, path: str) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec:
+        """`group[path]` resolves a member path: see `resolve_path`."""
+        return self.resolve_path(path)
+
+    def get_path(
+        self, path: str, default: TDefault | None = None
+    ) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec | TDefault | None:
+        """
+        `resolve_path` that returns `default` instead of raising when the path
+        does not resolve (a missing member, a non-group on the way, or unknown
+        members); a malformed path still raises `ValueError`. This non-raising
+        form suits pydantic validators, which turn `ValueError` into a
+        validation error but let `KeyError` escape.
+        """
+        try:
+            return self.resolve_path(path)
+        except KeyError:
+            return default
 
     @classmethod
     @override
@@ -768,17 +832,20 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
     def like(
         self,
         other: AnyBaseGroupSpec | AnyGroupSpec | zarr.Group,
+        *,
         include: IncEx = None,
         exclude: IncEx = None,
     ) -> bool:
         """
-        Compare a `GroupSpec` to another `GroupSpec` or a `zarr.Group`, parameterized over the
-        fields to exclude or include in the comparison. Models are first converted to dict via the
-        `model_dump` method of `pydantic.BaseModel`, then compared with the `==` operator.
+        Compare a `GroupSpec` to another `GroupSpec`, `BaseGroupSpec` or `zarr.Group`,
+        parameterized over the fields to exclude or include in the comparison. Models are first
+        converted to dict via the `model_dump` method of `pydantic.BaseModel`, then compared with
+        the `==` operator. A `BaseGroupSpec` — a group considered without members — compares as
+        that projection: by the group's own metadata alone, whatever this side's members hold.
 
         Parameters
         ----------
-        other : GroupSpec | zarr.Group
+        other : GroupSpec | BaseGroupSpec | zarr.Group
             The group (model or actual) to compare with. If other is a `zarr.Group`, it will be
             converted to a `GroupSpec`.
         include : IncEx, default = None
@@ -819,8 +886,11 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         """
 
         if isinstance(other, BaseGroupSpec) and not isinstance(other, GroupSpec):
-            # a group without members compares by the group's own metadata
-            return super().like(other, include=include, exclude=exclude)
+            # a group without members compares by the group's own metadata;
+            # this side projects to its own metadata too, or the comparison
+            # would always fail on the members field itself
+            projection = BaseGroupSpec(attributes=self.attributes)
+            return projection.like(other, include=include, exclude=exclude)
         other_parsed: GroupSpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
             other_parsed = GroupSpec.from_zarr(other)
@@ -1185,7 +1255,7 @@ def auto_chunks(data: Any) -> tuple[int, ...]:
         return data.chunksize
     if hasattr(data, "chunks"):
         return data.chunks
-    return _guess_chunks(data.shape, np.dtype(data.dtype).itemsize)
+    return guess_chunks(data.shape, np.dtype(data.dtype).itemsize)
 
 
 def auto_attributes(data: Any) -> Mapping[str, Any]:
@@ -1251,58 +1321,6 @@ def auto_dimension_separator(data: Any) -> DimensionSeparator:
         else:
             raise ValueError(f"Dimension separator attribute not in {get_args(DimensionSeparator)}")
     return "/"
-
-
-def _guess_chunks(shape: tuple[int, ...], typesize: int) -> tuple[int, ...]:
-    """
-    Vendored from zarr-python v2.
-
-    Guess an appropriate chunk layout for an array, given its shape and
-    the size of each element in bytes.  Will allocate chunks only as large
-    as MAX_SIZE.  Chunks are generally close to some power-of-2 fraction of
-    each axis, slightly favoring bigger values for the last index.
-    Undocumented and subject to change without warning.
-    """
-
-    CHUNK_BASE = 256 * 1024  # Multiplier by which chunks are adjusted
-    CHUNK_MIN = 128 * 1024  # Soft lower limit (128k)
-    CHUNK_MAX = 64 * 1024 * 1024  # Hard upper limit
-
-    ndims = len(shape)
-    # require chunks to have non-zero length for all dimensions
-    chunks = np.maximum(np.array(shape, dtype="=f8"), 1)
-
-    # Determine the optimal chunk size in bytes using a PyTables expression.
-    # This is kept as a float.
-    dset_size = np.prod(chunks) * typesize
-    target_size = CHUNK_BASE * (2 ** np.log10(dset_size / (1024.0 * 1024)))
-
-    if target_size > CHUNK_MAX:
-        target_size = CHUNK_MAX
-    elif target_size < CHUNK_MIN:
-        target_size = CHUNK_MIN
-
-    idx = 0
-    while True:
-        # Repeatedly loop over the axes, dividing them by 2.  Stop when:
-        # 1a. We're smaller than the target chunk size, OR
-        # 1b. We're within 50% of the target chunk size, AND
-        # 2. The chunk is smaller than the maximum chunk size
-
-        chunk_bytes = np.prod(chunks) * typesize
-
-        if (
-            chunk_bytes < target_size or abs(chunk_bytes - target_size) / target_size < 0.5
-        ) and chunk_bytes < CHUNK_MAX:
-            break
-
-        if np.prod(chunks) == 1:
-            break  # Element size larger than CHUNK_MAX
-
-        chunks[idx % ndims] = math.ceil(chunks[idx % ndims] / 2.0)
-        idx += 1
-
-    return tuple(int(x) for x in chunks)
 
 
 def is_array_spec(node: object) -> TypeIs[AnyArraySpec]:

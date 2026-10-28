@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from importlib.metadata import version
+from types import SimpleNamespace
 from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
+    ClassVar,
     Generic,
     Literal,
     NotRequired,
@@ -22,60 +25,96 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
-from pydantic import AfterValidator, BaseModel, BeforeValidator, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    Field,
+    SerializeAsAny,
+    SerializerFunctionWrapHandler,
+    ValidationInfo,
+    model_serializer,
+    model_validator,
+)
 from typing_extensions import TypedDict, TypeIs, TypeVar
+from zarr_metadata import (
+    DefaultChunkKeyEncodingMetadata,
+    JSONValue,
+    MetadataValidationError,
+    RegularChunkGridMetadata,
+    V2ChunkKeyEncodingMetadata,
+)
+from zarr_metadata.model import ZarrV3ArrayMetadata as ZarrV3ArrayMetadataModel
+from zarr_metadata.model import validate_node_name_v3
+from zarr_metadata.v3.chunk_grid.regular import RegularChunkGridConfiguration
+from zarr_metadata.v3.chunk_key_encoding.default import (
+    DefaultChunkKeyEncodingConfiguration,
+    DefaultChunkKeyEncodingObject,
+)
+from zarr_metadata.v3.chunk_key_encoding.v2 import (
+    V2ChunkKeyEncodingConfiguration,
+    V2ChunkKeyEncodingObject,
+)
+from zarr_metadata.v3.definition import (
+    CORE_AND_EXTENSIONS,
+    ChunkGridDefinition,
+    ChunkKeyEncodingDefinition,
+    CodecDefinition,
+    DataTypeDefinition,
+    StorageTransformerDefinition,
+)
 
+from pydantic_zarr._metadata import CONTEXT_KEY as CONTEXT_KEY
+from pydantic_zarr._metadata import format_problems, scope_from_context
 from pydantic_zarr.core import (
     IncEx,
     StrictBase,
-    ensure_key_no_path,
     ensure_multiple,
+    guess_chunks,
     maybe_node,
     model_like,
+    resolve_member_path,
     tuplify_json,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     import numpy.typing as npt
     import zarr
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
+    from zarr_metadata.v3.definition import ZarrV3Context
 
 
-type TBaseAttr = Mapping[str, object] | BaseModel
+# The BaseModel arm is SerializeAsAny so that an attribute model held by a
+# spec whose attributes type is not narrowed (a bare ArraySpec / GroupSpec)
+# serializes with the model's own fields; annotated as plain BaseModel it
+# would serialize through the base schema, silently dumping {}.
+type TBaseAttr = Mapping[str, object] | SerializeAsAny[BaseModel]
 type TBaseItem = Union["GroupSpec", "ArraySpec", "BaseGroupSpec"]
 
-# Convenience aliases for ArraySpecs and GroupSpecs with unknown type parameters.
-# The type variables carry defaults (PEP 696), so the bare class names mean the
-# same thing; these aliases predate the defaults and are kept for compatibility.
+# Aliases for specs of any specialization. NOT redundant with the bare class
+# names: through its PEP 696 default, bare `ArraySpec` means the *invariant*
+# `ArraySpec[TBaseAttr]`, which strict checkers (mypy) refuse to accept a
+# narrowed spec such as `ArraySpec[CFAttrs]` for. APIs that pass heterogeneous
+# trees through (`resolve_path`, `from_flat`, `like`, `is_array_spec`) must be
+# spelled with these.
 type AnyArraySpec = "ArraySpec[Any]"
 type AnyGroupSpec = "GroupSpec[Any, Any]"
 type AnyBaseGroupSpec = "BaseGroupSpec[Any]"
 
 TAttr = TypeVar("TAttr", bound=TBaseAttr, default=TBaseAttr)
 TItem = TypeVar("TItem", bound=TBaseItem, default=TBaseItem)
+TDefault = TypeVar("TDefault")
 
 NodeType = Literal["group", "array"]
 
-BoolFillValue = bool
-IntFillValue = int
-# todo: introduce a type that represents hexadecimal representations of floats
-FloatFillValue = Literal["Infinity", "-Infinity", "NaN"] | float
-ComplexFillValue = tuple[FloatFillValue, FloatFillValue]
-RawFillValue = tuple[int, ...]
-StructFillValue = Mapping[str, object]
-
-FillValue = (
-    BoolFillValue
-    | IntFillValue
-    | FloatFillValue
-    | ComplexFillValue
-    | RawFillValue
-    | str
-    | StructFillValue
-)
+FillValue = JSONValue
+"""
+The JSON form of a fill value. Which values are valid depends on the array's
+data type, and is judged by that data type's definition when the whole
+metadata document is validated; at the field level any JSON value is a
+fill value. `zarr-metadata` exports per-data-type fill value types
+(``Float32FillValue`` and so on) for callers that want the narrow forms.
+"""
 
 TName = TypeVar("TName", bound=str, default=str)
 TConfig = TypeVar("TConfig", bound=Mapping[str, object], default=Mapping[str, object])
@@ -103,32 +142,27 @@ class AnyNamedConfig(NamedConfig[str, Mapping[str, object]]):
     """
     This class models any Zarr metadata object that takes the form of a
     {"name": ..., "configuration": ...} dict, where the "configuration" key is not required.
+
+    `zarr_metadata.ZarrV3NamedConfigJSON` is this shape's canonical type; this
+    local equivalent exists because that one marks its members `ReadOnly`,
+    which pydantic answers with an advisory warning at every schema build
+    (each parametrization or subclassing of a model would warn).
     """
 
 
 CodecLike = str | AnyNamedConfig
-"""A type modelling the permissible declarations for codecs"""
+"""A codec declaration: an extension name, or a named configuration object."""
 
-
-class RegularChunkingConfig(TypedDict):
-    chunk_shape: tuple[int, ...]
-
-
-RegularChunking = NamedConfig[Literal["regular"], RegularChunkingConfig]
-
-
-class DefaultChunkKeyEncodingConfig(TypedDict):
-    separator: Literal[".", "/"]
-
-
-DefaultChunkKeyEncoding = NamedConfig[Literal["default"], DefaultChunkKeyEncodingConfig]
-
-
-class V2ChunkKeyEncodingConfig(TypedDict):
-    separator: Literal[".", "/"]
-
-
-V2ChunkKeyEncoding = NamedConfig[Literal["v2"], V2ChunkKeyEncodingConfig]
+# The structured Zarr V3 metadata types are defined once, by `zarr-metadata`;
+# the names this module exported before it delegated to that library are kept
+# as aliases. The aliased TypedDicts are *closed*: a member their definition
+# does not declare is rejected rather than silently dropped.
+RegularChunkingConfig = RegularChunkGridConfiguration
+RegularChunking = RegularChunkGridMetadata
+DefaultChunkKeyEncodingConfig = DefaultChunkKeyEncodingConfiguration
+DefaultChunkKeyEncoding = DefaultChunkKeyEncodingObject
+V2ChunkKeyEncodingConfig = V2ChunkKeyEncodingConfiguration
+V2ChunkKeyEncoding = V2ChunkKeyEncodingObject
 
 
 class NodeSpec(StrictBase):
@@ -140,19 +174,121 @@ class NodeSpec(StrictBase):
 
     zarr_format: Literal[3]
         The Zarr version represented by this node. Must be 3.
+    zarr_scope: ClassVar[ZarrV3Context | None]
+        The scope this class validates metadata in when the validation
+        context carries none, making the scope a property of the model
+        rather than of each ``model_validate`` call: a subclass that sets
+        it keeps its scope through direct construction and every derived
+        operation (``update``, ``from_shape_and_data_type``, ``like``, ...),
+        which re-validate as the class. An explicit validation context
+        still wins, and ``None`` (the default) means ``zarr-metadata``'s
+        ``CORE_AND_EXTENSIONS``. A group's members are validated as their
+        own classes, so a scoped tree narrows its member types to
+        scope-bearing classes (an explicit context, which pydantic carries
+        into nested validation, reaches the members either way).
+    zarr_scope_strict: ClassVar[bool]
+        When true, validation additionally refuses every extension-point
+        name — data type, chunk grid, chunk key encoding, codec (a sharding
+        codec's inner and index pipelines included) and storage transformer
+        — that nothing in the operative scope claims, where the default is
+        to leave such names unjudged. Together with `zarr_scope` this makes
+        a class a conformance contract: ``zarr_scope = CORE`` plus strict
+        accepts exactly the documents built from names the core spec
+        defines. The variable-length data types and their codecs are
+        extensions (and zarr-python's legacy spellings are claimed by no
+        scope), so a strict core class refuses them. Enforced by
+        `ArraySpec`'s document validation; a group document has no
+        extension points, and its members are validated as their own
+        classes.
     """
 
     zarr_format: Literal[3] = 3
+    zarr_scope: ClassVar[ZarrV3Context | None] = None
+    zarr_scope_strict: ClassVar[bool] = False
+
+    @classmethod
+    def _scope(cls, context: object) -> ZarrV3Context | None:
+        """
+        The scope a validation of this class reads metadata in: the validation
+        context's scope when it carries one, else this class's `zarr_scope`.
+        `None` means the readers' default (``CORE_AND_EXTENSIONS``).
+        """
+        scope = scope_from_context(context)
+        return cls.zarr_scope if scope is None else scope
 
 
-def parse_dtype_v3(dtype: npt.DTypeLike | Mapping[str, object]) -> Mapping[str, object] | str:
+def parse_dtype_v3(
+    dtype: npt.DTypeLike | Mapping[str, object],
+    *,
+    scope: ZarrV3Context | None = None,
+) -> Mapping[str, object] | str:
     """
-    Todo: refactor this when the zarr python dtypes work is released
+    Convert a numpy data type declaration to its Zarr V3 metadata form.
+
+    Only numpy data types are parsed: a numpy data type maps to its Zarr V3
+    name, or, for ``datetime64`` / ``timedelta64``, to the named configuration
+    object the Zarr V3 form of those data types requires. A declaration
+    already in Zarr V3 form — a data type name or a named configuration
+    mapping — needs no parsing and passes through unchanged: like every other
+    field, it is judged against the definitions in `scope` (``zarr-metadata``'s
+    ``CORE_AND_EXTENSIONS`` when `scope` is `None`) when the whole metadata
+    document is validated. One guard runs here instead of there: a string
+    that names no data type in the scope but that numpy reads as a data type
+    (``"i8"``, ``"float"``, ``">f4"``) is ambiguous — far more likely a numpy
+    spelling than an unknown extension — and is refused, with the Zarr V3
+    spelling suggested when one exists. The spellings zarr-python has stored
+    for the variable-length data types (``"str"``, ``"variable_length_bytes"``)
+    are recognized although no scope claims them, so documents zarr-python
+    wrote pass through.
     """
-    if isinstance(dtype, str | Mapping):
+    if isinstance(dtype, Mapping):
         return dtype
+    if isinstance(dtype, str):
+        if dtype in _VARIABLE_LENGTH_DATA_TYPES:
+            return dtype
+        scope_actual = CORE_AND_EXTENSIONS if scope is None else scope
+        if scope_actual.claimant(DataTypeDefinition, dtype) is not None:
+            return dtype
+        try:
+            as_numpy = np.dtype(dtype)
+        except TypeError:
+            # not a numpy spelling either: an unknown extension data type
+            # name, passed through for document validation to judge in scope
+            return dtype
+        try:
+            suggestion = parse_dtype_v3(as_numpy)
+        except ValueError:
+            msg = (
+                f"Data type {dtype!r} names no data type in the scope, and numpy reads it "
+                f"as {as_numpy!r}, which has no Zarr V3 form: pass a data type the scope "
+                "defines."
+            )
+            raise ValueError(msg) from None
+        msg = (
+            f"Data type {dtype!r} names no data type in the scope, but numpy reads it as "
+            f"{as_numpy!r}, whose Zarr V3 form is {suggestion!r}: pass that instead if it "
+            "is what you meant."
+        )
+        raise ValueError(msg)
+    try:
+        parsed = np.dtype(dtype)
+    except TypeError as e:
+        # raise ValueError so pydantic reports this as a validation error
+        # instead of letting numpy's TypeError escape the validator
+        raise ValueError(f"Unsupported dtype: {dtype!r}") from e
+    if parsed.kind in ("M", "m"):
+        # numpy time dtypes take the named-configuration form in Zarr V3. These are
+        # handled outside the match statement because numpy's stubs reject the
+        # DateTime64DType / TimeDelta64DType classes in class patterns.
+        unit, scale_factor = np.datetime_data(
+            cast("np.dtype[np.datetime64 | np.timedelta64]", parsed)
+        )
+        name = "numpy.datetime64" if parsed.kind == "M" else "numpy.timedelta64"
+        return {"name": name, "configuration": {"unit": unit, "scale_factor": scale_factor}}
     else:
-        match np.dtype(dtype):
+        match parsed:
+            case np.dtypes.BoolDType():
+                return "bool"
             case np.dtypes.Int8DType():
                 return "int8"
             case np.dtypes.Int16DType():
@@ -183,23 +319,183 @@ def parse_dtype_v3(dtype: npt.DTypeLike | Mapping[str, object]) -> Mapping[str, 
                 raise ValueError(f"Unsupported dtype: {dtype}")
 
 
-DTypeStr = Annotated[str, BeforeValidator(parse_dtype_v3)]
-DTypeLike = DTypeStr | AnyNamedConfig
-CodecTuple = Annotated[tuple[CodecLike, ...], BeforeValidator(ensure_multiple)]
+def canonicalize_fill_value(fill_value: object) -> object:
+    """
+    Normalize a fill value to the form the Zarr V3 spec writes in JSON.
+
+    Numpy scalars become the equivalent Python scalars, and non-finite floats
+    become the string forms the spec requires (``"NaN"``, ``"Infinity"``,
+    ``"-Infinity"``), since a metadata document holds only finite JSON numbers.
+    Sequences (complex pairs, raw byte values) are normalized element-wise.
+    Everything else passes through unchanged.
+    """
+    if isinstance(fill_value, np.generic):
+        fill_value = fill_value.item()
+    if isinstance(fill_value, float) and not math.isfinite(fill_value):
+        if math.isnan(fill_value):
+            return "NaN"
+        return "Infinity" if fill_value > 0 else "-Infinity"
+    if isinstance(fill_value, (tuple, list)):
+        return tuple(canonicalize_fill_value(item) for item in fill_value)
+    return fill_value
 
 
-class ArraySpecUpdate(TypedDict, total=False):
-    """The fields an `ArraySpec.update` call may replace."""
+def _numpy_dtype_from_v3(data_type: str | Mapping[str, object]) -> np.dtype[Any] | None:
+    """
+    Best-effort inverse of `parse_dtype_v3`: the numpy data type equivalent to
+    a Zarr V3 data type declaration, or `None` when there is none (an unknown
+    extension data type).
+    """
+    if isinstance(data_type, str):
+        try:
+            candidate = np.dtype(data_type)
+        except TypeError:
+            return None
+        try:
+            # only names whose numpy reading maps back to the same Zarr V3
+            # name are equivalents; np.dtype accepts spellings (the V3
+            # variable-length "bytes", say) that mean something else entirely
+            if parse_dtype_v3(candidate) != data_type:
+                return None
+        except ValueError:
+            return None
+        return candidate
+    name = data_type.get("name")
+    config = data_type.get("configuration")
+    if name in ("numpy.datetime64", "numpy.timedelta64") and isinstance(config, Mapping):
+        unit = config.get("unit")
+        scale = config.get("scale_factor", 1)
+        code = "M8" if name == "numpy.datetime64" else "m8"
+        try:
+            return np.dtype(f"{code}[{unit}]" if scale == 1 else f"{code}[{scale}{unit}]")
+        except TypeError:
+            return None
+    return None
+
+
+_SINGLE_BYTE_DATA_TYPES = ("bool", "int8", "uint8")
+
+# Derived defaults for the variable-length data types, which have no numpy
+# equivalent: fill value and codec pipeline, zarrs-style. zarr-python spells
+# the variable-length bytes data type "variable_length_bytes" (its V3
+# specification is still pending); "bytes" is the name zarrs and the
+# zarr-extensions drafts use. Both derive the same defaults. "str" is the
+# spelling zarr-python 3.0 stored for the variable-length string data type
+# (renamed "string" in 3.1), so documents it wrote still hold it; membership
+# here also exempts a name from the ambiguous-numpy-spelling guard in
+# `parse_dtype_v3` (numpy reads "str" as a zero-length unicode type).
+_VARIABLE_LENGTH_DATA_TYPES: Mapping[str, tuple[str, tuple[CodecLike, ...]]] = {
+    "string": ("", ({"name": "vlen-utf8"},)),
+    "str": ("", ({"name": "vlen-utf8"},)),
+    "bytes": ("", ({"name": "vlen-bytes"},)),
+    "variable_length_bytes": ("", ({"name": "vlen-bytes"},)),
+}
+# chunk guessing needs an element size; variable-length elements have none,
+# so use the size of a pointer, as numpy object arrays do
+_VARIABLE_LENGTH_NOMINAL_ITEM_SIZE = 8
+
+
+DTypeLike = str | AnyNamedConfig
+"""
+A data type declaration in Zarr V3 form (name or named configuration).
+`ArraySpec` accepts numpy data types as input and converts them with
+`parse_dtype_v3` in a model validator, so the scope the conversion reads
+in can come from the class's `zarr_scope` as well as the validation context.
+"""
+
+
+def _unclaimed_extension_point_names(
+    document: Mapping[str, object], scope: ZarrV3Context
+) -> list[str]:
+    """
+    The extension-point names in a dumped array metadata document that nothing
+    in `scope` claims, each as a ``<loc>: <message>`` line. These are the
+    names document validation leaves unjudged; a strict class refuses them
+    instead. Codec pipelines are walked through a sharding codec's inner and
+    index pipelines.
+    """
+    problems: list[str] = []
+
+    def check(kind: type[Any], label: str, name: object, loc: str) -> None:
+        if isinstance(name, str) and scope.claimant(kind, name) is None:
+            problems.append(f"{loc}: {name!r} names no {label} in the scope")
+
+    def walk_codecs(codecs: object, loc: str) -> None:
+        if isinstance(codecs, str) or not isinstance(codecs, Sequence):
+            return
+        for index, codec in enumerate(codecs):
+            if not isinstance(codec, Mapping):
+                continue
+            here = f"{loc}.{index}"
+            check(CodecDefinition, "codec", codec.get("name"), f"{here}.name")
+            config = codec.get("configuration")
+            if codec.get("name") == "sharding_indexed" and isinstance(config, Mapping):
+                walk_codecs(config.get("codecs"), f"{here}.configuration.codecs")
+                walk_codecs(config.get("index_codecs"), f"{here}.configuration.index_codecs")
+
+    data_type = document.get("data_type")
+    if isinstance(data_type, Mapping):
+        check(DataTypeDefinition, "data type", data_type.get("name"), "data_type.name")
+    else:
+        check(DataTypeDefinition, "data type", data_type, "data_type")
+    for field, kind, label in (
+        ("chunk_grid", ChunkGridDefinition, "chunk grid"),
+        ("chunk_key_encoding", ChunkKeyEncodingDefinition, "chunk key encoding"),
+    ):
+        value = document.get(field)
+        if isinstance(value, Mapping):
+            check(kind, label, value.get("name"), f"{field}.name")
+    walk_codecs(document.get("codecs"), "codecs")
+    transformers = document.get("storage_transformers")
+    if isinstance(transformers, Sequence) and not isinstance(transformers, str):
+        for index, transformer in enumerate(transformers):
+            if isinstance(transformer, Mapping):
+                check(
+                    StorageTransformerDefinition,
+                    "storage transformer",
+                    transformer.get("name"),
+                    f"storage_transformers.{index}.name",
+                )
+    return problems
+
+
+def reject_bare_codec(data: object) -> object:
+    """
+    Refuse a single codec where a pipeline is expected: iterating a lone
+    mapping or string would validate its keys or characters as codec names.
+    """
+    if isinstance(data, (str, Mapping)):
+        msg = f"`codecs` takes a sequence of codecs; got a single codec ({data!r}). Wrap it in a sequence."
+        # pydantic turns ValueError into a validation error; TypeError would escape raw
+        raise ValueError(msg)  # noqa: TRY004
+    return data
+
+
+CodecTuple = Annotated[
+    tuple[CodecLike, ...], BeforeValidator(ensure_multiple), BeforeValidator(reject_bare_codec)
+]
+
+
+class ArraySpecOverrides(TypedDict, total=False):
+    """
+    The fields `ArraySpec.from_shape_and_data_type` may override: every
+    `ArraySpec` field except the two the method takes positionally.
+    """
 
     attributes: TBaseAttr
-    shape: tuple[int, ...]
-    data_type: npt.DTypeLike | Mapping[str, object]
     chunk_grid: RegularChunking
-    chunk_key_encoding: DefaultChunkKeyEncoding | V2ChunkKeyEncoding
+    chunk_key_encoding: DefaultChunkKeyEncodingMetadata | V2ChunkKeyEncodingMetadata
     fill_value: FillValue
     codecs: Sequence[CodecLike]
     storage_transformers: Sequence[AnyNamedConfig]
     dimension_names: Sequence[str | None] | None
+
+
+class ArraySpecUpdate(ArraySpecOverrides, total=False):
+    """The fields an `ArraySpec.update` call may replace."""
+
+    shape: tuple[int, ...]
+    data_type: npt.DTypeLike | Mapping[str, object]
 
 
 class BaseGroupSpecUpdate(TypedDict, total=False):
@@ -224,8 +520,11 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
     node_type: Literal['array']
         The node type. Must be the string 'array'.
-    attributes: TAttr
-        User-defined metadata associated with this array.
+    attributes: TAttr, default = {}
+        User-defined metadata associated with this array. The default is the
+        empty dict, matching the Zarr V3 spec, where the `attributes` key is
+        optional; the default is validated against `TAttr`, so a model whose
+        attributes type does not accept the empty dict still requires them.
     shape: Sequence[int]
         The shape of this array.
     data_type: str
@@ -246,17 +545,94 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     """
 
     node_type: Literal["array"] = "array"
-    attributes: TAttr
+    attributes: TAttr = Field(default={}, validate_default=True)
     shape: tuple[int, ...]
     data_type: DTypeLike
-    chunk_grid: RegularChunking  # todo: validate this against shape
-    chunk_key_encoding: (
-        DefaultChunkKeyEncoding | V2ChunkKeyEncoding
-    )  # todo: validate this against shape
-    fill_value: FillValue  # todo: validate this against the data type
+    chunk_grid: RegularChunkGridMetadata
+    chunk_key_encoding: DefaultChunkKeyEncodingMetadata | V2ChunkKeyEncodingMetadata
+    fill_value: Annotated[FillValue, BeforeValidator(canonicalize_fill_value)]
     codecs: CodecTuple
     storage_transformers: tuple[AnyNamedConfig, ...] = ()
-    dimension_names: tuple[str | None, ...] | None = None  # todo: validate this against shape
+    dimension_names: tuple[str | None, ...] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _parse_data_type(cls, data: object, info: ValidationInfo) -> object:
+        """
+        Convert a numpy `data_type` declaration to its Zarr V3 form via
+        `parse_dtype_v3`, in the scope this validation reads in. A model
+        validator rather than field metadata so the class's `zarr_scope`
+        can serve as the scope when the validation context carries none
+        (a field validator cannot see the class).
+        """
+        if not isinstance(data, Mapping) or "data_type" not in data:
+            return data
+        return {
+            **data,
+            "data_type": parse_dtype_v3(data["data_type"], scope=cls._scope(info.context)),
+        }
+
+    @model_validator(mode="before")
+    @classmethod
+    def canonicalize_codecs(cls, data: object) -> object:
+        """
+        Normalize codec spellings the way zarr-python stores them, so a spec
+        constructed with either spelling compares equal — to one constructed
+        with the other, and to what `from_zarr` reads back. Two rules: an
+        empty `configuration` mapping is dropped from any codec, and the
+        `bytes` codec's `endian` configuration, a no-op for a single-byte
+        data type, is dropped for those data types. Both reach inside a
+        sharding codec's inner pipeline (same data type); its index codecs,
+        which encode the uint64 index, keep their endianness.
+        (`zarr-metadata`'s canonical document model already equates the
+        empty-configuration spellings, but not the endian ones; `==` on
+        specs compares fields literally, hence the normalization here.)
+        """
+        if not isinstance(data, Mapping) or "codecs" not in data:
+            return data
+        codecs = data["codecs"]
+        if isinstance(codecs, (str, Mapping)) or not isinstance(codecs, Sequence):
+            # a lone codec is refused by the field validator; leave it alone
+            return data
+        try:
+            parsed = parse_dtype_v3(data["data_type"]) if "data_type" in data else None
+        except (ValueError, TypeError):
+            parsed = None
+        drop_endian = parsed in _SINGLE_BYTE_DATA_TYPES
+
+        def normalize(codec: object, *, drop_endian: bool) -> object:
+            if not isinstance(codec, Mapping):
+                return codec
+            name = codec.get("name")
+            config = codec.get("configuration")
+            if isinstance(config, Mapping) and not config:
+                return {key: value for key, value in codec.items() if key != "configuration"}
+            if (
+                drop_endian
+                and name == "bytes"
+                and isinstance(config, Mapping)
+                and set(config) == {"endian"}
+            ):
+                return {"name": "bytes"}
+            if name == "sharding_indexed" and isinstance(config, Mapping):
+                new_config = dict(config)
+                inner = config.get("codecs")
+                if isinstance(inner, Sequence) and not isinstance(inner, str):
+                    new_config["codecs"] = tuple(
+                        normalize(inner_codec, drop_endian=drop_endian) for inner_codec in inner
+                    )
+                index = config.get("index_codecs")
+                if isinstance(index, Sequence) and not isinstance(index, str):
+                    new_config["index_codecs"] = tuple(
+                        normalize(index_codec, drop_endian=False) for index_codec in index
+                    )
+                return {**codec, "configuration": new_config}
+            return codec
+
+        return {
+            **data,
+            "codecs": tuple(normalize(codec, drop_endian=drop_endian) for codec in codecs),
+        }
 
     @model_validator(mode="after")
     def validate_dimension_names(self) -> Self:
@@ -269,20 +645,75 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             raise ValueError(msg)
         return self
 
-    def model_dump(
-        self,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
+    @model_validator(mode="after")
+    def validate_metadata_document(self, info: ValidationInfo) -> Self:
         """
-        Override this method because the Zarr V3 spec requires that the dimension_names
-        field be omitted from metadata entirely if it's set to None.
-        """
-        # TODO: use exclude_if when we require a newer version of pydantic
-        d = super().model_dump(**kwargs)
+        Validate this spec as a Zarr V3 array metadata document, via `zarr-metadata`.
 
-        if d.get("dimension_names") is None:
-            d.pop("dimension_names", None)
-        return d
+        The document assembled from this spec's fields is read in a scope:
+        the fill value is judged against the data type, the chunk grid against
+        the shape, and the codecs as a pipeline, each extension point by the
+        definition that claims its name. A name nothing in the scope claims is
+        left unjudged, so unknown extensions pass; a claimed name with an
+        invalid configuration is refused. The scope comes from the pydantic
+        validation context (a `zarr_metadata` `ZarrV3Context`, directly or
+        under the key `pydantic_zarr.v3.CONTEXT_KEY`), falling back to this
+        class's `zarr_scope`, then to `zarr_metadata`'s `CORE_AND_EXTENSIONS`.
+
+        On a class with `zarr_scope_strict` set, names the scope leaves
+        unjudged are refused instead: the document must be built from
+        extension-point names the operative scope claims.
+
+        The `attributes` field is not part of this check: its type and
+        contents are governed by this class's `TAttr` parameter alone.
+        """
+        scope = self._scope(info.context)
+        self._canonical_document(context=scope)
+        if type(self).zarr_scope_strict:
+            unclaimed = _unclaimed_extension_point_names(
+                self.model_dump(), CORE_AND_EXTENSIONS if scope is None else scope
+            )
+            if unclaimed:
+                msg = (
+                    "Names the scope leaves unjudged, refused because this class "
+                    "sets `zarr_scope_strict`:\n" + "\n".join(unclaimed)
+                )
+                raise ValueError(msg)
+        return self
+
+    def _canonical_document(
+        self, *, context: ZarrV3Context | None = None
+    ) -> ZarrV3ArrayMetadataModel:
+        """
+        This spec, attributes excluded, as a validated `zarr-metadata` document model.
+
+        With no `context`, the document is read in the class's `zarr_scope`
+        (the readers' default scope when that is `None` too), so a bare call
+        — `like`'s canonical comparison — judges by the class's own scope.
+
+        Raises `ValueError` listing every problem when the document is invalid.
+        """
+        if context is None:
+            context = type(self).zarr_scope
+        document = self.model_dump()
+        document["attributes"] = {}
+        try:
+            return ZarrV3ArrayMetadataModel.from_json(document, context=context)
+        except MetadataValidationError as e:
+            raise ValueError(format_problems(e)) from e
+
+    @model_serializer(mode="wrap")
+    def _serialize_document(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """
+        Omit `dimension_names` when it is `None`: the Zarr V3 spec allows the
+        key to be absent, not null. This is a model serializer rather than a
+        `model_dump` override so the omission also applies to arrays nested as
+        members in a group's dump, and to JSON serialization.
+        """
+        document = handler(self)
+        if document.get("dimension_names") is None:
+            document.pop("dimension_names", None)
+        return document
 
     @classmethod
     def from_array(
@@ -303,16 +734,40 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         Parameters
         ----------
         array :
-            object that conforms to the numpy array API.
-            The shape and dtype of this object will be used to construct an ArraySpec.
-            If the `chunks` keyword argument is not given, the shape of the array will
-            be used for the chunks.
+            object that conforms to the numpy array API, or a `zarr.Array`.
+            A `zarr.Array` carries its complete metadata document, which is
+            read whole (via `from_zarr`), so chunk grid, chunk key encoding,
+            fill value, codecs and attributes are all taken from the array;
+            for other objects they are probed from same-named attributes.
+            Keyword arguments other than `"auto"` override what the array
+            provides either way.
 
         Returns
         -------
         An instance of ArraySpec with properties derived from the provided array.
 
         """
+        if (zarr_mod := sys.modules.get("zarr")) is not None and isinstance(array, zarr_mod.Array):
+            spec = cls.from_zarr(array)
+            changes: dict[str, object] = {}
+            if attributes != "auto":
+                changes["attributes"] = attributes
+            if chunk_grid != "auto":
+                changes["chunk_grid"] = chunk_grid
+            if chunk_key_encoding != "auto":
+                changes["chunk_key_encoding"] = chunk_key_encoding
+            if fill_value != "auto":
+                changes["fill_value"] = fill_value
+            if codecs != "auto":
+                changes["codecs"] = tuple(codecs)
+            if storage_transformers != "auto":
+                changes["storage_transformers"] = tuple(storage_transformers)
+            if dimension_names != "auto":
+                changes["dimension_names"] = dimension_names
+            if changes:
+                return cls.model_validate({**spec.model_dump(), **changes})
+            return spec
+
         if attributes == "auto":
             attributes_actual = cast("TAttr", auto_attributes(array))
         else:
@@ -353,7 +808,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
         return cls(
             shape=array.shape,
-            data_type=str(array.dtype),
+            data_type=parse_dtype_v3(array.dtype),
             chunk_grid=chunk_grid_actual,
             attributes=attributes_actual,
             chunk_key_encoding=chunk_key_actual,
@@ -362,6 +817,91 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             storage_transformers=tuple(storage_transformers_actual),
             dimension_names=dimension_names_actual,
         )
+
+    @classmethod
+    def from_shape_and_data_type(
+        cls,
+        shape: Sequence[int],
+        data_type: npt.DTypeLike | Mapping[str, object],
+        **overrides: Unpack[ArraySpecOverrides],
+    ) -> Self:
+        """
+        Create an `ArraySpec` from a shape and a data type alone: the
+        metadata-only counterpart to `from_array`, for when there is no array
+        object to describe.
+
+        `overrides` takes the fields an `update` call takes, minus the two
+        this method takes positionally. Every field absent from it gets a
+        spec default or one derived from the data type: a size-guessed regular chunk grid (the same heuristic
+        zarr-python applies when no chunks are given), the `default` chunk key
+        encoding with the `/` separator, and the fill value and codecs
+        `from_array` derives (`"NaN"` / `0` / `False` / NaT fills; a `bytes`
+        codec, carrying explicit endianness for multi-byte data types, or the
+        matching variable-length codec and empty fill for the `string` and
+        `bytes` data types; compression is not assumed). Everything lands in
+        one validation pass,
+        so a subclass that narrows a field (required attributes, say) takes
+        the narrowed values through `overrides`. A data type name that is not
+        a Zarr V3 name but that numpy reads as some other type (`"i8"`,
+        `"float"`) is refused as a likely mistake, with the V3 spelling
+        suggested. For a data type with no
+        numpy equivalent (an unknown extension data type) no fill value,
+        codecs or chunk guess can be derived: pass `fill_value` and `codecs`
+        there, and the chunk grid defaults to one whole-array chunk.
+
+        Examples
+        --------
+        >>> from pydantic_zarr.v3 import ArraySpec
+        >>> ArraySpec.from_shape_and_data_type((10, 10), "uint16", dimension_names=("y", "x"))
+        ArraySpec(zarr_format=3, node_type='array', attributes={}, shape=(10, 10), data_type='uint16', chunk_grid={'name': 'regular', 'configuration': {'chunk_shape': (10, 10)}}, chunk_key_encoding={'name': 'default', 'configuration': {'separator': '/'}}, fill_value=0, codecs=({'name': 'bytes', 'configuration': {'endian': 'little'}},), storage_transformers=(), dimension_names=('y', 'x'))
+        """
+        parsed_data_type = parse_dtype_v3(data_type, scope=cls.zarr_scope)
+        np_dtype = _numpy_dtype_from_v3(parsed_data_type)
+        variable_length = (
+            _VARIABLE_LENGTH_DATA_TYPES.get(parsed_data_type)
+            if np_dtype is None and isinstance(parsed_data_type, str)
+            else None
+        )
+        document: dict[str, object] = {
+            "shape": tuple(shape),
+            "data_type": parsed_data_type,
+            "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
+        }
+        if "chunk_grid" not in overrides:
+            if np_dtype is not None:
+                item_size = np_dtype.itemsize
+            elif variable_length is not None:
+                item_size = _VARIABLE_LENGTH_NOMINAL_ITEM_SIZE
+            else:
+                item_size = None
+            chunk_shape = (
+                guess_chunks(tuple(shape), item_size) if item_size is not None else tuple(shape)
+            )
+            document["chunk_grid"] = {
+                "name": "regular",
+                "configuration": {"chunk_shape": chunk_shape},
+            }
+        underived = tuple(name for name in ("fill_value", "codecs") if name not in overrides)
+        if underived:
+            if variable_length is not None:
+                fill_default, codecs_default = variable_length
+                if "fill_value" in underived:
+                    document["fill_value"] = fill_default
+                if "codecs" in underived:
+                    document["codecs"] = codecs_default
+            elif np_dtype is None:
+                msg = (
+                    f"Data type {parsed_data_type!r} has no numpy equivalent, so no default "
+                    f"can be derived for it: pass {' and '.join(underived)} explicitly."
+                )
+                raise ValueError(msg)
+            else:
+                stand_in = SimpleNamespace(dtype=np_dtype)
+                if "fill_value" in underived:
+                    document["fill_value"] = auto_fill_value(stand_in)
+                if "codecs" in underived:
+                    document["codecs"] = auto_codecs(stand_in)
+        return cls.model_validate({**document, **overrides})
 
     @classmethod
     def from_zarr(cls, array: zarr.Array) -> Self:
@@ -487,6 +1027,37 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         """
         return type(self).model_validate({**self.model_dump(), **changes})
 
+    def with_sharding_codec(
+        self,
+        subchunk_shape: Sequence[int],
+        *,
+        index_location: Literal["start", "end"] = "end",
+    ) -> Self:
+        """
+        Return a copy of this spec sharded with the `sharding_indexed` codec:
+        the existing chunk shape becomes the shard shape, the existing codec
+        pipeline moves inside the shards as the subchunk pipeline, and the
+        shard index takes the default encoding (little-endian `bytes` plus
+        `crc32c`, at `index_location`). The subchunk shape must evenly divide
+        the chunk shape, which document validation enforces. Applying this to
+        an already-sharded spec nests the shards (the sharding codec is
+        recursive); the new subchunk shape must then be divisible by the
+        existing inner chunk shape, which document validation also enforces.
+        """
+        sharding_codec: AnyNamedConfig = {
+            "name": "sharding_indexed",
+            "configuration": {
+                "chunk_shape": tuple(subchunk_shape),
+                "codecs": self.codecs,
+                "index_codecs": (
+                    {"name": "bytes", "configuration": {"endian": "little"}},
+                    {"name": "crc32c"},
+                ),
+                "index_location": index_location,
+            },
+        }
+        return self.update(codecs=(sharding_codec,))
+
     def like(
         self,
         other: ArraySpec | zarr.Array,
@@ -544,7 +1115,40 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         else:
             other_parsed = other  # type: ignore[assignment]
 
+        if include is None and exclude is None:
+            # Compare the metadata documents by meaning rather than spelling:
+            # `zarr-metadata` canonicalizes what it interprets, so a fill value
+            # written "NaN" equals one written "0x7fc00000", and a codec equals
+            # itself with a no-op configuration key dropped. Attributes are not
+            # interpreted, so they are compared separately, as plain fields.
+            return self._canonical_document() == other_parsed._canonical_document() and model_like(
+                self, other_parsed, include={"attributes"}
+            )
+
         return model_like(self, other_parsed, include=include, exclude=exclude)
+
+
+def ensure_member_names_v3(data: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+    """
+    Ensure that every key of a members mapping is a valid Zarr V3 node name.
+
+    The node-name rules of the Zarr V3 spec are judged by `zarr-metadata`'s
+    `validate_node_name_v3`: a name holds no ``"/"``, is not composed of
+    periods alone, and does not start with the reserved ``"__"`` prefix.
+    The empty string names the root node, so it is not a valid *member*
+    name and is rejected here as well.
+    """
+    if data is None:
+        return data
+    for key in data:
+        if key == "":
+            msg = 'Invalid member name "": the empty string names the root node'
+            raise ValueError(msg)
+        problems = validate_node_name_v3(key)
+        if problems:
+            msg = "Invalid member name: " + "; ".join(problem.message for problem in problems)
+            raise ValueError(msg)
+    return data
 
 
 class BaseGroupSpec(NodeSpec, Generic[TAttr]):
@@ -559,21 +1163,22 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
     ----------
     node_type: Literal['group']
         The type of this node. Must be the string "group".
-    attributes: TAttr
-        The user-defined attributes of this group.
+    attributes: TAttr, default = {}
+        The user-defined attributes of this group. The default is the empty
+        dict, matching the Zarr V3 spec, where the `attributes` key is
+        optional; the default is validated against `TAttr`, so a model whose
+        attributes type does not accept the empty dict still requires them.
     """
 
     node_type: Literal["group"] = "group"
-    attributes: TAttr
+    attributes: TAttr = Field(default={}, validate_default=True)
 
     def update(self, **changes: Unpack[BaseGroupSpecUpdate]) -> Self:
         """
         Return a revalidated copy of this model with `changes` applied.
 
-        All changes land in one validation pass, so correlated fields (for an
-        array, a new `data_type` with a matching `fill_value`, or a new
-        `shape` with a matching `chunk_grid`) change together atomically.
-        Unlike `model_copy(update=...)`, the result is validated.
+        Unlike `model_copy(update=...)`, the result is validated, so an
+        invalid change is refused.
         """
         return type(self).model_validate({**self.model_dump(), **changes})
 
@@ -615,6 +1220,7 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
     def like(
         self,
         other: AnyBaseGroupSpec | AnyGroupSpec | zarr.Group,
+        *,
         include: IncEx = None,
         exclude: IncEx = None,
     ) -> bool:
@@ -650,19 +1256,69 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         must inherit from either ArraySpec or GroupSpec.
     """
 
-    members: Annotated[Mapping[str, TItem] | None, AfterValidator(ensure_key_no_path)] = {}
+    members: Mapping[str, TItem] | None = {}
+
+    @model_validator(mode="after")
+    def validate_member_names(self) -> Self:
+        """
+        Validate member names as Zarr V3 node names.
+
+        This runs as a model validator rather than field metadata so that a
+        subclass narrowing the `members` annotation (for example to a closed
+        `TypedDict` of members) cannot drop it.
+        """
+        ensure_member_names_v3(self.members)
+        return self
 
     @override
     def update(self, **changes: Unpack[GroupSpecUpdate]) -> Self:  # type: ignore[override]
         """
         Return a revalidated copy of this model with `changes` applied.
 
-        All changes land in one validation pass, so correlated fields (for an
-        array, a new `data_type` with a matching `fill_value`, or a new
-        `shape` with a matching `chunk_grid`) change together atomically.
-        Unlike `model_copy(update=...)`, the result is validated.
+        All changes land in one validation pass, so `attributes` and `members`
+        change together atomically. Unlike `model_copy(update=...)`, the
+        result is validated.
         """
         return type(self).model_validate({**self.model_dump(), **changes})
+
+    def resolve_path(self, path: str) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec:
+        """
+        Return the node at a `/`-separated path of member names relative to
+        this group (`"a"`, `"a/b/c"`; leading and trailing `/` are ignored).
+        Metadata conventions that reference nodes by relative path (OME-Zarr
+        dataset paths, GeoZarr `grid_mapping` and multiscale assets) resolve
+        with this method.
+
+        Raises
+        ------
+        ValueError
+            If the path holds no member names, or an empty one (`"a//b"`).
+        KeyError
+            Naming the segment that failed: a member name that does not
+            exist, a segment that descends into a node that is not a group,
+            or a group whose members are unknown (`members=None`).
+        """
+        node = resolve_member_path(self, path)
+        return cast("AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec", node)
+
+    def __getitem__(self, path: str) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec:
+        """`group[path]` resolves a member path: see `resolve_path`."""
+        return self.resolve_path(path)
+
+    def get_path(
+        self, path: str, default: TDefault | None = None
+    ) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec | TDefault | None:
+        """
+        `resolve_path` that returns `default` instead of raising when the path
+        does not resolve (a missing member, a non-group on the way, or unknown
+        members); a malformed path still raises `ValueError`. This non-raising
+        form suits pydantic validators, which turn `ValueError` into a
+        validation error but let `KeyError` escape.
+        """
+        try:
+            return self.resolve_path(path)
+        except KeyError:
+            return default
 
     @classmethod
     def from_flat(cls, data: Mapping[str, AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec]) -> Self:
@@ -887,15 +1543,26 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
     def like(
         self,
         other: AnyBaseGroupSpec | AnyGroupSpec | zarr.Group,
+        *,
         include: IncEx = None,
         exclude: IncEx = None,
     ) -> bool:
         """
         Compare a `GroupSpec` to another `GroupSpec` or a `zarr.Group`.
 
-        This is parameterized over the fields to exclude or include in the comparison.
-        Models are first converted to dict via the `model_dump` method of `pydantic.BaseModel`,
-        then compared with the `==` operator.
+        With no `include`/`exclude` filters, the groups' own metadata is
+        compared as plain fields and each member is compared by that member's
+        own `like`, so member arrays compare by the meaning of their metadata
+        documents (a fill value written `"NaN"` equals one written
+        `"0x7fc00000"`), exactly as `ArraySpec.like` judges them directly.
+        A `BaseGroupSpec` — a group considered without members — compares as
+        that projection at any depth: by the group's own metadata alone,
+        whatever this side's members hold. A `GroupSpec` whose members are
+        unknown (`members=None`) is alike a group whose members are likewise
+        unknown, or a `BaseGroupSpec` projection, never a group with known
+        members.
+        With filters, models are converted to `dict` via the `model_dump`
+        method of `pydantic.BaseModel` and compared with the `==` operator.
 
         Parameters
         ----------
@@ -940,13 +1607,43 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         """
 
         if isinstance(other, BaseGroupSpec) and not isinstance(other, GroupSpec):
-            # a group without members compares by the group's own metadata
-            return super().like(other, include=include, exclude=exclude)
+            # a group without members compares by the group's own metadata;
+            # this side projects to its own metadata too, or the comparison
+            # would always fail on the members field itself
+            projection = BaseGroupSpec(attributes=self.attributes)
+            return projection.like(other, include=include, exclude=exclude)
         other_parsed: AnyGroupSpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
             other_parsed = GroupSpec.from_zarr(other)
         else:
             other_parsed = other  # type: ignore[assignment]
+
+        if include is None and exclude is None:
+            # Compare the groups' own metadata as plain fields and each member
+            # by that member's own `like`, so member arrays compare by the
+            # meaning of their metadata documents, exactly as `ArraySpec.like`
+            # judges them directly.
+            if not model_like(self, other_parsed, exclude={"members"}):
+                return False
+            if self.members is None or other_parsed.members is None:
+                return self.members is None and other_parsed.members is None
+            if self.members.keys() != other_parsed.members.keys():
+                return False
+            for name, member in self.members.items():
+                other_member = other_parsed.members[name]
+                if isinstance(member, ArraySpec):
+                    if not isinstance(other_member, ArraySpec) or not member.like(other_member):
+                        return False
+                elif isinstance(other_member, ArraySpec):
+                    return False
+                elif not member.like(other_member):
+                    # a `BaseGroupSpec` member is the projection it is
+                    # everywhere else: it compares by the group's own
+                    # metadata, at any depth, exactly as at the top level.
+                    # Two `GroupSpec` members agree on whether their members
+                    # are known (members=None matches only members=None).
+                    return False
+            return True
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
@@ -1056,14 +1753,20 @@ def from_flat(
 
     Examples
     --------
-    >>> from pydantic_zarr.v3 import from_flat, GroupSpec, ArraySpec
-    >>> import numpy as np
-    >>> tree = {'': ArraySpec.from_array(np.arange(10))}
-    >>> from_flat(tree) # special case of a Zarr array at the root of the hierarchy
-    ArraySpec(zarr_format=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)
-    >>> tree = {'/foo': ArraySpec.from_array(np.arange(10))}
-    >>> from_flat(tree) # note that an implicit Group is created
-    GroupSpec(zarr_format=2, attributes={}, members={'foo': ArraySpec(zarr_format=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)})
+    ```py
+    from pydantic_zarr.v3 import from_flat, ArraySpec
+    import numpy as np
+    tree = {'': ArraySpec.from_array(np.arange(10))}
+    from_flat(tree) # special case of a Zarr array at the root of the hierarchy
+    # ArraySpec(zarr_format=3, node_type='array', attributes={}, shape=(10,), ...)
+    tree = {'/foo': ArraySpec.from_array(np.arange(10))}
+    from_flat(tree) # note that an implicit Group is created
+    # GroupSpec(
+    #    zarr_format=3,
+    #    node_type='group',
+    #    attributes={},
+    #    members={'foo': ArraySpec(zarr_format=3, node_type='array', ...)})
+    ```
     """
 
     # minimal check that the keys are valid
@@ -1097,11 +1800,17 @@ def from_flat_group(
 
     Examples
     --------
-    >>> from pydantic_zarr.v3 import from_flat_group, GroupSpec, ArraySpec
-    >>> import numpy as np
-    >>> tree = {'/foo': ArraySpec.from_array(np.arange(10))}
-    >>> from_flat_group(tree) # note that an implicit Group is created
-    GroupSpec(zarr_format=2, attributes={}, members={'foo': ArraySpec(zarr_format=2, attributes={}, shape=(10,), chunks=(10,), dtype='<i8', fill_value=0, order='C', filters=None, dimension_separator='/', compressor=None)})
+    ```py
+    from pydantic_zarr.v3 import from_flat_group, ArraySpec
+    import numpy as np
+    tree = {'/foo': ArraySpec.from_array(np.arange(10))}
+    from_flat_group(tree) # note that an implicit Group is created
+    # GroupSpec(
+    #    zarr_format=3,
+    #    node_type='group',
+    #    attributes={},
+    #    members={'foo': ArraySpec(zarr_format=3, node_type='array', ...)})
+    ```
     """
     root_name = ""
     sep = "/"
@@ -1186,7 +1895,7 @@ def auto_fill_value(data: object) -> FillValue:
         return data.fill_value
     elif hasattr(data, "dtype"):
         kind = np.dtype(data.dtype).kind
-        if kind == "?":
+        if kind == "b":
             return False
         elif kind in ["i", "u"]:
             return 0
@@ -1194,6 +1903,9 @@ def auto_fill_value(data: object) -> FillValue:
             return "NaN"
         elif kind == "c":
             return ("NaN", "NaN")
+        elif kind in ["M", "m"]:
+            # NaT, as the Zarr V3 spec writes it: the minimum int64 value.
+            return int(np.iinfo(np.int64).min)
         else:
             raise ValueError(f"Cannot determine default fill value for data type {kind}")
     raise ValueError("Cannot determine default data type for object without shape attribute.")
