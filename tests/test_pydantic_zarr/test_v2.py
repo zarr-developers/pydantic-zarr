@@ -855,3 +855,92 @@ def test_resolve_path_v2() -> None:
     assert root["a/b"] == leaf
     with pytest.raises(KeyError, match="No member named 'zz' in a"):
         root.resolve_path("a/zz")
+
+
+@pytest.mark.parametrize(
+    ("dtype", "fill_value", "expected"),
+    [
+        ("<f8", float("nan"), "NaN"),
+        ("<f8", float("inf"), "Infinity"),
+        ("<f8", float("-inf"), "-Infinity"),
+        ("<f4", np.float32("nan"), "NaN"),
+        ("<f8", np.float64("-inf"), "-Infinity"),
+        ("<f8", "NaN", "NaN"),
+        ("<f8", 1.5, 1.5),
+        ("<f8", np.float32(1.5), 1.5),
+        ("<i2", np.int16(3), 3),
+        ("|b1", np.True_, True),
+        ("<c16", complex(float("nan"), float("inf")), ("NaN", "Infinity")),
+        ("<c8", np.complex64(complex(1, float("-inf"))), (1.0, "-Infinity")),
+        ("<c16", (float("nan"), 1.0), ("NaN", 1.0)),
+        ("<c16", ["Infinity", 0.0], ("Infinity", 0.0)),
+        ("<f8", None, None),
+    ],
+)
+def test_fill_value_stored(dtype: str, fill_value: object, expected: object) -> None:
+    """
+    A fill value is stored in the JSON form the Zarr V2 spec gives it: numpy
+    scalars as Python scalars, complex numbers as pairs, and non-finite floats
+    as the strings "NaN", "Infinity" and "-Infinity", so the metadata
+    documents serialize as strict JSON.
+    """
+    spec = ArraySpec(shape=(4,), chunks=(2,), dtype=dtype, fill_value=cast("Any", fill_value))
+    assert spec.fill_value == expected
+    assert type(spec.fill_value) is type(expected)
+    assert spec.model_dump()["fill_value"] == expected
+    json.dumps(spec.model_dump(), allow_nan=False)
+
+
+@pytest.mark.parametrize(
+    ("dtype", "expected"),
+    [
+        ("<i4", 0),
+        ("<f8", 0),
+        ("|b1", None),
+        ("<c16", None),
+        ("|S3", None),
+        ([("a", "<i4"), ("b", "<f8")], None),
+    ],
+)
+def test_fill_value_default(dtype: object, expected: object) -> None:
+    """
+    A spec built without a fill value, or by `from_array` from an array with
+    none, gets 0 when its dtype accepts 0 and None otherwise.
+    """
+    assert ArraySpec(shape=(4,), chunks=(2,), dtype=cast("Any", dtype)).fill_value == expected
+    array = np.zeros((4,), dtype=np.dtype(cast("Any", dtype)))
+    assert ArraySpec.from_array(array).fill_value == expected
+
+
+def test_fill_value_invalid_for_dtype() -> None:
+    """
+    A fill value the dtype does not accept is refused when the spec is
+    validated as a Zarr V2 array metadata document.
+    """
+    with pytest.raises(ValidationError, match=r"Invalid Zarr V2 array metadata:\nfill_value: "):
+        ArraySpec(shape=(4,), chunks=(2,), dtype="<i2", fill_value=1.5)
+
+
+@pytest.mark.parametrize(
+    ("dtype", "fill_value", "expected"),
+    [
+        ("<f8", np.nan, "NaN"),
+        ("<f4", -np.inf, "-Infinity"),
+        ("<c8", complex(np.nan, np.inf), ("NaN", "Infinity")),
+    ],
+)
+def test_from_zarr_non_finite_fill_value(dtype: str, fill_value: object, expected: object) -> None:
+    """
+    A zarr-python v2 array with a non-finite fill value reads back as the spec
+    that stores it, and writing that spec stores the same fill value.
+    """
+    zarr = pytest.importorskip("zarr")
+    store = zarr.storage.MemoryStore()
+    array = zarr.create_array(
+        store, name="a", shape=(4,), chunks=(2,), dtype=dtype, fill_value=fill_value, zarr_format=2
+    )
+    spec = ArraySpec.from_zarr(array)
+    assert spec.fill_value == expected
+    assert spec.update(fill_value=cast("Any", fill_value)) == spec
+    spec.to_zarr(store, path="b")
+    assert ArraySpec.from_zarr(zarr.open_array(store, path="b")) == spec

@@ -1,10 +1,11 @@
 """
 Private helpers for validating metadata documents with ``zarr-metadata``.
 
-The models in `pydantic_zarr.v3` describe metadata documents field by field;
-``zarr-metadata`` validates whole documents against the Zarr specs, reading
-each extension point (data type, chunk grid, chunk key encoding, codecs,
-storage transformers) through the definition that claims its name in a scope.
+The models in `pydantic_zarr.v2` and `pydantic_zarr.v3` describe metadata
+documents field by field; ``zarr-metadata`` validates whole documents against
+the Zarr specs, reading each extension point (data type, chunk grid, chunk key
+encoding, codecs, storage transformers) through the definition that claims its
+name in a scope.
 These helpers connect the two: they resolve the scope a pydantic validation
 context carries and turn a ``MetadataValidationError`` into the ``ValueError``
 a pydantic ``model_validator`` reports.
@@ -57,7 +58,9 @@ def scope_from_context(context: object) -> ZarrV3Context | None:
     return None
 
 
-def format_problems(error: MetadataValidationError, node_type: str = "array") -> str:
+def format_problems(
+    error: MetadataValidationError, node_type: str = "array", *, zarr_format: int = 3
+) -> str:
     """
     Format every problem in a ``MetadataValidationError`` as one message.
 
@@ -70,9 +73,9 @@ def format_problems(error: MetadataValidationError, node_type: str = "array") ->
         loc = ".".join(str(part) for part in problem.loc)
         prefix = f"{loc}: " if loc else ""
         lines.append(f"{prefix}{problem.message}")
-    return format_lines(lines, node_type)
+    return format_lines(lines, node_type, zarr_format=zarr_format)
 
 
-def format_lines(lines: list[str], node_type: str) -> str:
+def format_lines(lines: list[str], node_type: str, *, zarr_format: int = 3) -> str:
     """Format ``<loc>: <message>`` lines as one invalid-metadata message for a node type."""
-    return f"Invalid Zarr V3 {node_type} metadata:\n" + "\n".join(lines)
+    return f"Invalid Zarr V{zarr_format} {node_type} metadata:\n" + "\n".join(lines)

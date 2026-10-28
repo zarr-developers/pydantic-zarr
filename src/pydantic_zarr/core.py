@@ -412,6 +412,33 @@ def parse_dtype_v2(value: npt.DTypeLike) -> str | list[tuple[Any, ...]]:
             return np_dtype.str
 
 
+def canonicalize_fill_value(fill_value: object) -> object:
+    """
+    Normalize a fill value to the form the Zarr specs write in JSON.
+
+    Numpy scalars become the equivalent Python scalars, complex numbers
+    become ``(real, imaginary)`` pairs, and non-finite floats become the
+    string forms both the Zarr V2 and V3 specs require (``"NaN"``,
+    ``"Infinity"``, ``"-Infinity"``), since a metadata document holds only
+    finite JSON numbers. Sequences (complex pairs, raw byte values) are
+    normalized element-wise. Everything else passes through unchanged.
+    """
+    if isinstance(fill_value, np.generic):
+        fill_value = fill_value.item()
+    if isinstance(fill_value, complex):
+        return (
+            canonicalize_fill_value(fill_value.real),
+            canonicalize_fill_value(fill_value.imag),
+        )
+    if isinstance(fill_value, float) and not math.isfinite(fill_value):
+        if math.isnan(fill_value):
+            return "NaN"
+        return "Infinity" if fill_value > 0 else "-Infinity"
+    if isinstance(fill_value, (tuple, list)):
+        return tuple(canonicalize_fill_value(item) for item in fill_value)
+    return fill_value
+
+
 def ensure_member_name(data: Any) -> str:
     """
     If the input is a string, then ensure that it is a valid
