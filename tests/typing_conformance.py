@@ -24,6 +24,12 @@ import pydantic_zarr.v3 as v3
 
 if TYPE_CHECKING:
     import numpy.typing as npt
+    from zarr_metadata import (
+        ZarrV2ArrayMetadataJSON,
+        ZarrV2GroupMetadataJSON,
+        ZarrV3ArrayMetadataJSON,
+        ZarrV3GroupMetadataJSON,
+    )
 
 
 class Attrs(BaseModel):
@@ -93,3 +99,17 @@ def from_array_keeps_self(data: npt.NDArray[Any]) -> NarrowArrayV3:
     statically — the trade that keeps `Self` returns for subclasses.
     """
     return NarrowArrayV3.from_array(data, attributes=Attrs())
+
+
+def documents_v3(
+    array: NarrowArrayV3, group: GroupOfUnionV3
+) -> tuple[ZarrV3ArrayMetadataJSON, ZarrV3GroupMetadataJSON]:
+    """`to_json` returns the typed metadata document, whatever the parameterization."""
+    return array.to_json(), group.to_json()
+
+
+def documents_v2(
+    array: NarrowArrayV2, group: GroupOfUnionV2
+) -> tuple[ZarrV2ArrayMetadataJSON, ZarrV2GroupMetadataJSON]:
+    """Same contract on the v2 side."""
+    return array.to_json(), group.to_json()

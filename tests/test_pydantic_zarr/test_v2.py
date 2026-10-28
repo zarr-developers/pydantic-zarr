@@ -34,9 +34,11 @@ from typing import TypedDict
 import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
+from zarr_metadata.model import ZarrV2ArrayMetadata, ZarrV2GroupMetadata
 
 from pydantic_zarr.v2 import (
     AnyArraySpec,
+    AnyBaseGroupSpec,
     AnyGroupSpec,
     ArraySpec,
     BaseGroupSpec,
@@ -836,3 +838,71 @@ def test_resolve_path_v2() -> None:
     assert root["a/b"] == leaf
     with pytest.raises(KeyError, match="No member named 'zz' in a"):
         root.resolve_path("a/zz")
+
+
+_TO_JSON_ARRAY: AnyArraySpec = ArraySpec(
+    attributes={"a": [1, 2]},
+    shape=(4,),
+    chunks=(2,),
+    dtype="<f8",
+    fill_value="NaN",
+    filters=[{"id": "delta", "dtype": "<f8"}],
+    compressor={"id": "zstd", "level": 1},
+)
+
+
+@pytest.mark.parametrize(
+    ("spec", "expected"),
+    [
+        (
+            _TO_JSON_ARRAY,
+            {
+                "zarr_format": 2,
+                "attributes": {"a": [1, 2]},
+                "shape": (4,),
+                "chunks": (2,),
+                "dtype": "<f8",
+                "fill_value": "NaN",
+                "order": "C",
+                "filters": ({"id": "delta", "dtype": "<f8"},),
+                "dimension_separator": "/",
+                "compressor": {"id": "zstd", "level": 1},
+            },
+        ),
+        (
+            ArraySpec(shape=(4,), chunks=(2,), dtype=[("a", "<i4"), ("b", "<f8")], fill_value=None),
+            {
+                "zarr_format": 2,
+                "attributes": {},
+                "shape": (4,),
+                "chunks": (2,),
+                "dtype": (("a", "<i4"), ("b", "<f8")),
+                "fill_value": None,
+                "order": "C",
+                "filters": None,
+                "dimension_separator": "/",
+                "compressor": None,
+            },
+        ),
+        (
+            BaseGroupSpec(attributes={"a": 1}),
+            {"zarr_format": 2, "attributes": {"a": 1}},
+        ),
+        (
+            GroupSpec(attributes={"a": 1}, members={"x": _TO_JSON_ARRAY, "g": GroupSpec()}),
+            {"zarr_format": 2, "attributes": {"a": 1}},
+        ),
+    ],
+    ids=["array", "array-structured-dtype", "base-group", "group-with-members"],
+)
+def test_to_json_v2(spec: AnyArraySpec | AnyBaseGroupSpec, expected: dict[str, object]) -> None:
+    """
+    `to_json` returns the node's Zarr V2 metadata as one document holding the
+    `.zarray` / `.zgroup` fields and, under `attributes`, the `.zattrs`, with
+    the JSON arrays the type declares as tuples held as tuples, and a group's
+    members left out. The result reads as a valid document in `zarr-metadata`.
+    """
+    document = spec.to_json()
+    assert document == expected
+    model = ZarrV2ArrayMetadata if is_array_spec(spec) else ZarrV2GroupMetadata
+    assert tuplify_json(model.from_json(document).to_json()) == tuplify_json(document)

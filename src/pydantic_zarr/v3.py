@@ -81,6 +81,7 @@ if TYPE_CHECKING:
     import zarr
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
+    from zarr_metadata import ZarrV3ArrayMetadataJSON, ZarrV3GroupMetadataJSON
     from zarr_metadata.v3.definition import ZarrV3Context
 
 
@@ -724,6 +725,17 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             document.pop("dimension_names", None)
         return document
 
+    def to_json(self) -> ZarrV3ArrayMetadataJSON:
+        """
+        This array's Zarr V3 metadata document: the content of its `zarr.json`.
+
+        Unlike `model_dump`, this takes no options, so its result has one
+        static type, `zarr_metadata`'s `ZarrV3ArrayMetadataJSON`. The document
+        is what `model_dump()` returns: `dimension_names` is omitted when it is
+        `None`, and an attributes model is dumped by alias.
+        """
+        return cast("ZarrV3ArrayMetadataJSON", self.model_dump())
+
     @classmethod
     def from_array(
         cls,
@@ -1193,6 +1205,17 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         invalid change is refused.
         """
         return type(self).model_validate({**self.model_dump(), **changes})
+
+    def to_json(self) -> ZarrV3GroupMetadataJSON:
+        """
+        This group's Zarr V3 metadata document: the content of its `zarr.json`.
+
+        Unlike `model_dump`, this takes no options, so its result has one
+        static type, `zarr_metadata`'s `ZarrV3GroupMetadataJSON`. A group's
+        members are not part of its metadata document, so a `GroupSpec`'s
+        `members` are left out.
+        """
+        return cast("ZarrV3GroupMetadataJSON", self.model_dump(exclude={"members"}))
 
     @classmethod
     def from_zarr(cls, group: zarr.Group) -> Self:
