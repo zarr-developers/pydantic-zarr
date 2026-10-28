@@ -510,7 +510,12 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         if isinstance(extant_node, zarr.Group) and not overwrite:
             raise ContainsGroupError(store, path)
 
-        meta: ArrayV2Metadata = ArrayV2Metadata.from_dict(self.model_dump())
+        document = self.model_dump()
+        # zarr-python reads a pair fill value (a complex number) from JSON as a
+        # list; before 3.1 it reads a tuple as an array of fill values instead
+        if isinstance(document["fill_value"], tuple):
+            document["fill_value"] = list(document["fill_value"])
+        meta: ArrayV2Metadata = ArrayV2Metadata.from_dict(document)
         async_array = AsyncArray(metadata=meta, store_path=store_path, config=config)
         sync(async_array._save_metadata(meta))
         return Array(_async_array=async_array)
