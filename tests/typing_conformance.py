@@ -52,3 +52,28 @@ def narrowed_members_v3(group: GroupOfNarrowV3) -> Mapping[str, NarrowArrayV3] |
 def narrowed_members_v2(group: GroupOfNarrowV2) -> Mapping[str, NarrowArrayV2] | None:
     """Same contract on the v2 side."""
     return group.members
+
+
+# The spec parameters are covariant (specs are frozen), so a narrowed spec is
+# substitutable wherever a wider one is expected — the Any* aliases are
+# ordinary wide types, and reads through them stay checked.
+
+
+def widened_array_v3(spec: NarrowArrayV3) -> v3.AnyArraySpec:
+    """A narrowed v3 array spec IS-A spec of the widest specialization."""
+    return spec
+
+
+def widened_group_v3(group: GroupOfNarrowV3) -> v3.AnyGroupSpec:
+    """A narrowed v3 group spec widens too, members included."""
+    return group
+
+
+def widened_array_v2(spec: NarrowArrayV2) -> v2.AnyArraySpec:
+    """Same contract on the v2 side."""
+    return spec
+
+
+def checked_read_through_wide_type(spec: v3.AnyArraySpec) -> Mapping[str, object] | BaseModel:
+    """Attributes read through the wide type keep a checked type, not Any."""
+    return spec.attributes

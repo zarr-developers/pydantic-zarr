@@ -89,31 +89,29 @@ if TYPE_CHECKING:
 # serializes with the model's own fields; annotated as plain BaseModel it
 # would serialize through the base schema, silently dumping {}.
 type TBaseAttr = Mapping[str, object] | SerializeAsAny[BaseModel]
-# TBaseItem is TItem's *default*: what a bare `GroupSpec`'s members mean at
-# runtime. It must stay spelled with the bare class names, which recurse, so
-# pydantic validates a member's own members as specs all the way down —
-# Any-parameterized members would leave nested dicts unvalidated.
 type TBaseItem = Union["GroupSpec", "ArraySpec", "BaseGroupSpec"]
-# TAnyItem is TItem's *bound*, a purely static role, and must be the opposite:
-# Any-parameterized, so it accepts *narrowed* member specs — `GroupSpec[Attrs,
-# GroupSpec[Any, Any] | MyArraySpec]` — where the bare names resolve through
-# their PEP 696 defaults to invariant TBaseAttr specializations, which strict
-# checkers (mypy, pyright) refuse narrowed specs for
-# (tests/typing_conformance.py guards this).
-type TAnyItem = Union["GroupSpec[Any, Any]", "ArraySpec[Any]", "BaseGroupSpec[Any]"]
 
-# Aliases for specs of any specialization. NOT redundant with the bare class
-# names: through its PEP 696 default, bare `ArraySpec` means the *invariant*
-# `ArraySpec[TBaseAttr]`, which strict checkers (mypy) refuse to accept a
-# narrowed spec such as `ArraySpec[CFAttrs]` for. APIs that pass heterogeneous
-# trees through (`resolve_path`, `from_flat`, `like`, `is_array_spec`) must be
-# spelled with these.
-type AnyArraySpec = "ArraySpec[Any]"
-type AnyGroupSpec = "GroupSpec[Any, Any]"
-type AnyBaseGroupSpec = "BaseGroupSpec[Any]"
+# Aliases for specs of any specialization. Since the spec parameters are
+# covariant (specs are frozen, so a narrowed spec IS-A wider one), these are
+# ordinary wide types, not gradual-typing escapes: a value typed with one
+# keeps checked, TBaseAttr/TBaseItem-typed reads. The names remain the public
+# spelling for heterogeneous APIs (`resolve_path`, `from_flat`, `like`,
+# `is_array_spec`) and are now equal to the bare class names.
+type AnyArraySpec = "ArraySpec[TBaseAttr]"
+type AnyGroupSpec = "GroupSpec[TBaseAttr, TBaseItem]"
+type AnyBaseGroupSpec = "BaseGroupSpec[TBaseAttr]"
 
-TAttr = TypeVar("TAttr", bound=TBaseAttr, default=TBaseAttr)
-TItem = TypeVar("TItem", bound=TAnyItem, default=TBaseItem)
+# Covariant because the specs are frozen: TAttr and TItem appear only in read
+# positions on instances, so ArraySpec[CFAttrs] is substitutable for
+# ArraySpec[TBaseAttr], and TBaseItem serves as both TItem's bound and its
+# default (its bare, recursive spelling also makes pydantic validate a bare
+# GroupSpec's nested members as specs all the way down;
+# tests/typing_conformance.py guards the narrowed-parameterization contract).
+# Constructing classmethods take TBaseAttr instead of TAttr, since a covariant
+# parameter may not appear in argument positions; the class's real attribute
+# type is still enforced, by validation.
+TAttr = TypeVar("TAttr", bound=TBaseAttr, default=TBaseAttr, covariant=True)
+TItem = TypeVar("TItem", bound=TBaseItem, default=TBaseItem, covariant=True)
 TDefault = TypeVar("TDefault")
 
 NodeType = Literal["group", "array"]
@@ -731,7 +729,9 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         cls,
         array: npt.NDArray[Any] | zarr.Array,
         *,
-        attributes: Literal["auto"] | TAttr = "auto",
+        # TBaseAttr, not TAttr: covariant parameters may not appear in
+        # argument positions. Validation enforces the class's attribute type.
+        attributes: Literal["auto"] | TBaseAttr = "auto",
         chunk_grid: Literal["auto"] | AnyNamedConfig = "auto",
         chunk_key_encoding: Literal["auto"] | AnyNamedConfig = "auto",
         fill_value: Literal["auto"] | FillValue = "auto",
@@ -782,7 +782,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         if attributes == "auto":
             attributes_actual = cast("TAttr", auto_attributes(array))
         else:
-            attributes_actual = attributes
+            # the constructor validates this against the class's TAttr
+            attributes_actual = cast("TAttr", attributes)
 
         if chunk_grid == "auto":
             chunk_grid_actual = auto_chunk_grid(array)
