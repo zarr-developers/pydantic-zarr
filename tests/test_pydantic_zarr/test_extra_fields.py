@@ -160,8 +160,8 @@ def test_extra_fields_round_trip_zarr() -> None:
 @pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr is required for this test")
 def test_extra_fields_v2_array_not_stored() -> None:
     """
-    zarr-python neither writes nor reads a v2 array's extra fields (other
-    keys "SHOULD NOT be present"), so `to_zarr` writes the array without
+    A v2 array's extra fields are neither written nor read by zarr-python
+    (other keys "SHOULD NOT be present"), so `to_zarr` writes the array without
     them, and finds it in place when written again.
     """
     import zarr
@@ -304,7 +304,7 @@ def test_to_zarr_refuses_consolidated_metadata() -> None:
     reason="requires a zarr-python that cannot store extra fields on a group",
 )
 def test_to_zarr_group_extra_fields_unsupported() -> None:
-    """zarr-python before 3.4 cannot store a group's extra fields, so `to_zarr` refuses them."""
+    """A zarr-python before 3.4 cannot store a group's extra fields, so `to_zarr` refuses them."""
     import zarr
 
     spec = v3.GroupSpec.model_validate(_group_document(notes=WAIVED))
@@ -317,7 +317,7 @@ def test_to_zarr_group_extra_fields_unsupported() -> None:
     reason="requires a zarr-python that cannot store extra fields on an array",
 )
 def test_to_zarr_array_extra_fields_unsupported() -> None:
-    """zarr-python before 3.1 cannot store an array's extra fields, so `to_zarr` refuses them."""
+    """A zarr-python before 3.1 cannot store an array's extra fields, so `to_zarr` refuses them."""
     import zarr
 
     spec = v3.ArraySpec.model_validate(_array_document(notes=WAIVED))
