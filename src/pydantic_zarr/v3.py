@@ -32,6 +32,7 @@ from pydantic import (
     Field,
     SerializeAsAny,
     SerializerFunctionWrapHandler,
+    ValidationError,
     ValidationInfo,
     model_serializer,
     model_validator,
@@ -1141,6 +1142,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         except ImportError as e:
             raise ImportError("zarr must be installed to use to_zarr") from e
 
+        self._check_storable()
         store_path = sync(make_store_path(store, path=path))
         extant_node = maybe_node(store, path, zarr_format=3)
         if isinstance(extant_node, zarr.Array):
@@ -1154,6 +1156,19 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         if isinstance(extant_node, zarr.Group) and not overwrite:
             raise ContainsGroupError(store, path)
 
+        meta: ArrayV3Metadata = ArrayV3Metadata.from_dict(self.model_dump())
+        async_array = AsyncArray(metadata=meta, store_path=store_path, config=config)
+        sync(async_array._save_metadata(meta))
+        return Array(_async_array=async_array)
+
+    def _check_storable(self) -> None:
+        """
+        Refuse, before anything is written, an array whose extra fields
+        `to_zarr` cannot store: zarr-python keeps an array's extra fields
+        from 3.1.
+        """
+        from zarr.core.metadata.v3 import ArrayV3Metadata
+
         if self.extra_fields and not _stores_extra_fields(ArrayV3Metadata):
             msg = (
                 f"This array holds extra fields ({', '.join(map(repr, self.extra_fields))}), "
@@ -1161,10 +1176,6 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
                 "later can."
             )
             raise ValueError(msg)
-        meta: ArrayV3Metadata = ArrayV3Metadata.from_dict(self.model_dump())
-        async_array = AsyncArray(metadata=meta, store_path=store_path, config=config)
-        sync(async_array._save_metadata(meta))
-        return Array(_async_array=async_array)
 
     def update(self, **changes: Unpack[ArraySpecUpdate]) -> Self:
         """
@@ -1225,7 +1236,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         ----------
         other : ArraySpec | zarr.Array
             The array (model or actual) to compare with. If other is a `zarr.Array`, it will be
-            converted to `ArraySpec` first.
+            converted to `ArraySpec` first; one whose metadata does not validate as a spec (one
+            holding an extra field the spec's rules refuse, say) is like no spec.
         include : IncEx, default = None
             A specification of fields to include in the comparison. The default value is `None`,
             which means that all fields will be included. See the documentation of
@@ -1262,7 +1274,12 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
         other_parsed: ArraySpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Array):
-            other_parsed = ArraySpec.from_zarr(other)
+            try:
+                other_parsed = ArraySpec.from_zarr(other)
+            except ValidationError:
+                # a stored array that does not validate as a spec (one holding
+                # an extra field the spec's rules refuse, say) is like no spec
+                return False
         else:
             other_parsed = other  # type: ignore[assignment]
 
@@ -1493,11 +1510,17 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         """
         Compare this group's own metadata to another group's. Members never
         participate in the comparison: a `GroupSpec` or `zarr.Group` is reduced
-        to its own metadata first.
+        to its own metadata first. A `zarr.Group` whose metadata does not
+        validate as a spec (one holding an extra field the spec's rules refuse,
+        say) is like no spec.
         """
         other_parsed: AnyBaseGroupSpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
-            other_parsed = BaseGroupSpec.from_zarr(other)
+            try:
+                other_parsed = BaseGroupSpec.from_zarr(other)
+            except ValidationError:
+                # a stored group that does not validate as a spec is like no spec
+                return False
         elif isinstance(other, GroupSpec):
             other_parsed = other._own_metadata()
         else:
@@ -1763,7 +1786,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
 
         spec_dict = self.model_dump(exclude={"members": True})
         attrs = spec_dict.pop("attributes")
-        self._check_storable()
+        _check_storable_tree(self)
         extant_node = maybe_node(store, path, zarr_format=3)
         if isinstance(extant_node, zarr.Group):
             if not self.like(extant_node):
@@ -1828,7 +1851,8 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         whatever this side's members hold. A `GroupSpec` whose members are
         unknown (`members=None`) is alike a group whose members are likewise
         unknown, or a `BaseGroupSpec` projection, never a group with known
-        members.
+        members. A `zarr.Group` whose hierarchy does not validate as a spec
+        is like no spec.
         With filters, models are converted to `dict` via the `model_dump`
         method of `pydantic.BaseModel` and compared with the `==` operator.
 
@@ -1881,7 +1905,11 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
             return self._own_metadata().like(other, include=include, exclude=exclude)
         other_parsed: AnyGroupSpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
-            other_parsed = GroupSpec.from_zarr(other)
+            try:
+                other_parsed = GroupSpec.from_zarr(other)
+            except ValidationError:
+                # a stored hierarchy that does not validate as a spec is like no spec
+                return False
         else:
             other_parsed = other  # type: ignore[assignment]
 
@@ -1913,6 +1941,23 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
             return True
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
+
+
+def _check_storable_tree(node: AnyArraySpec | AnyBaseGroupSpec, path: str = "") -> None:
+    """
+    Refuse, before anything is written, a hierarchy holding a node whose
+    extra fields `to_zarr` cannot store, naming the node's path. A group's
+    `to_zarr` writes itself before its members, so checking only the group
+    would leave a partial hierarchy behind when a member is refused.
+    """
+    try:
+        node._check_storable()
+    except ValueError as e:
+        msg = f"Cannot write the node at {path or '/'!r}: {e}"
+        raise ValueError(msg) from e
+    if isinstance(node, GroupSpec) and node.members is not None:
+        for name, member in node.members.items():
+            _check_storable_tree(member, f"{path}/{name}")
 
 
 @overload

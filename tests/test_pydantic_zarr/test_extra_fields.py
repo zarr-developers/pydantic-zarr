@@ -137,6 +137,7 @@ def test_extra_fields_round_trip_zarr() -> None:
     writes when it consolidates the hierarchy below the group.
     """
     import zarr
+    import zarr.storage
 
     store = zarr.storage.MemoryStore()
     array: AnyArraySpec = v3.ArraySpec.model_validate(_array_document(notes=WAIVED))
@@ -165,6 +166,7 @@ def test_extra_fields_v2_array_not_stored() -> None:
     them, and finds it in place when written again.
     """
     import zarr
+    import zarr.storage
 
     store = zarr.storage.MemoryStore()
     spec = v2.ArraySpec(shape=(4,), chunks=(4,), dtype="|u1", extra_fields={"notes": 1})
@@ -291,6 +293,7 @@ def test_to_zarr_refuses_consolidated_metadata() -> None:
     written.
     """
     import zarr
+    import zarr.storage
 
     store = zarr.storage.MemoryStore()
     spec = v3.GroupSpec.model_validate(_group_document(consolidated_metadata=CONSOLIDATED))
@@ -306,6 +309,7 @@ def test_to_zarr_refuses_consolidated_metadata() -> None:
 def test_to_zarr_group_extra_fields_unsupported() -> None:
     """A zarr-python before 3.4 cannot store a group's extra fields, so `to_zarr` refuses them."""
     import zarr
+    import zarr.storage
 
     spec = v3.GroupSpec.model_validate(_group_document(notes=WAIVED))
     with pytest.raises(ValueError, match="zarr-python 3.4 and later can"):
@@ -319,7 +323,76 @@ def test_to_zarr_group_extra_fields_unsupported() -> None:
 def test_to_zarr_array_extra_fields_unsupported() -> None:
     """A zarr-python before 3.1 cannot store an array's extra fields, so `to_zarr` refuses them."""
     import zarr
+    import zarr.storage
 
     spec = v3.ArraySpec.model_validate(_array_document(notes=WAIVED))
     with pytest.raises(ValueError, match="zarr-python 3.1 and later can"):
         spec.to_zarr(zarr.storage.MemoryStore(), "a")
+
+
+@pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr is required for this test")
+def test_to_zarr_refuses_unstorable_member() -> None:
+    """
+    `to_zarr` refuses a hierarchy whose member holds an extra field it
+    cannot store before writing anything, naming the member, rather than
+    after writing the group and its earlier members.
+    """
+    import zarr
+    import zarr.storage
+
+    store = zarr.storage.MemoryStore()
+    spec = v3.GroupSpec.model_validate(
+        {
+            "attributes": {},
+            "members": {
+                "a": v3.ArraySpec.from_shape_and_data_type((2,), "uint8"),
+                "sub": _group_document(consolidated_metadata=CONSOLIDATED),
+            },
+        }
+    )
+    with pytest.raises(ValueError, match="Cannot write the node at '/sub'"):
+        spec.to_zarr(store, "g")
+    assert not list(store._store_dict)
+
+
+@pytest.mark.skipif(
+    not ZARR_AVAILABLE or ZARR_PYTHON_VERSION < Version("3.1.0"),
+    reason="zarr-python opens arrays with extra fields from 3.1",
+)
+def test_like_stored_node_that_does_not_validate() -> None:
+    """
+    A stored node zarr-python opens but that does not validate as a spec (an
+    extra field that waives understanding without a `name`) is like no spec,
+    so `to_zarr` treats it as a different node instead of raising.
+    """
+    import json
+
+    import zarr
+    import zarr.storage
+    from zarr.core.buffer import default_buffer_prototype
+    from zarr.core.sync import sync
+    from zarr.errors import ContainsArrayError, ContainsGroupError
+
+    store = zarr.storage.MemoryStore()
+    unnamed = {"must_understand": False, "x": 1}
+
+    def put(path: str, document: dict[str, Any]) -> None:
+        data = default_buffer_prototype().buffer.from_bytes(json.dumps(document).encode())
+        sync(store.set(f"{path}/zarr.json", data))
+
+    array = v3.ArraySpec.model_validate(_array_document())
+    put("a", {**json.loads(array.model_dump_json()), "notes": unnamed})
+    stored_array = zarr.open_array(store, path="a")
+    assert not array.like(stored_array)
+    with pytest.raises(ContainsArrayError):
+        array.to_zarr(store, "a")
+    assert array.like(array.to_zarr(store, "a", overwrite=True))
+    if ZARR_PYTHON_VERSION < Version("3.4.0"):
+        return
+    group = v3.GroupSpec()
+    put("g", _group_document(notes=unnamed))
+    stored_group = zarr.open_group(store, path="g")
+    assert not group.like(stored_group)
+    assert not v3.BaseGroupSpec().like(stored_group)
+    with pytest.raises(ContainsGroupError):
+        group.to_zarr(store, "g")
