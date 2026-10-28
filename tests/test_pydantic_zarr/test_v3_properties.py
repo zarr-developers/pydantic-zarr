@@ -266,4 +266,4 @@ def test_zarr_node_names_accepted_as_members(data: st.DataObject, document: dict
     name = data.draw(node_names)
     array: ArraySpec[Any] = ArraySpec(**document)
     group: GroupSpec[Any, Any] = GroupSpec(attributes={}, members={name: array})
-    assert tuple(group.members or {}) == (name,)
+    assert tuple(group.members) == (name,)

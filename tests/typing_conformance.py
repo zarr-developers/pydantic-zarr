@@ -48,12 +48,12 @@ GroupOfNarrowV2 = v2.GroupSpec[Mapping[str, object], NarrowArrayV2]
 GroupOfUnionV2 = v2.GroupSpec[Attrs, v2.GroupSpec[Any, Any] | NarrowArrayV2]
 
 
-def narrowed_members_v3(group: GroupOfNarrowV3) -> Mapping[str, NarrowArrayV3] | None:
+def narrowed_members_v3(group: GroupOfNarrowV3) -> Mapping[str, NarrowArrayV3]:
     """A narrowed members mapping reads back at its narrowed type."""
     return group.members
 
 
-def narrowed_members_v2(group: GroupOfNarrowV2) -> Mapping[str, NarrowArrayV2] | None:
+def narrowed_members_v2(group: GroupOfNarrowV2) -> Mapping[str, NarrowArrayV2]:
     """Same contract on the v2 side."""
     return group.members
 

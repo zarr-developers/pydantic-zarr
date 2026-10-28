@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -164,13 +164,13 @@ def get_attribute(attributes: object, key: str, default: object = None) -> objec
 class _HasMembers(Protocol):
     """
     The structural shape path traversal needs from a group: a `members`
-    mapping, `None` when the members are unknown. The v2 and v3 `GroupSpec`
+    mapping. The v2 and v3 `GroupSpec`
     both have it; `ArraySpec` and `BaseGroupSpec` do not, which is how
     traversal tells a group with members from every other node.
     """
 
     @property
-    def members(self) -> Mapping[str, object] | None: ...
+    def members(self) -> Mapping[str, object]: ...
 
 
 def resolve_member_path(node: object, path: str) -> object:
@@ -185,9 +185,8 @@ def resolve_member_path(node: object, path: str) -> object:
     ValueError
         If the path holds no member names, or an empty one (`"a//b"`).
     KeyError
-        Naming the segment that failed: a member name that does not exist, a
-        segment that descends into a node that is not a group with members,
-        or a group whose members are unknown (`members=None`).
+        Naming the segment that failed: a member name that does not exist, or
+        a segment that descends into a node that is not a group.
     """
     stripped = path.strip("/")
     if stripped == "":
@@ -201,9 +200,6 @@ def resolve_member_path(node: object, path: str) -> object:
             raise ValueError(msg)
         if not isinstance(node, _HasMembers):
             msg = f"Cannot resolve {segment!r}: {where} is not a group with members."
-            raise KeyError(msg)
-        if node.members is None:
-            msg = f"Cannot resolve {segment!r}: the members of {where} are unknown (members=None)."
             raise KeyError(msg)
         if segment not in node.members:
             available = ", ".join(repr(name) for name in sorted(node.members)) or "(none)"
@@ -385,3 +381,38 @@ def json_eq(a: object, b: object) -> bool:
 
     # otherwise → regular equality
     return a == b
+
+
+def walk_zarr_hierarchy(
+    node: zarr.Array | zarr.Group, *, depth: int = -1
+) -> Iterator[tuple[str, zarr.Array | zarr.Group]]:
+    """
+    Yield `(path, node)` for a zarr array or group and the members under it,
+    `depth` levels deep, with paths in the flat-hierarchy form `to_flat` uses:
+    `""` for `node` itself, then `"/a"`, `"/a/b"` and so on. A `depth` of -1
+    walks the whole hierarchy and 0 yields `node` alone. The shared engine of
+    the v2 and v3 `from_zarr_flat`.
+
+    Raises
+    ------
+    ValueError
+        If `depth` is lower than -1.
+    """
+    if depth < -1:
+        msg = f"Invalid value for depth. Got {depth}, expected an integer greater than or equal to -1."
+        raise ValueError(msg)
+    yield "", node
+    yield from _walk_members(node, "", depth)
+
+
+def _walk_members(
+    node: zarr.Array | zarr.Group, prefix: str, depth: int
+) -> Iterator[tuple[str, zarr.Array | zarr.Group]]:
+    import zarr
+
+    if depth == 0 or not isinstance(node, zarr.Group):
+        return
+    for name, member in node.members():
+        path = f"{prefix}/{name}"
+        yield path, member
+        yield from _walk_members(member, path, max(depth - 1, -1))

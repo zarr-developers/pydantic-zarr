@@ -98,7 +98,7 @@ class GeoZarrDataset(GroupSpec):
     @model_validator(mode="after")
     def check_grid_mapping_refs(self) -> Self:
         """Every grid_mapping attribute resolves to a grid-mapping member."""
-        for name, member in (self.members or {}).items():
+        for name, member in self.members.items():
             if not is_array_spec(member):
                 continue
             ref = get_attribute(member.attributes, "grid_mapping")
