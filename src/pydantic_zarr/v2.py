@@ -659,7 +659,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         """
         return type(self).model_validate({**self.model_dump(), **changes})
 
-    def resolve_path(self, path: str) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec:
+    def resolve_path(self, path: str) -> AnyArraySpec | AnyGroupSpec:
         """
         Return the node at a `/`-separated path of member names relative to
         this group (`"a"`, `"a/b/c"`; leading and trailing `/` are ignored).
@@ -676,15 +676,15 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
             group.
         """
         node = resolve_member_path(self, path)
-        return cast("AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec", node)
+        return cast("AnyArraySpec | AnyGroupSpec", node)
 
-    def __getitem__(self, path: str) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec:
+    def __getitem__(self, path: str) -> AnyArraySpec | AnyGroupSpec:
         """`group[path]` resolves a member path: see `resolve_path`."""
         return self.resolve_path(path)
 
     def get_path(
         self, path: str, default: TDefault | None = None
-    ) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec | TDefault | None:
+    ) -> AnyArraySpec | AnyGroupSpec | TDefault | None:
         """
         `resolve_path` that returns `default` instead of raising when the path
         does not resolve (a missing member, or a non-group on the way); a
@@ -1004,7 +1004,8 @@ def from_zarr_flat(
     This is how to read part of a hierarchy. A `GroupSpec` is always a complete hierarchy, so
     `GroupSpec.from_zarr` reads every member; a flat hierarchy makes no claim that it lists
     every node, so it can stop at any depth. `from_flat` turns a complete one into a
-    `GroupSpec`.
+    `GroupSpec`. It reads its input as the complete hierarchy, so passing it a result read
+    with a `depth` limit yields a `GroupSpec` whose groups at that limit have no members.
 
     Parameters
     ----------

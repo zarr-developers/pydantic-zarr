@@ -100,8 +100,6 @@ class DatasetSpec(GroupSpec):
 
     @model_validator(mode="after")
     def check_dimensions(self) -> Self:
-        if self.members is None:  # members unknown: nothing to check
-            return self
         sizes: dict[str, int] = {}
         for name, member in self.members.items():
             if not is_array_spec(member) or member.dimension_names is None:
@@ -126,13 +124,13 @@ class DatasetSpec(GroupSpec):
 
     @model_validator(mode="after")
     def check_coordinates_attribute(self) -> Self:
-        for name, member in (self.members or {}).items():
+        for name, member in self.members.items():
             if not is_array_spec(member):
                 continue
             listed = get_attribute(member.attributes, "coordinates")
             if isinstance(listed, str):
                 for coordinate in listed.split():
-                    if self.members is None or coordinate not in self.members:
+                    if coordinate not in self.members:
                         msg = f"{name!r} lists coordinate {coordinate!r}, which is not a member."
                         raise ValueError(msg)
         return self
