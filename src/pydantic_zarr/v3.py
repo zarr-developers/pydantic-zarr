@@ -89,7 +89,13 @@ if TYPE_CHECKING:
 # serializes with the model's own fields; annotated as plain BaseModel it
 # would serialize through the base schema, silently dumping {}.
 type TBaseAttr = Mapping[str, object] | SerializeAsAny[BaseModel]
-type TBaseItem = Union["GroupSpec", "ArraySpec", "BaseGroupSpec"]
+# Any-parameterized for the same reason as the aliases below: as the bound
+# (and default) of TItem, this union must accept *narrowed* member specs —
+# `GroupSpec[Attrs, GroupSpec[Any, Any] | MyArraySpec]` — and the bare class
+# names resolve through their PEP 696 defaults to invariant TBaseAttr
+# specializations, which strict checkers (mypy, pyright) refuse narrowed
+# specs for.
+type TBaseItem = Union["GroupSpec[Any, Any]", "ArraySpec[Any]", "BaseGroupSpec[Any]"]
 
 # Aliases for specs of any specialization. NOT redundant with the bare class
 # names: through its PEP 696 default, bare `ArraySpec` means the *invariant*

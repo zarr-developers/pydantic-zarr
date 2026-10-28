@@ -48,7 +48,9 @@ if TYPE_CHECKING:
 # with un-narrowed attributes must serialize with its own fields, not the
 # empty base schema.
 type TBaseAttr = Mapping[str, object] | SerializeAsAny[BaseModel]
-type TBaseItem = Union["GroupSpec", "ArraySpec", "BaseGroupSpec"]
+# Any-parameterized so the TItem bound accepts narrowed member specs; see
+# the note on the v3 TBaseItem.
+type TBaseItem = Union["GroupSpec[Any, Any]", "ArraySpec[Any]", "BaseGroupSpec[Any]"]
 
 # Aliases for specs of any specialization; not redundant with the bare class
 # names — see the note on the v3 aliases (bare `ArraySpec` is the invariant
