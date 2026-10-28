@@ -1,5 +1,5 @@
-# This workflow will install Python dependencies, run tests and lint with a variety of Python versions
-# For more information see: https://help.github.com/actions/language-and-framework-guides/using-python-with-github-actions
+# Every check runs a `justfile` recipe, so `just <recipe>` locally is the same
+# command CI runs. The only other `run:` steps install tools (hatch).
 
 name: Test
 
@@ -26,10 +26,12 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         persist-credentials: false
+    - name: Install uv
+      uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+    - name: Install just
+      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
     - name: Check that uv.lock matches pyproject.toml
-      # pinned so a new uv release's lock-format or resolver changes cannot
-      # fail (or wrongly pass) unrelated pull requests
-      run: pipx run uv==0.13.5 lock --check
+      run: just lock-check
 
   test:
     name: os=${{ matrix.os }}, py=${{ matrix.python-version }}, zarr-python=${{ matrix.zarr-version }}
@@ -61,16 +63,19 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install hatch
+    - name: Install just
+      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
     - name: Run Tests (with zarr)
       if: matrix.zarr-version != 'none'
-      run: |
-        hatch run test.py${{ matrix.python-version }}-${{ matrix.zarr-version }}:list-env
-        hatch run test.py${{ matrix.python-version }}-${{ matrix.zarr-version }}:test-cov
+      env:
+        PY: ${{ matrix.python-version }}
+        ZARR: ${{ matrix.zarr-version }}
+      run: just py="$PY" zarr="$ZARR" test-cov
     - name: Run Tests (without zarr)
       if: matrix.zarr-version == 'none'
-      run: |
-        hatch run test-base.py${{ matrix.python-version }}:list-env
-        hatch run test-base.py${{ matrix.python-version }}:test-cov
+      env:
+        PY: ${{ matrix.python-version }}
+      run: just py="$PY" test-base-cov
     - name: Upload coverage
       uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6.0.2
       with:
@@ -96,9 +101,10 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install hatch
-    - name: Run pyrefly
-      run: |
-        hatch run types:check
+    - name: Install just
+      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+    - name: Run the type checkers
+      run: just typecheck
 
   doctests:
     name: doctests
@@ -119,9 +125,10 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install hatch
+    - name: Install just
+      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
     - name: Run Tests
-      run: |
-        hatch run docs:test
+      run: just test-docs
 
   test-min-reqs:
     runs-on: ubuntu-latest
@@ -131,11 +138,9 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         persist-credentials: false
-    - name: Set up Python
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-      with:
-        python-version: '3.12'
-    - name: Install minimum requirements
-      run: |
-        pip install .
-        python -c "import pydantic_zarr.v2; import pydantic_zarr.v3"
+    - name: Install uv
+      uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+    - name: Install just
+      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+    - name: Import with only the required dependencies installed
+      run: just test-min-reqs

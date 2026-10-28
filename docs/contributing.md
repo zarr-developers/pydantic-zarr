@@ -20,10 +20,23 @@ just --list     # see every available task
 | Run the whole python/zarr matrix | `just test-all` |
 | Type checking (pyrefly) | `just typecheck` |
 | Lint and format everything | `just lint` |
-| Run the tests with coverage | `just test-cov` |
+| Run the tests with coverage | `just test-cov` (without zarr: `just test-base-cov`) |
 | Validate changelog fragment names | `just changelog-check` |
+| Check that `uv.lock` is current | `just lock-check` |
+| Check the import with only required dependencies | `just test-min-reqs` |
+| Run every CI check locally | `just ci` |
 | Documentation tests | `just test-docs` |
 | Build or serve the documentation | `just docs-build` / `just docs-serve` |
+
+## Continuous integration
+
+Every CI job runs one of the recipes above, so a CI failure can be
+reproduced by running the same `just` command locally. The test matrix job
+runs `just py=<python> zarr=<zarr> test-cov` for each cell (and
+`just py=<python> test-base-cov` for the cell without zarr). `just ci` runs
+all of the checks in one go, using the test matrix without coverage. The
+only `run:` steps in the workflows that are not `just` recipes install tools
+(hatch, pre-commit).
 
 ## Changelog entries
 
