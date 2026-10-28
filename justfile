@@ -9,13 +9,13 @@ zarr := "3.1.0"
 default:
     @just --list
 
-# Install pre-commit hooks
+# Install the git hooks (with prek)
 setup:
-    pre-commit install
+    prek install
 
-# Run all linters and formatters via pre-commit
+# Run all linters and formatters (the hooks in .pre-commit-config.yaml, via prek)
 lint:
-    pre-commit run --all-files --show-diff-on-failure
+    prek run --all-files --show-diff-on-failure
 
 # Run pyrefly type checking
 typecheck:
