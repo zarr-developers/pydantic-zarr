@@ -344,10 +344,9 @@ To write a hierarchy's metadata, write each document as JSON at its key
 under the hierarchy's root. `json.dumps` writes the tuples in the documents as
 JSON arrays. It writes a non-finite float in the attributes (`float("nan")`)
 as the bare token `NaN`, as zarr-python does, which strict JSON parsers
-reject; pass `allow_nan=False` to refuse such attributes instead. The same
-holds for a fill value given as a non-finite float, which a v2 spec keeps as
-given; give it as a string (`"NaN"`, `"Infinity"` or `"-Infinity"`), the
-spelling the Zarr V2 spec requires.
+reject; pass `allow_nan=False` to refuse such attributes instead. Fill values
+need no care: a spec holds a non-finite fill value as a string, such as
+`"NaN"` (see [Validation](#validation)).
 
 ```python
 import json
