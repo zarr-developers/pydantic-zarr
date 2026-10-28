@@ -9,13 +9,13 @@ zarr := "3.1.0"
 default:
     @just --list
 
-# Install pre-commit hooks
+# Install the git hooks (with prek)
 setup:
-    pre-commit install
+    prek install
 
-# Run all linters and formatters via pre-commit
+# Run all linters and formatters (the hooks in .pre-commit-config.yaml, via prek)
 lint:
-    pre-commit run --all-files
+    prek run --all-files --show-diff-on-failure
 
 # Run pyrefly type checking
 typecheck:
@@ -27,15 +27,30 @@ test *args:
 
 # Run the test suite with coverage against one python/zarr combo
 test-cov:
+    hatch run test.py{{ py }}-{{ zarr }}:list-env
     hatch run test.py{{ py }}-{{ zarr }}:test-cov
 
 # Run the test suite without zarr installed
 test-base *args:
     hatch run test-base.py{{ py }}:test {{ args }}
 
+# Run the test suite without zarr installed, with coverage
+test-base-cov:
+    hatch run test-base.py{{ py }}:list-env
+    hatch run test-base.py{{ py }}:test-cov
+
 # Run the test suite across the full python/zarr matrix
 test-all:
     hatch run test:test
+
+# Run the test suite without zarr installed across every python version
+test-base-all:
+    hatch run test-base:test
+
+# Check that pydantic-zarr imports with only its required dependencies installed
+test-min-reqs:
+    uv run --isolated --no-project --python {{ py }} --with . --reinstall-package pydantic-zarr \
+        python -c "import pydantic_zarr.v2; import pydantic_zarr.v3"
 
 # Run the documentation tests (doctests)
 test-docs:
@@ -52,6 +67,15 @@ docs-serve:
 # Check that changelog entries are named correctly
 changelog-check:
     uv run --no-sync python ci/check_changelog_entries.py
+
+# uv is pinned so a new uv release's lock-format or resolver changes cannot
+# fail (or wrongly pass) unrelated pull requests.
+# Check that uv.lock matches pyproject.toml
+lock-check:
+    uvx uv@0.13.5 lock --check
+
+# Run every CI check locally (the test matrix without coverage)
+ci: lint lock-check changelog-check typecheck test-docs test-min-reqs test-all test-base-all
 
 # Build the sdist and wheel distributions
 build:

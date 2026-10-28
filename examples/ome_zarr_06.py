@@ -221,8 +221,6 @@ class Image(GroupSpec[ImageAttributes, Union[ArraySpec[Any], GroupSpec[Any, Any]
 
     @model_validator(mode="after")
     def _members_match_metadata(self) -> Self:
-        if self.members is None:  # members unknown: nothing to check against
-            return self
         for ms in self.attributes.ome.multiscales:
             ndim = len(ms.coordinateSystems[0].axes)
             for ds in ms.datasets:
