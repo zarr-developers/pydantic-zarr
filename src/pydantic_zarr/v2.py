@@ -25,12 +25,20 @@ from packaging.version import Version
 from pydantic import BaseModel, Field, SerializeAsAny, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
 from typing_extensions import TypedDict, TypeIs, TypeVar
-from zarr_metadata import JSONValue, ZarrV2ArrayDimensionSeparator, ZarrV2ArrayOrder
+from zarr_metadata import (
+    JSONValue,
+    MetadataValidationError,
+    ZarrV2ArrayDimensionSeparator,
+    ZarrV2ArrayOrder,
+)
+from zarr_metadata.model import ZarrV2ArrayMetadata as ZarrV2ArrayMetadataModel
 
+from pydantic_zarr._metadata import format_problems
 from pydantic_zarr.core import (
     ExtraFieldsBase,
     IncEx,
     StrictBase,
+    canonicalize_fill_value,
     ensure_key_no_path,
     guess_chunks,
     maybe_node,
@@ -203,8 +211,12 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         The memory order of this array. Must be either "C", which designates "C order",
         AKA lexicographic ordering or "F", which designates "F order", AKA colexicographic ordering.
         The default is "C".
-    fill_value: FillValue, default = 0
-        The fill value for this array. The default is 0.
+    fill_value: FillValue
+        The fill value for this array, in its Zarr V2 JSON form: numpy scalars
+        are stored as Python scalars, complex numbers as ``(real, imaginary)``
+        pairs, and non-finite floats as ``"NaN"``, ``"Infinity"`` or
+        ``"-Infinity"``. It must be a fill value the dtype accepts. The
+        default is 0 when the dtype accepts 0, and None otherwise.
     compressor: CodecDict | None
         A JSON-serializable representation of a compression codec, or None. The default is None.
     filters: List[CodecDict] | None, default = None
@@ -229,13 +241,33 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
     shape: tuple[int, ...]
     chunks: tuple[int, ...]
     dtype: DtypeStr | list[tuple[Any, ...]]
-    fill_value: FillValue = 0
+    # validation replaces this declared default with the dtype's (see
+    # `default_fill_value`); `model_construct` and the JSON schema, which do
+    # not validate, still report 0 for every dtype
+    fill_value: Annotated[FillValue, BeforeValidator(canonicalize_fill_value)] = 0
     order: MemoryOrder = "C"
     filters: list[CodecDict] | None = None
     dimension_separator: Annotated[
         DimensionSeparator, BeforeValidator(parse_dimension_separator)
     ] = "/"
     compressor: CodecDict | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_fill_value(cls, data: object) -> object:
+        """
+        Give a spec built without a `fill_value` the default for its dtype:
+        `0` when the dtype accepts `0`, and `None` otherwise (a bool, complex
+        or structured dtype, say), as `zarr-metadata` does. A subclass that
+        declares its own `fill_value` default, or makes the field required,
+        keeps that instead.
+        """
+        declared = cls.model_fields["fill_value"].default
+        if type(declared) is not int or declared != 0:
+            return data
+        if isinstance(data, Mapping) and "fill_value" not in data and "dtype" in data:
+            data = {**data, "fill_value": dtype_default_fill_value(data["dtype"])}
+        return data
 
     @field_validator("filters", mode="after")
     @classmethod
@@ -256,6 +288,26 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
                 f"for shape and {lchunks} elements for chunks."
             )
             raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_metadata_document(self) -> Self:
+        """
+        Validate this spec as a Zarr V2 array metadata document, via `zarr-metadata`.
+
+        The document assembled from this spec's fields is read in
+        `zarr_metadata`'s core Zarr V2 scope, which judges the fill value
+        against the dtype among other things, so a spec holds only what a
+        Zarr V2 `.zarray` document can store. The `attributes` field is not
+        part of this check: its type and contents are governed by this
+        class's `TAttr` parameter alone.
+        """
+        document = self.model_dump()
+        document["attributes"] = {}
+        try:
+            ZarrV2ArrayMetadataModel.from_json(document)
+        except MetadataValidationError as e:
+            raise ValueError(format_problems(e, zarr_format=2)) from e
         return self
 
     def to_metadata_json(self) -> ZarrV2ArrayMetadataJSON:
@@ -311,7 +363,7 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
             User-defined metadata associated with this array. Should be JSON-serializable. The default is "auto", which means that `array.attributes` will be used,
             with a fallback value of the empty dict `{}`.
         fill_value : "auto" | int | float | None, default = "auto"
-            The fill value for this array. Either "auto" or FillValue. The default is "auto", which means that `array.fill_value` will be used if that attribute exists, with a fallback value of 0.
+            The fill value for this array. Either "auto" or FillValue. The default is "auto", which means that `array.fill_value` will be used if that attribute exists, with a fallback of the dtype's default (0 when the dtype accepts 0, None otherwise).
         order : "auto" | "C" | "F", default = "auto"
             The memory order of the `ArraySpec`. One of "auto", "C", or "F". The default is "auto", which means that, if present, `array.order`
             will be used, falling back to "C" if `array` does not have an `order` attribute.
@@ -488,7 +540,13 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         if isinstance(extant_node, zarr.Group) and not overwrite:
             raise ContainsGroupError(store, path)
 
-        meta: ArrayV2Metadata = ArrayV2Metadata.from_dict(self.model_dump())
+        document = self.model_dump()
+        # zarr-python reads a complex fill value's (real, imaginary) pair from
+        # JSON as a list; before 3.1 it reads a tuple as an array of fill values.
+        # A v2 fill value nests no deeper than that pair.
+        if isinstance(document["fill_value"], tuple):
+            document["fill_value"] = list(document["fill_value"])
+        meta: ArrayV2Metadata = ArrayV2Metadata.from_dict(document)
         async_array = AsyncArray(metadata=meta, store_path=store_path, config=config)
         sync(async_array._save_metadata(meta))
         return Array(_async_array=async_array)
@@ -497,10 +555,12 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         """
         Return a revalidated copy of this model with `changes` applied.
 
-        All changes land in one validation pass, so correlated fields (for an
-        array, a new `data_type` with a matching `fill_value`, or a new
-        `shape` with a matching `chunk_grid`) change together atomically.
-        Unlike `model_copy(update=...)`, the result is validated. Passing
+        All changes land in one validation pass, so correlated fields (a new
+        `dtype` with a matching `fill_value`, or a new `shape` with matching
+        `chunks`) change together atomically. A new `dtype` keeps the current
+        `fill_value`, which is not re-derived: when the new dtype does not
+        accept it, pass a `fill_value` in the same call. Unlike
+        `model_copy(update=...)`, the result is validated. Passing
         `extra_fields` replaces the extra fields as a whole.
         """
         return self._updated(changes)
@@ -1354,12 +1414,33 @@ def auto_attributes(data: Any) -> Mapping[str, Any]:
     return {}
 
 
+def dtype_default_fill_value(dtype: object) -> FillValue:
+    """
+    The fill value a spec of data type `dtype` gets when none is given: `0`
+    when the data type accepts `0`, and `None` otherwise. A `dtype` that is
+    not a valid Zarr V2 data type gets `0`, and validation reports the data type.
+    """
+    try:
+        return cast(
+            "FillValue",
+            ZarrV2ArrayMetadataModel.create_default(
+                dtype=cast("Any", parse_dtype_v2(cast("Any", dtype)))
+            ).fill_value,
+        )
+    except (MetadataValidationError, TypeError, ValueError):
+        return 0
+
+
 def auto_fill_value(data: Any) -> Any:
     """
-    Guess fill value from an input with a `fill_value` attribute, returning 0 otherwise.
+    Guess fill value from an input with a `fill_value` attribute. Otherwise
+    return the default for the input's dtype (see `dtype_default_fill_value`),
+    or 0 for an input with no dtype.
     """
     if hasattr(data, "fill_value"):
         return data.fill_value
+    if hasattr(data, "dtype"):
+        return dtype_default_fill_value(data.dtype)
     return 0
 
 

@@ -274,6 +274,34 @@ print(group.to_metadata_json())
 #> {'zarr_format': 2, 'attributes': {'bar': True}}
 ```
 
+## Validation
+
+An `ArraySpec` is validated as a whole Zarr V2 array metadata document, via
+[`zarr-metadata`](https://pypi.org/project/zarr-metadata/), so a spec holds only
+what a `.zarray` document can store. Among other things, its fill value must be
+one its dtype accepts. Before that check, the fill value is put in its Zarr V2
+JSON form: numpy scalars become Python scalars, complex numbers become
+`(real, imaginary)` pairs, and non-finite floats become `"NaN"`, `"Infinity"`
+or `"-Infinity"`. A spec built without a fill value gets 0 when its dtype
+accepts 0, and `None` otherwise.
+
+```python
+import numpy as np
+from pydantic import ValidationError
+
+from pydantic_zarr.v2 import ArraySpec
+
+print(ArraySpec(shape=(4,), chunks=(2,), dtype="<c8", fill_value=np.complex64(np.nan)).fill_value)
+#> ('NaN', 0.0)
+print(ArraySpec(shape=(4,), chunks=(2,), dtype="|b1").fill_value)
+#> None
+try:
+    ArraySpec(shape=(4,), chunks=(2,), dtype="<i2", fill_value=1.5)
+except ValidationError as e:
+    print(e.errors()[0]["msg"].splitlines()[-1])
+    #> fill_value: expected an integer or null, got 1.5
+```
+
 ## Comparing `GroupSpec` and `ArraySpec` models
 
 `GroupSpec` and `ArraySpec` both have `like` methods that take another `GroupSpec` or `ArraySpec` as an argument and return `True` (the models are like each other) or `False` (the models are not like each other).

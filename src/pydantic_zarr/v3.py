@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import math
 import sys
 from collections.abc import Mapping, Sequence
 from importlib.metadata import version
@@ -76,6 +75,7 @@ from pydantic_zarr._metadata import format_lines, format_problems, scope_from_co
 from pydantic_zarr.core import (
     ExtraFieldsBase,
     IncEx,
+    canonicalize_fill_value,
     ensure_multiple,
     flatten_extra_fields,
     guess_chunks,
@@ -390,27 +390,6 @@ def parse_dtype_v3(
                 return "complex128"
             case _:
                 raise ValueError(f"Unsupported dtype: {dtype}")
-
-
-def canonicalize_fill_value(fill_value: object) -> object:
-    """
-    Normalize a fill value to the form the Zarr V3 spec writes in JSON.
-
-    Numpy scalars become the equivalent Python scalars, and non-finite floats
-    become the string forms the spec requires (``"NaN"``, ``"Infinity"``,
-    ``"-Infinity"``), since a metadata document holds only finite JSON numbers.
-    Sequences (complex pairs, raw byte values) are normalized element-wise.
-    Everything else passes through unchanged.
-    """
-    if isinstance(fill_value, np.generic):
-        fill_value = fill_value.item()
-    if isinstance(fill_value, float) and not math.isfinite(fill_value):
-        if math.isnan(fill_value):
-            return "NaN"
-        return "Infinity" if fill_value > 0 else "-Infinity"
-    if isinstance(fill_value, (tuple, list)):
-        return tuple(canonicalize_fill_value(item) for item in fill_value)
-    return fill_value
 
 
 def _numpy_dtype_from_v3(data_type: str | Mapping[str, object]) -> np.dtype[Any] | None:
