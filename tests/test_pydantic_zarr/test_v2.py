@@ -17,6 +17,7 @@ from pydantic_zarr.core import tuplify_json
 from .conftest import DTYPE_EXAMPLES_V2, ZARR_PYTHON_VERSION, DTypeExample
 
 if TYPE_CHECKING:
+    from pathlib import Path
     from typing import Literal
 
     # Imported under an alias so it is not shadowed by the function-local
@@ -968,6 +969,36 @@ def test_to_metadata_json_v2(
     )
 
 
+# codecs whose configurations numcodecs reads back as written, so a stored
+# layout read by zarr-python is the same spec
+_STORED_LAYOUT_ARRAY: AnyArraySpec = ArraySpec(
+    attributes={"a": [1, 2]},
+    shape=(4,),
+    chunks=(2,),
+    dtype="<f8",
+    fill_value="NaN",
+    compressor={"id": "zlib", "level": 1},
+)
+_STORED_LAYOUT_ZARRAY = {
+    "zarr_format": 2,
+    "shape": (4,),
+    "chunks": (2,),
+    "dtype": "<f8",
+    "fill_value": "NaN",
+    "order": "C",
+    "filters": None,
+    "dimension_separator": "/",
+    "compressor": {"id": "zlib", "level": 1},
+}
+_STORED_LAYOUT_GROUP = GroupSpec(
+    attributes={"a": 1},
+    members={
+        "x": _STORED_LAYOUT_ARRAY,
+        "g": GroupSpec(members={"y": _STORED_LAYOUT_ARRAY, "h": GroupSpec()}),
+    },
+)
+
+
 @pytest.mark.parametrize(
     ("dtype", "fill_value", "expected"),
     [
@@ -1085,3 +1116,197 @@ def test_from_zarr_non_finite_fill_value(dtype: str, fill_value: object, expecte
     assert spec.update(fill_value=cast("Any", fill_value)) == spec
     spec.to_zarr(store, path="b")
     assert ArraySpec.from_zarr(zarr.open_array(store, path="b")) == spec
+
+
+@pytest.mark.parametrize(
+    ("spec", "expected"),
+    [
+        (
+            _STORED_LAYOUT_ARRAY,
+            {".zarray": _STORED_LAYOUT_ZARRAY, ".zattrs": {"a": [1, 2]}},
+        ),
+        (
+            _TO_METADATA_JSON_ARRAY,
+            {
+                ".zarray": {
+                    **_STORED_LAYOUT_ZARRAY,
+                    "filters": ({"id": "delta", "dtype": "<f8"},),
+                    "compressor": {"id": "zstd", "level": 1},
+                },
+                ".zattrs": {"a": [1, 2]},
+            },
+        ),
+        (
+            ArraySpec.model_validate({**_STORED_LAYOUT_ARRAY.model_dump(), "foo": [1]}),
+            # extra fields are members of `.zarray`
+            {".zarray": {**_STORED_LAYOUT_ZARRAY, "foo": (1,)}, ".zattrs": {"a": [1, 2]}},
+        ),
+        (
+            BaseGroupSpec(attributes={"a": 1}),
+            {".zgroup": {"zarr_format": 2}, ".zattrs": {"a": 1}},
+        ),
+        (
+            GroupSpec(),
+            {".zgroup": {"zarr_format": 2}, ".zattrs": {}},
+        ),
+        (
+            _STORED_LAYOUT_GROUP,
+            {
+                ".zgroup": {"zarr_format": 2},
+                ".zattrs": {"a": 1},
+                "x/.zarray": _STORED_LAYOUT_ZARRAY,
+                "x/.zattrs": {"a": [1, 2]},
+                "g/.zgroup": {"zarr_format": 2},
+                "g/.zattrs": {},
+                "g/y/.zarray": _STORED_LAYOUT_ZARRAY,
+                "g/y/.zattrs": {"a": [1, 2]},
+                "g/h/.zgroup": {"zarr_format": 2},
+                "g/h/.zattrs": {},
+            },
+        ),
+    ],
+    ids=[
+        "array",
+        "array-normalized-codecs",
+        "array-extra-field",
+        "base-group",
+        "group-empty",
+        "group-nested",
+    ],
+)
+def test_to_stored_metadata_json_v2(
+    spec: AnyArraySpec | AnyBaseGroupSpec, expected: dict[str, object], tmp_path: Path
+) -> None:
+    """
+    `to_stored_metadata_json` returns the Zarr V2 documents of the node and,
+    for a `GroupSpec`, of each member at any depth, each at its store key
+    prefixed by the member's path: `.zarray` / `.zgroup`, and `.zattrs`,
+    written even when the attributes are empty. Read back from JSON, each
+    node's documents are what `zarr-metadata`'s `to_key_value` writes for
+    it, and the keys and `.zattrs` documents are the ones `to_zarr` writes
+    (zarr-python normalizes codec configurations, so `.zarray` is not
+    compared). `from_stored_metadata_json` reads the layout back as the same
+    spec, and, unless zarr-python normalizes the codecs or drops the extra
+    fields, so does `from_zarr` once the documents are written as JSON.
+    """
+    stored = spec.to_stored_metadata_json()
+    assert stored == expected
+    assert type(spec).from_stored_metadata_json(stored) == spec
+    nodes = spec.to_flat() if isinstance(spec, GroupSpec) else {"": spec}
+    for node in nodes.values():
+        model = ZarrV2ArrayMetadata if is_array_spec(node) else ZarrV2GroupMetadata
+        key_value = model.from_json(node.to_metadata_json()).to_key_value()
+        assert {key: json.loads(value) for key, value in key_value.items()} == json.loads(
+            json.dumps(node.to_stored_metadata_json())
+        )
+    as_read = json.loads(json.dumps(stored))
+    zarr = pytest.importorskip("zarr")
+    store = zarr.storage.MemoryStore()
+    spec.to_zarr(store, path="")
+    written = {key: json.loads(value.to_bytes()) for key, value in store._store_dict.items()}
+    assert written.keys() == as_read.keys()
+    assert {k: v for k, v in written.items() if k.endswith(".zattrs")} == {
+        k: v for k, v in as_read.items() if k.endswith(".zattrs")
+    }
+    if spec is _TO_METADATA_JSON_ARRAY or (is_array_spec(spec) and spec.extra_fields):
+        return
+    for key, document in stored.items():
+        (tmp_path / key).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / key).write_text(json.dumps(document))
+    assert type(spec).from_zarr(zarr.open(tmp_path, mode="r", zarr_format=2)) == spec
+
+
+def test_from_stored_metadata_json_v2_base_group_reads_root() -> None:
+    """
+    `BaseGroupSpec.from_stored_metadata_json` reads a hierarchy's root alone,
+    and `GroupSpec` reads a `BaseGroupSpec`'s layout as a group with no
+    members: a layout does not tell the two apart. A missing `.zattrs` reads
+    as empty attributes.
+    """
+    assert BaseGroupSpec.from_stored_metadata_json(
+        _STORED_LAYOUT_GROUP.to_stored_metadata_json()
+    ) == BaseGroupSpec(attributes={"a": 1})
+    assert GroupSpec.from_stored_metadata_json(
+        BaseGroupSpec(attributes={"a": 1}).to_stored_metadata_json()
+    ) == GroupSpec(attributes={"a": 1}, members={})
+    assert GroupSpec.from_stored_metadata_json({".zgroup": {"zarr_format": 2}}) == GroupSpec()
+
+
+def test_from_stored_metadata_json_v2_unrecognized_key() -> None:
+    """A key other than a node's `.zarray`, `.zgroup` or `.zattrs` is refused."""
+    stored = {**_STORED_LAYOUT_GROUP.to_stored_metadata_json(), ".zmetadata": {}}
+    with pytest.raises(ValueError, match="Unrecognized store key '.zmetadata'"):
+        GroupSpec.from_stored_metadata_json(stored)
+
+
+def test_from_stored_metadata_json_v2_array_and_group() -> None:
+    """A path holding both a `.zarray` and a `.zgroup` is refused."""
+    stored = {**_STORED_LAYOUT_GROUP.to_stored_metadata_json(), "x/.zgroup": {"zarr_format": 2}}
+    with pytest.raises(ValueError, match="both a .zarray and a .zgroup at 'x'"):
+        GroupSpec.from_stored_metadata_json(stored)
+
+
+def test_from_stored_metadata_json_v2_orphan_zattrs() -> None:
+    """A `.zattrs` with neither a `.zarray` nor a `.zgroup` beside it is refused."""
+    stored = {**_STORED_LAYOUT_GROUP.to_stored_metadata_json(), "z/.zattrs": {}}
+    with pytest.raises(ValueError, match="a .zattrs at 'z', but no .zarray or .zgroup"):
+        GroupSpec.from_stored_metadata_json(stored)
+
+
+@pytest.mark.parametrize("key", ["/.zattrs", "/x/.zarray", "g//.zgroup"])
+def test_from_stored_metadata_json_v2_malformed_key(key: str) -> None:
+    """A key with a leading `/` or an empty segment, which would alias another node's, is refused."""
+    stored = {**_STORED_LAYOUT_GROUP.to_stored_metadata_json(), key: {}}
+    with pytest.raises(ValueError, match=f"Invalid store key '{key}'"):
+        GroupSpec.from_stored_metadata_json(stored)
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        {"x/.zarray": []},
+        {"x/.zgroup": {"zarr_format": 2}, "x/.zattrs": []},
+        {"x/.zarray": {"zarr_format": 2}},
+    ],
+    ids=["zarray-not-object", "zattrs-not-object", "zarray-invalid"],
+)
+def test_from_stored_metadata_json_v2_invalid_document(member: dict[str, object]) -> None:
+    """A node whose documents are not a valid node is refused by validation."""
+    stored = {".zgroup": {"zarr_format": 2}, **member}
+    with pytest.raises(ValidationError):
+        GroupSpec.from_stored_metadata_json(stored)
+
+
+def test_from_stored_metadata_json_v2_no_root() -> None:
+    """A layout without the root's `.zgroup` is refused."""
+    stored = dict(_STORED_LAYOUT_GROUP.to_stored_metadata_json())
+    del stored[".zgroup"], stored[".zattrs"]
+    with pytest.raises(ValueError, match="no group's metadata at the root"):
+        GroupSpec.from_stored_metadata_json(stored)
+
+
+def test_from_stored_metadata_json_v2_root_of_other_type() -> None:
+    """A layout whose root is not the node type of the class is refused."""
+    with pytest.raises(ValueError, match="root is a group, not an array"):
+        ArraySpec.from_stored_metadata_json(GroupSpec().to_stored_metadata_json())
+
+
+def test_from_stored_metadata_json_v2_array_with_members() -> None:
+    """An array's layout holding other nodes' documents is refused."""
+    stored = {**_STORED_LAYOUT_ARRAY.to_stored_metadata_json(), "g/.zgroup": {"zarr_format": 2}}
+    with pytest.raises(ValueError, match="An array has no members"):
+        ArraySpec.from_stored_metadata_json(stored)
+
+
+@pytest.mark.parametrize("parent", ["missing", "array"])
+def test_from_stored_metadata_json_v2_parent_not_group(parent: str) -> None:
+    """A node whose parent is not a group in the layout is refused."""
+    stored: dict[str, object] = dict(_STORED_LAYOUT_GROUP.to_stored_metadata_json())
+    if parent == "missing":
+        del stored["g/.zgroup"], stored["g/.zattrs"]
+        member = "g/y"
+    else:
+        stored["x/z/.zgroup"] = {"zarr_format": 2}
+        member = "x/z"
+    with pytest.raises(ValueError, match=f"documents at '{member}', but no group's"):
+        GroupSpec.from_stored_metadata_json(stored)

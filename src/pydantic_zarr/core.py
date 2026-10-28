@@ -526,6 +526,112 @@ def json_eq(a: object, b: object) -> bool:
     return a == b
 
 
+type StoredNodeType = Literal["array", "group"]
+"""The type of a node in a stored layout."""
+
+type StoredNodes = Mapping[str, tuple[StoredNodeType | None, object]]
+"""
+A stored layout read as each node's type and metadata document, keyed by the
+node's key prefix (see `split_store_key`): `""` for the root, `"a/b"` for the
+node at hierarchy path `/a/b`. The type is `None` when the document does not
+say, and the document is then left for validation to judge.
+"""
+
+_A_NODE: dict[StoredNodeType, str] = {"array": "an array", "group": "a group"}
+
+
+def split_store_key(key: str) -> tuple[str, str]:
+    """
+    Split a store key in a stored layout into the node's key prefix and the
+    document's name: `"a/b/zarr.json"` into `("a/b", "zarr.json")`, and
+    `"zarr.json"` into `("", "zarr.json")`.
+
+    A node's path and its store keys are spelled differently. In Zarr V3 a
+    node's hierarchy path starts with `/` (the root's is `/`, a member's
+    `/a/b`), and its metadata key is that path with the leading `/` stripped,
+    then `/zarr.json` appended (`a/b/zarr.json`); the root's is `zarr.json`
+    (https://github.com/zarr-developers/zarr-specs/blob/fc7dd9c9beb5a50b87f9b08b00bf50fc0048482f/docs/v3/core/index.rst#L382-L388).
+    In Zarr V2 a node's logical path is normalized, stripping any leading or
+    trailing `/` and collapsing repeated `/`, before it prefixes the node's
+    keys (`a/b/.zarray`) (https://github.com/zarr-developers/zarr-specs/blob/fc7dd9c9beb5a50b87f9b08b00bf50fc0048482f/docs/v2/v2.0.rst#L250-L276).
+    Either way a store key has no leading `/` and no empty segment, so this
+    raises `ValueError` for one that does: it would name the same node as
+    another key (`"/zarr.json"` as `"zarr.json"`) and replace that key's
+    document.
+    """
+    *segments, name = key.split("/")
+    if "" in segments:
+        msg = (
+            f"Invalid store key {key!r}: a store key is the node's path with no leading "
+            "'/' and no empty segment ('zarr.json' for the root, 'a/b/zarr.json' for the "
+            "node at '/a/b')."
+        )
+        raise ValueError(msg)
+    return "/".join(segments), name
+
+
+def stored_root(nodes: StoredNodes, node_type: StoredNodeType) -> object:
+    """
+    The root's metadata document among `nodes`. Raises `ValueError` when there
+    is none, or the root's document says it is not a `node_type`.
+    """
+    if "" not in nodes:
+        msg = f"The layout holds no {node_type}'s metadata at the root."
+        raise ValueError(msg)
+    root_type, document = nodes[""]
+    if root_type is not None and root_type != node_type:
+        msg = f"The layout's root is {_A_NODE[root_type]}, not {_A_NODE[node_type]}."
+        raise ValueError(msg)
+    return document
+
+
+def stored_array(nodes: StoredNodes) -> object:
+    """
+    The metadata document of the array `nodes` describe. Raises `ValueError`
+    when `nodes` hold no array at the root, or hold any other node.
+    """
+    document = stored_root(nodes, "array")
+    if len(nodes) > 1:
+        others = ", ".join(repr(path) for path in nodes if path)
+        msg = f"An array has no members, but the layout holds documents at {others}."
+        raise ValueError(msg)
+    return document
+
+
+def stored_flat[A: BaseModel, G: BaseModel](
+    nodes: StoredNodes, array_class: type[A], group_class: type[G]
+) -> dict[str, A | G]:
+    """
+    The hierarchy `nodes` describe, as `from_flat` reads one: each node
+    validated as an `array_class` or a `group_class` (a node whose type is not
+    stated as the latter), keyed by its path in `to_flat`'s spelling. That is
+    the key prefix with `/` put back in front (`"/a/b"`, the V3 hierarchy path),
+    except that the root's is `""`, not `/`.
+
+    Raises `ValueError` when `nodes` hold no group at the root, or a node whose
+    parent is not a group among `nodes` (a store holds no implicit groups),
+    and `ValidationError` when a node's document is not valid.
+    """
+    stored_root(nodes, "group")
+    flat: dict[str, A | G] = {
+        f"/{path}" if path else "": (
+            array_class if node_type == "array" else group_class
+        ).model_validate(document)
+        for path, (node_type, document) in nodes.items()
+    }
+    for path in nodes:
+        if path:
+            parent = path.rpartition("/")[0]
+            if not isinstance(flat.get(f"/{parent}" if parent else ""), group_class):
+                where = repr(parent) if parent else "the root"
+                msg = (
+                    f"The layout holds documents at {path!r}, but no group's at {where}, "
+                    "its parent."
+                )
+                raise ValueError(msg)
+    return flat
+
+
 def walk_zarr_hierarchy(
     node: zarr.Array | zarr.Group, *, depth: int = -1
 ) -> Iterator[tuple[str, zarr.Array | zarr.Group]]:

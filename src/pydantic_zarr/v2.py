@@ -26,10 +26,18 @@ from pydantic import BaseModel, Field, SerializeAsAny, field_validator, model_va
 from pydantic.functional_validators import BeforeValidator
 from typing_extensions import TypedDict, TypeIs, TypeVar
 from zarr_metadata import (
+    ZARR_V2_ARRAY_METADATA_STORE_KEY,
+    ZARR_V2_ATTRIBUTES_STORE_KEY,
+    ZARR_V2_GROUP_METADATA_STORE_KEY,
     JSONValue,
     MetadataValidationError,
     ZarrV2ArrayDimensionSeparator,
+    ZarrV2ArrayMetadataJSON,
     ZarrV2ArrayOrder,
+    ZarrV2GroupMetadataJSON,
+    ZarrV2ZArrayJSON,
+    ZarrV2ZAttrsJSON,
+    ZarrV2ZGroupJSON,
 )
 from zarr_metadata.model import ZarrV2ArrayMetadata as ZarrV2ArrayMetadataModel
 
@@ -37,6 +45,8 @@ from pydantic_zarr._metadata import format_problems
 from pydantic_zarr.core import (
     ExtraFieldsBase,
     IncEx,
+    StoredNodes,
+    StoredNodeType,
     StrictBase,
     canonicalize_fill_value,
     ensure_key_no_path,
@@ -45,6 +55,10 @@ from pydantic_zarr.core import (
     model_like,
     parse_dtype_v2,
     resolve_member_path,
+    split_store_key,
+    stored_array,
+    stored_flat,
+    stored_root,
     tuplify_json,
     walk_zarr_hierarchy,
 )
@@ -54,7 +68,6 @@ if TYPE_CHECKING:
     from numcodecs.abc import Codec
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
-    from zarr_metadata import ZarrV2ArrayMetadataJSON, ZarrV2GroupMetadataJSON
 
 # SerializeAsAny: see the note on the v3 TBaseAttr — a model held by a spec
 # with un-narrowed attributes must serialize with its own fields, not the
@@ -91,6 +104,31 @@ FillValue = (
 
 DimensionSeparator = ZarrV2ArrayDimensionSeparator
 MemoryOrder = ZarrV2ArrayOrder
+
+type ZarrV2StoredDocumentJSON = ZarrV2ZArrayJSON | ZarrV2ZGroupJSON | ZarrV2ZAttrsJSON
+"""Any document a Zarr V2 hierarchy stores: a node's `.zarray`, `.zgroup` or `.zattrs`."""
+
+# The documents a store holds for a node, keyed by store key. The keys are not
+# identifiers, hence the functional syntax. The array type is closed, and the
+# group type admits only its members' documents beyond its own, so each is
+# assignable to a `Mapping[str, ...]` of its value types.
+ZarrV2ArrayStoredJSON = TypedDict(
+    "ZarrV2ArrayStoredJSON",
+    {".zarray": ZarrV2ZArrayJSON, ".zattrs": ZarrV2ZAttrsJSON},
+    closed=True,
+)
+"""A Zarr V2 array's metadata as a store holds it: its `.zarray` and `.zattrs` documents."""
+ZarrV2GroupStoredJSON = TypedDict(
+    "ZarrV2GroupStoredJSON",
+    {".zgroup": ZarrV2ZGroupJSON, ".zattrs": ZarrV2ZAttrsJSON},
+    extra_items=ZarrV2StoredDocumentJSON,
+)
+"""
+A Zarr V2 group's metadata as a store holds it: its own `.zgroup` and
+`.zattrs` documents, and each member's prefixed by the member's normalized
+logical path relative to the group, which has no leading `/`
+(`"a/b/.zarray"` or `"a/b/.zgroup"`, and `"a/b/.zattrs"`).
+"""
 
 
 def dictify_codec(value: dict[str, Any] | Codec) -> dict[str, Any]:
@@ -329,6 +367,35 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         if document["filters"] is not None:
             document["filters"] = tuple(document["filters"])
         return cast("ZarrV2ArrayMetadataJSON", document)
+
+    def to_stored_metadata_json(self) -> ZarrV2ArrayStoredJSON:
+        """
+        This array's Zarr V2 metadata as a store holds it: a mapping from each
+        store key to the JSON document stored there.
+
+        The `.zarray` document is `to_metadata_json()` without `attributes`,
+        and the `.zattrs` document is `attributes`. `.zattrs` is written even
+        when the attributes are empty, as zarr-python writes it.
+        `from_stored_metadata_json` reads it back.
+        """
+        document = self.to_metadata_json()
+        zattrs = document.pop("attributes", {})
+        return {
+            ZARR_V2_ARRAY_METADATA_STORE_KEY: cast("ZarrV2ZArrayJSON", document),
+            ZARR_V2_ATTRIBUTES_STORE_KEY: zattrs,
+        }
+
+    @classmethod
+    def from_stored_metadata_json(cls, data: Mapping[str, object]) -> Self:
+        """
+        Read an array from its metadata as a store holds it: a mapping from
+        store key to parsed JSON document, as `to_stored_metadata_json`
+        returns it. A missing `.zattrs` reads as empty attributes. Raises
+        `ValueError` when `data` holds no array's `.zarray` at the root, or
+        holds documents of any other node, and `ValidationError` when the
+        documents are not a valid array.
+        """
+        return cls.model_validate(stored_array(_stored_nodes(data)))
 
     @classmethod
     def from_array(
@@ -666,6 +733,38 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         `GroupSpec`'s `members` are left out.
         """
         return cast("ZarrV2GroupMetadataJSON", self.model_dump(exclude={"members"}))
+
+    def to_stored_metadata_json(self) -> ZarrV2GroupStoredJSON:
+        """
+        This group's Zarr V2 metadata as a store holds it: a mapping from each
+        store key to the JSON document stored there.
+
+        The `.zgroup` document is `to_metadata_json()` without `attributes`,
+        and the `.zattrs` document is `attributes`. `.zattrs` is written even
+        when the attributes are empty, as zarr-python writes it. A
+        `BaseGroupSpec` holds no members, so these are the only keys;
+        `GroupSpec` adds each member's documents.
+        """
+        document = self.to_metadata_json()
+        return {
+            # `.zgroup` holds no other members
+            ZARR_V2_GROUP_METADATA_STORE_KEY: {"zarr_format": document["zarr_format"]},
+            ZARR_V2_ATTRIBUTES_STORE_KEY: document.get("attributes", {}),
+        }
+
+    @classmethod
+    def from_stored_metadata_json(cls, data: Mapping[str, object]) -> Self:
+        """
+        Read a group's own metadata from a stored layout: a mapping from store
+        key to parsed JSON document, as `to_stored_metadata_json` returns it.
+        Only the root's `.zgroup` and `.zattrs` are read; members' documents
+        are left unread, as `from_zarr` leaves members. A missing `.zattrs`
+        reads as empty attributes. Raises `ValueError` when `data` holds no
+        group's `.zgroup` at the root, and `ValidationError` when the
+        documents are not a valid group.
+        """
+        own = {key: document for key, document in data.items() if "/" not in key}
+        return cls.model_validate(stored_root(_stored_nodes(own), "group"))
 
     @classmethod
     def from_zarr(cls, group: zarr.Group) -> Self:
@@ -1035,6 +1134,53 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         """
         return to_flat(self, root_path=root_path)
 
+    @override
+    def to_stored_metadata_json(self) -> ZarrV2GroupStoredJSON:
+        """
+        This hierarchy's Zarr V2 metadata as a store holds it: a mapping from
+        each store key to the JSON document stored there. That is this
+        group's `.zgroup` and `.zattrs`, and each member's at any depth,
+        prefixed by the member's path (`"a/.zgroup"`, `"a/b/.zarray"`,
+        `"a/b/.zattrs"`). The prefix is the member's path as `to_flat` spells
+        it (`"/a/b"`) normalized as the Zarr V2 spec normalizes logical paths,
+        which strips the leading `/`
+        (https://github.com/zarr-developers/zarr-specs/blob/fc7dd9c9beb5a50b87f9b08b00bf50fc0048482f/docs/v2/v2.0.rst#L250-L276).
+        These are the metadata documents `to_zarr` writes,
+        so a consumer can write the hierarchy by writing each document, as
+        JSON, at its key under the hierarchy's root.
+        `from_stored_metadata_json` reads it back.
+        """
+        members: dict[str, ZarrV2StoredDocumentJSON] = {
+            f"{path.removeprefix('/')}/{key}": document
+            for path, node in self.to_flat().items()
+            if path
+            for key, document in _node_documents(node)
+        }
+        # each member's document is of the type's `extra_items`; the cast is for
+        # checkers that do not yet type writes to `extra_items` (pyrefly)
+        return cast("ZarrV2GroupStoredJSON", {**super().to_stored_metadata_json(), **members})
+
+    @override
+    @classmethod
+    def from_stored_metadata_json(cls, data: Mapping[str, object]) -> Self:
+        """
+        Read a hierarchy from its metadata as a store holds it: a mapping from
+        store key to parsed JSON document, as `to_stored_metadata_json`
+        returns it. Each node's documents are read, a missing `.zattrs` as
+        empty attributes, and the nodes are assembled with `from_flat`. A
+        layout cannot tell a group whose members were not read from one with
+        none, so every group is read as a `GroupSpec`, with the members the
+        layout holds.
+
+        Raises `ValueError` when `data` holds no group's `.zgroup` at the
+        root, a key with a leading `/` or an empty segment, a key other than
+        a `.zarray`, `.zgroup` or `.zattrs`, a path
+        with both a `.zarray` and a `.zgroup`, a `.zattrs` with neither, or a
+        node whose parent is not a group in `data` (a store holds no implicit
+        groups), and `ValidationError` when a node's documents are not valid.
+        """
+        return cls.from_flat(stored_flat(_stored_nodes(data), ArraySpec, BaseGroupSpec))
+
     @classmethod
     def from_flat(cls, data: Mapping[str, AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec]) -> Self:
         """
@@ -1069,6 +1215,82 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         """
         from_flated = from_flat_group(data)
         return cls.model_validate(from_flated.model_dump())
+
+
+def _node_documents(
+    node: AnyArraySpec | AnyBaseGroupSpec,
+) -> tuple[tuple[str, ZarrV2StoredDocumentJSON], ...]:
+    """A node's own stored documents, as (store key, document) pairs."""
+    if isinstance(node, ArraySpec):
+        array = node.to_stored_metadata_json()
+        return (
+            (ZARR_V2_ARRAY_METADATA_STORE_KEY, array[ZARR_V2_ARRAY_METADATA_STORE_KEY]),
+            (ZARR_V2_ATTRIBUTES_STORE_KEY, array[ZARR_V2_ATTRIBUTES_STORE_KEY]),
+        )
+    group = node.to_stored_metadata_json()
+    return (
+        (ZARR_V2_GROUP_METADATA_STORE_KEY, group[ZARR_V2_GROUP_METADATA_STORE_KEY]),
+        (ZARR_V2_ATTRIBUTES_STORE_KEY, group[ZARR_V2_ATTRIBUTES_STORE_KEY]),
+    )
+
+
+_STORED_NODE_KEYS = (
+    ZARR_V2_ARRAY_METADATA_STORE_KEY,
+    ZARR_V2_GROUP_METADATA_STORE_KEY,
+    ZARR_V2_ATTRIBUTES_STORE_KEY,
+)
+
+
+def _stored_nodes(data: Mapping[str, object]) -> StoredNodes:
+    """
+    Read a stored layout, a mapping from store key to parsed JSON document,
+    as each node's type and merged metadata document (its `.zarray` or
+    `.zgroup` with its `.zattrs` under `attributes`, empty when missing),
+    keyed by the node's key prefix (see `split_store_key`): `""` for the
+    root, `"a/b"` for the node at logical path `a/b`. Raises `ValueError` naming
+    a malformed key, a key other than a node's `.zarray`, `.zgroup` or
+    `.zattrs`, a path with both a `.zarray` and a `.zgroup`, or a `.zattrs`
+    with neither.
+    """
+    files_by_path: dict[str, dict[str, object]] = {}
+    for key, document in data.items():
+        path, name = split_store_key(key)
+        if name not in _STORED_NODE_KEYS:
+            expected = ", ".join(map(repr, _STORED_NODE_KEYS))
+            msg = (
+                f"Unrecognized store key {key!r}: a Zarr V2 node's metadata is stored at "
+                f"{expected}."
+            )
+            raise ValueError(msg)
+        files_by_path.setdefault(path, {})[name] = document
+    nodes: dict[str, tuple[StoredNodeType | None, object]] = {}
+    for path, files in files_by_path.items():
+        where = repr(path) if path else "the root"
+        node_type: StoredNodeType
+        if ZARR_V2_ARRAY_METADATA_STORE_KEY in files and ZARR_V2_GROUP_METADATA_STORE_KEY in files:
+            msg = (
+                f"The layout holds both a {ZARR_V2_ARRAY_METADATA_STORE_KEY} and a "
+                f"{ZARR_V2_GROUP_METADATA_STORE_KEY} at {where}: a node is an array or a "
+                "group, not both."
+            )
+            raise ValueError(msg)
+        if ZARR_V2_ARRAY_METADATA_STORE_KEY in files:
+            node_type, metadata = "array", files[ZARR_V2_ARRAY_METADATA_STORE_KEY]
+        elif ZARR_V2_GROUP_METADATA_STORE_KEY in files:
+            node_type, metadata = "group", files[ZARR_V2_GROUP_METADATA_STORE_KEY]
+        else:
+            msg = (
+                f"The layout holds a {ZARR_V2_ATTRIBUTES_STORE_KEY} at {where}, but no "
+                f"{ZARR_V2_ARRAY_METADATA_STORE_KEY} or {ZARR_V2_GROUP_METADATA_STORE_KEY}."
+            )
+            raise ValueError(msg)
+        attributes = files.get(ZARR_V2_ATTRIBUTES_STORE_KEY, {})
+        # a document that is not a JSON object is passed on for validation to refuse
+        document = (
+            {**metadata, "attributes": attributes} if isinstance(metadata, Mapping) else metadata
+        )
+        nodes[path] = (node_type, document)
+    return nodes
 
 
 @overload

@@ -38,13 +38,17 @@ from pydantic import (
 )
 from typing_extensions import TypedDict, TypeIs, TypeVar
 from zarr_metadata import (
+    ZARR_V3_ARRAY_METADATA_STORE_KEY,
     ZARR_V3_CONSOLIDATED_METADATA_KEY,
+    ZARR_V3_GROUP_METADATA_STORE_KEY,
     DefaultChunkKeyEncodingMetadata,
     JSONValue,
     MetadataValidationError,
     RegularChunkGridMetadata,
     V2ChunkKeyEncodingMetadata,
+    ZarrV3ArrayMetadataJSON,
     ZarrV3ExtensionField,
+    ZarrV3GroupMetadataJSON,
 )
 from zarr_metadata.definition._envelope import envelope_problems
 from zarr_metadata.model import ZarrV3ArrayMetadata as ZarrV3ArrayMetadataModel
@@ -75,6 +79,7 @@ from pydantic_zarr._metadata import format_lines, format_problems, scope_from_co
 from pydantic_zarr.core import (
     ExtraFieldsBase,
     IncEx,
+    StoredNodes,
     canonicalize_fill_value,
     ensure_multiple,
     flatten_extra_fields,
@@ -82,6 +87,10 @@ from pydantic_zarr.core import (
     maybe_node,
     model_like,
     resolve_member_path,
+    split_store_key,
+    stored_array,
+    stored_flat,
+    stored_root,
     tuplify_json,
     walk_zarr_hierarchy,
 )
@@ -91,7 +100,6 @@ if TYPE_CHECKING:
     import zarr
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
-    from zarr_metadata import ZarrV3ArrayMetadataJSON, ZarrV3GroupMetadataJSON
     from zarr_metadata.v3.definition import ZarrV3Context
 
 
@@ -128,6 +136,29 @@ TItem = TypeVar("TItem", bound=TBaseItem, default=TBaseItem, covariant=True)
 TDefault = TypeVar("TDefault")
 
 NodeType = Literal["group", "array"]
+
+type ZarrV3StoredDocumentJSON = ZarrV3ArrayMetadataJSON | ZarrV3GroupMetadataJSON
+"""Any document a Zarr V3 hierarchy stores: a node's `zarr.json`."""
+
+# The documents a store holds for a node, keyed by store key. The keys are not
+# identifiers, hence the functional syntax. The array type is closed, and the
+# group type admits only its members' documents beyond its own, so each is
+# assignable to a `Mapping[str, ...]` of its value types.
+ZarrV3ArrayStoredJSON = TypedDict(
+    "ZarrV3ArrayStoredJSON", {"zarr.json": ZarrV3ArrayMetadataJSON}, closed=True
+)
+"""A Zarr V3 array's metadata as a store holds it: its `zarr.json` document."""
+ZarrV3GroupStoredJSON = TypedDict(
+    "ZarrV3GroupStoredJSON",
+    {"zarr.json": ZarrV3GroupMetadataJSON},
+    extra_items=ZarrV3StoredDocumentJSON,
+)
+"""
+A Zarr V3 group's metadata as a store holds it: its own `zarr.json` document,
+and each member's at its metadata key: the member's hierarchy path relative to
+the group, with no leading `/`, then `/zarr.json` (`"a/b/zarr.json"` for the
+member at `/a/b`).
+"""
 
 FillValue = JSONValue
 """
@@ -845,6 +876,25 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         """
         return cast("ZarrV3ArrayMetadataJSON", self.model_dump())
 
+    def to_stored_metadata_json(self) -> ZarrV3ArrayStoredJSON:
+        """
+        This array's Zarr V3 metadata as a store holds it: a mapping from its
+        one store key, `zarr.json`, to `to_metadata_json()`.
+        `from_stored_metadata_json` reads it back.
+        """
+        return {ZARR_V3_ARRAY_METADATA_STORE_KEY: self.to_metadata_json()}
+
+    @classmethod
+    def from_stored_metadata_json(cls, data: Mapping[str, object]) -> Self:
+        """
+        Read an array from its metadata as a store holds it: a mapping from
+        store key to parsed JSON document, as `to_stored_metadata_json`
+        returns it. Raises `ValueError` when `data` holds no array's
+        `zarr.json` at the root, or holds documents of any other node, and
+        `ValidationError` when the document is not a valid array.
+        """
+        return cls.model_validate(stored_array(_stored_nodes(data)))
+
     @classmethod
     def from_array(
         cls,
@@ -1463,6 +1513,28 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         """
         return cast("ZarrV3GroupMetadataJSON", self.model_dump(exclude={"members"}))
 
+    def to_stored_metadata_json(self) -> ZarrV3GroupStoredJSON:
+        """
+        This group's Zarr V3 metadata as a store holds it: a mapping from each
+        store key to the JSON document stored there. A `BaseGroupSpec` holds
+        no members, so the mapping has one key, `zarr.json`, mapped to
+        `to_metadata_json()`; `GroupSpec` adds each member's documents.
+        """
+        return {ZARR_V3_GROUP_METADATA_STORE_KEY: self.to_metadata_json()}
+
+    @classmethod
+    def from_stored_metadata_json(cls, data: Mapping[str, object]) -> Self:
+        """
+        Read a group's own metadata from a stored layout: a mapping from store
+        key to parsed JSON document, as `to_stored_metadata_json` returns it.
+        Only the root's `zarr.json` is read; members' documents are left
+        unread, as `from_zarr` leaves members. Raises `ValueError` when `data`
+        holds no group's `zarr.json` at the root, and `ValidationError` when
+        the document is not a valid group.
+        """
+        own = {key: document for key, document in data.items() if "/" not in key}
+        return cls.model_validate(stored_root(_stored_nodes(own), "group"))
+
     @classmethod
     def from_zarr(cls, group: zarr.Group) -> Self:
         """
@@ -1615,6 +1687,49 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
             return self.resolve_path(path)
         except KeyError:
             return default
+
+    @override
+    def to_stored_metadata_json(self) -> ZarrV3GroupStoredJSON:
+        """
+        This hierarchy's Zarr V3 metadata as a store holds it: a mapping from
+        each store key to the JSON document stored there. That is this
+        group's `zarr.json`, and each member's at any depth, at its metadata
+        key (`"a/zarr.json"`, `"a/b/zarr.json"`). A key is the member's path
+        as `to_flat` spells it (`"/a/b"`), with the leading `/` stripped and
+        `/zarr.json` appended, as the Zarr V3 spec forms metadata keys from
+        hierarchy paths (https://github.com/zarr-developers/zarr-specs/blob/fc7dd9c9beb5a50b87f9b08b00bf50fc0048482f/docs/v3/core/index.rst#L382-L388).
+        These are the metadata documents `to_zarr` writes, so a consumer can
+        write the hierarchy by writing each document, as JSON, at its key
+        under the hierarchy's root. `from_stored_metadata_json` reads it back.
+        """
+        members: dict[str, ZarrV3StoredDocumentJSON] = {
+            f"{path.removeprefix('/')}/{ZARR_V3_GROUP_METADATA_STORE_KEY}": node.to_metadata_json()
+            for path, node in self.to_flat().items()
+            if path
+        }
+        # each member's document is of the type's `extra_items`; the cast is for
+        # checkers that do not yet type writes to `extra_items` (pyrefly)
+        return cast("ZarrV3GroupStoredJSON", {**super().to_stored_metadata_json(), **members})
+
+    @override
+    @classmethod
+    def from_stored_metadata_json(cls, data: Mapping[str, object]) -> Self:
+        """
+        Read a hierarchy from its metadata as a store holds it: a mapping from
+        store key to parsed JSON document, as `to_stored_metadata_json`
+        returns it. Each node's `zarr.json` is read, and the nodes are
+        assembled with `from_flat`. A layout cannot tell a group whose members
+        were not read from one with none, so every group is read as a
+        `GroupSpec`, with the members the layout holds.
+
+        Raises `ValueError` when `data` holds no group's `zarr.json` at the
+        root, a key with a leading `/` or an empty segment, a key other than a
+        `zarr.json`, or a node whose parent is not a group in `data` (a store
+        holds no implicit groups), and `ValidationError` when a document is
+        not a valid node (one whose `node_type` is neither `"array"` nor
+        `"group"` is validated as a group).
+        """
+        return cls.from_flat(stored_flat(_stored_nodes(data), ArraySpec, BaseGroupSpec))
 
     @classmethod
     def from_flat(cls, data: Mapping[str, AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec]) -> Self:
@@ -1926,6 +2041,32 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
             return True
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
+
+
+def _stored_nodes(data: Mapping[str, object]) -> StoredNodes:
+    """
+    Read a stored layout, a mapping from store key to parsed JSON document,
+    as each node's type and metadata document, keyed by the node's key prefix
+    (see `split_store_key`): `""` for the root, `"a/b"` for the node at
+    `/a/b`. The type is the document's `node_type` when that is
+    `"array"` or `"group"`, and `None` otherwise. Raises `ValueError` naming a
+    malformed key, or a key other than a node's `zarr.json`.
+    """
+    nodes: dict[str, tuple[Literal["array", "group"] | None, object]] = {}
+    for key, document in data.items():
+        path, name = split_store_key(key)
+        if name != ZARR_V3_GROUP_METADATA_STORE_KEY:
+            msg = (
+                f"Unrecognized store key {key!r}: a Zarr V3 node's metadata is stored at "
+                f"{ZARR_V3_GROUP_METADATA_STORE_KEY!r}."
+            )
+            raise ValueError(msg)
+        node_type = document.get("node_type") if isinstance(document, Mapping) else None
+        nodes[path] = (
+            node_type if node_type == "array" or node_type == "group" else None,
+            document,
+        )
+    return nodes
 
 
 def _check_storable_tree(node: AnyArraySpec | AnyBaseGroupSpec, path: str = "") -> None:

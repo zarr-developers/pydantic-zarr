@@ -112,6 +112,75 @@ print(group.to_metadata_json())
 #> {'zarr_format': 3, 'node_type': 'group', 'attributes': {'foo': 42}}
 ```
 
+## Stored metadata documents
+
+`to_stored_metadata_json` returns a node's metadata the way a Zarr store holds
+it: a mapping from each store key to the JSON document stored there. An array
+stores one document, so its mapping has one key, `zarr.json`, typed as
+`pydantic_zarr.v3.ZarrV3ArrayStoredJSON`. A `GroupSpec`'s mapping holds its own
+`zarr.json` and each member's, at any depth, at the member's path:
+these are the metadata documents `to_zarr` writes. It is typed as
+`pydantic_zarr.v3.ZarrV3GroupStoredJSON`, which types the group's own
+`zarr.json` exactly and every other key as either document type.
+
+```python
+from pydantic_zarr.v3 import ArraySpec, GroupSpec
+
+array = ArraySpec.from_shape_and_data_type((10,), "uint8")
+group = GroupSpec(attributes={"foo": 42}, members={"sub": GroupSpec(members={"array": array})})
+print(list(group.to_stored_metadata_json()))
+#> ['zarr.json', 'sub/zarr.json', 'sub/array/zarr.json']
+```
+
+`from_stored_metadata_json` reads such a mapping back, with no store
+involved. A layout cannot tell a group whose members were not read from one
+with none, so `GroupSpec.from_stored_metadata_json` reads every group as a
+`GroupSpec` with the members the layout holds, and
+`BaseGroupSpec.from_stored_metadata_json` reads only the root's document.
+
+```python
+from pydantic_zarr.v3 import ArraySpec, GroupSpec
+
+array = ArraySpec.from_shape_and_data_type((10,), "uint8")
+group = GroupSpec(attributes={"foo": 42}, members={"sub": GroupSpec(members={"array": array})})
+assert GroupSpec.from_stored_metadata_json(group.to_stored_metadata_json()) == group
+```
+
+A key has no leading `/`: the Zarr V3 spec forms a node's metadata key by
+stripping the leading `/` from its hierarchy path and appending `/zarr.json`,
+so the root's key is `zarr.json` and the key of the node at `/sub/array` is
+`sub/array/zarr.json` ([spec](https://github.com/zarr-developers/zarr-specs/blob/fc7dd9c9beb5a50b87f9b08b00bf50fc0048482f/docs/v3/core/index.rst#L382-L388)).
+`from_stored_metadata_json` refuses a key with a leading `/` or an empty
+segment, since `/zarr.json` would name the same node as `zarr.json`.
+
+To write a hierarchy's metadata, write each document as JSON at its key
+under the hierarchy's root. `json.dumps` writes the tuples in the documents as
+JSON arrays. It writes a non-finite float in the attributes (`float("nan")`)
+as the bare token `NaN`, as zarr-python does, which strict JSON parsers
+reject; pass `allow_nan=False` to refuse such attributes instead. Fill values
+need no care: a spec holds a non-finite fill value as a string, such as
+`"NaN"`.
+
+```python
+import json
+import tempfile
+from pathlib import Path
+
+import zarr
+
+from pydantic_zarr.v3 import ArraySpec, GroupSpec
+
+array = ArraySpec.from_shape_and_data_type((10,), "uint8")
+group = GroupSpec(attributes={"foo": 42}, members={"sub": GroupSpec(members={"array": array})})
+
+with tempfile.TemporaryDirectory() as root:
+    for key, document in group.to_stored_metadata_json().items():
+        path = Path(root) / key
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(document))
+    assert GroupSpec.from_zarr(zarr.open_group(root, mode="r")) == group
+```
+
 ## Validation scopes
 
 Constructing an `ArraySpec` validates its fields as a whole Zarr V3 array

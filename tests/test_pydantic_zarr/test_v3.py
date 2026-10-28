@@ -41,6 +41,8 @@ from pydantic_zarr.v3 import (
 from .conftest import DTYPE_EXAMPLES_V3, ZARR_PYTHON_VERSION, DTypeExample
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import zarr
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
@@ -1858,3 +1860,169 @@ def test_to_metadata_json(
     assert json.dumps(model.from_json(document).to_json(), sort_keys=True) == json.dumps(
         document, sort_keys=True
     )
+
+
+_STORED_LAYOUT_GROUP = GroupSpec(
+    attributes={"a": 1},
+    members={
+        "x": _TO_METADATA_JSON_ARRAY,
+        "g": GroupSpec(members={"y": _TO_METADATA_JSON_ARRAY, "h": GroupSpec()}),
+    },
+)
+_STORED_LAYOUT_GROUP_DOCUMENT = {"zarr_format": 3, "node_type": "group", "attributes": {}}
+
+
+@pytest.mark.parametrize(
+    ("spec", "expected"),
+    [
+        (
+            _TO_METADATA_JSON_ARRAY,
+            {"zarr.json": _TO_METADATA_JSON_ARRAY.to_metadata_json()},
+        ),
+        (
+            ArraySpec.model_validate(
+                {**_TO_METADATA_JSON_ARRAY.model_dump(), "my_ext": _TO_METADATA_JSON_EXTENSION}
+            ),
+            {
+                "zarr.json": {
+                    **_TO_METADATA_JSON_ARRAY.model_dump(),
+                    "my_ext": tuplify_json(_TO_METADATA_JSON_EXTENSION),
+                }
+            },
+        ),
+        (
+            BaseGroupSpec(attributes={"a": [1, 2]}),
+            {"zarr.json": {"zarr_format": 3, "node_type": "group", "attributes": {"a": [1, 2]}}},
+        ),
+        (
+            GroupSpec(),
+            {"zarr.json": _STORED_LAYOUT_GROUP_DOCUMENT},
+        ),
+        (
+            _STORED_LAYOUT_GROUP,
+            {
+                "zarr.json": {"zarr_format": 3, "node_type": "group", "attributes": {"a": 1}},
+                "x/zarr.json": _TO_METADATA_JSON_ARRAY.to_metadata_json(),
+                "g/zarr.json": _STORED_LAYOUT_GROUP_DOCUMENT,
+                "g/y/zarr.json": _TO_METADATA_JSON_ARRAY.to_metadata_json(),
+                "g/h/zarr.json": _STORED_LAYOUT_GROUP_DOCUMENT,
+            },
+        ),
+    ],
+    ids=["array", "array-extra-field", "base-group", "group-empty", "group-nested"],
+)
+def test_to_stored_metadata_json(
+    spec: AnyArraySpec | AnyBaseGroupSpec, expected: dict[str, object], tmp_path: Path
+) -> None:
+    """
+    `to_stored_metadata_json` returns the `to_metadata_json` document of the
+    node and, for a `GroupSpec`, of each member at any depth, each at its
+    `zarr.json` key prefixed by the member's path. Read back from JSON, each
+    document is what `zarr-metadata`'s `to_key_value` writes for the node,
+    and the keys are the ones `to_zarr` writes. `from_stored_metadata_json`
+    reads the layout back as the same spec, and so does `from_zarr` once the
+    documents are written to a directory as JSON.
+    """
+    stored = spec.to_stored_metadata_json()
+    assert stored == expected
+    assert type(spec).from_stored_metadata_json(stored) == spec
+    for key, document in json.loads(json.dumps(stored)).items():
+        model = ZarrV3ArrayMetadata if document["node_type"] == "array" else ZarrV3GroupMetadata
+        node_key = key.rpartition("/")[2]
+        assert json.loads(model.from_json(document).to_key_value()[node_key]) == document
+    zarr = pytest.importorskip("zarr")
+    if is_array_spec(spec) and spec.extra_fields and ZARR_PYTHON_VERSION < Version("3.1.0"):
+        pytest.skip("zarr-python stores an array's extra fields from 3.1")
+    store = zarr.storage.MemoryStore()
+    spec.to_zarr(store, path="")
+    assert store._store_dict.keys() == stored.keys()
+    for key, document in stored.items():
+        (tmp_path / key).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / key).write_text(json.dumps(document))
+    assert type(spec).from_zarr(zarr.open(tmp_path, mode="r", zarr_format=3)) == spec
+
+
+def test_from_stored_metadata_json_base_group_reads_root() -> None:
+    """
+    `BaseGroupSpec.from_stored_metadata_json` reads a hierarchy's root alone,
+    and `GroupSpec` reads a `BaseGroupSpec`'s layout as a group with no
+    members: a layout does not tell the two apart.
+    """
+    assert BaseGroupSpec.from_stored_metadata_json(
+        _STORED_LAYOUT_GROUP.to_stored_metadata_json()
+    ) == BaseGroupSpec(attributes={"a": 1})
+    assert GroupSpec.from_stored_metadata_json(
+        BaseGroupSpec(attributes={"a": 1}).to_stored_metadata_json()
+    ) == GroupSpec(attributes={"a": 1}, members={})
+
+
+def test_from_stored_metadata_json_unrecognized_key() -> None:
+    """A key other than a node's `zarr.json` is refused."""
+    stored = {**_STORED_LAYOUT_GROUP.to_stored_metadata_json(), "x/c/0": {}}
+    with pytest.raises(ValueError, match="Unrecognized store key 'x/c/0'"):
+        GroupSpec.from_stored_metadata_json(stored)
+
+
+@pytest.mark.parametrize("key", ["/zarr.json", "/x/zarr.json", "g//zarr.json"])
+def test_from_stored_metadata_json_malformed_key(key: str) -> None:
+    """A key with a leading `/` or an empty segment, which would alias another node's, is refused."""
+    stored = {**_STORED_LAYOUT_GROUP.to_stored_metadata_json(), key: _STORED_LAYOUT_GROUP_DOCUMENT}
+    with pytest.raises(ValueError, match=f"Invalid store key '{key}'"):
+        GroupSpec.from_stored_metadata_json(stored)
+
+
+@pytest.mark.parametrize(
+    ("spec_class", "stored"),
+    [
+        # a node_type that is neither "array" nor "group" is read as the
+        # class's own node type, for validation to refuse
+        (ArraySpec, {"zarr.json": {**_TO_METADATA_JSON_ARRAY.to_metadata_json(), "node_type": 1}}),
+        (GroupSpec, {"zarr.json": _STORED_LAYOUT_GROUP_DOCUMENT, "x/zarr.json": []}),
+        (
+            GroupSpec,
+            {"zarr.json": _STORED_LAYOUT_GROUP_DOCUMENT, "x/zarr.json": {"node_type": "array"}},
+        ),
+    ],
+    ids=["array-unknown-node-type", "member-not-object", "member-invalid-array"],
+)
+def test_from_stored_metadata_json_invalid_document(
+    spec_class: type[AnyArraySpec | AnyGroupSpec], stored: dict[str, object]
+) -> None:
+    """A document that is not a valid node is refused by validation."""
+    with pytest.raises(ValidationError):
+        spec_class.from_stored_metadata_json(stored)
+
+
+def test_from_stored_metadata_json_no_root() -> None:
+    """A layout without the root's `zarr.json` is refused."""
+    stored = dict(_STORED_LAYOUT_GROUP.to_stored_metadata_json())
+    del stored["zarr.json"]
+    with pytest.raises(ValueError, match="no group's metadata at the root"):
+        GroupSpec.from_stored_metadata_json(stored)
+
+
+def test_from_stored_metadata_json_root_of_other_type() -> None:
+    """A layout whose root is not the node type of the class is refused."""
+    with pytest.raises(ValueError, match="root is a group, not an array"):
+        ArraySpec.from_stored_metadata_json(GroupSpec().to_stored_metadata_json())
+
+
+def test_from_stored_metadata_json_array_with_members() -> None:
+    """An array's layout holding other nodes' documents is refused."""
+    stored = {**_TO_METADATA_JSON_ARRAY.to_stored_metadata_json(), "g/zarr.json": {}}
+    with pytest.raises(ValueError, match="An array has no members"):
+        ArraySpec.from_stored_metadata_json(stored)
+
+
+@pytest.mark.parametrize("parent", ["missing", "array"])
+def test_from_stored_metadata_json_parent_not_group(parent: str) -> None:
+    """A node whose parent is not a group in the layout is refused."""
+    stored: dict[str, object] = dict(_STORED_LAYOUT_GROUP.to_stored_metadata_json())
+    if parent == "missing":
+        del stored["g/zarr.json"]
+        member = "g/y"
+    else:
+        stored["x/z/zarr.json"] = _STORED_LAYOUT_GROUP_DOCUMENT
+        member = "x/z"
+    with pytest.raises(ValueError, match=f"documents at '{member}', but no group's"):
+        GroupSpec.from_stored_metadata_json(stored)
