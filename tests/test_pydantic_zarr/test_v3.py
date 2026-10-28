@@ -1793,6 +1793,7 @@ _TO_METADATA_JSON_CONSOLIDATED = {"kind": "inline", "must_understand": False, "m
                     "zarr_format": 3,
                     "node_type": "group",
                     "consolidated_metadata": _TO_METADATA_JSON_CONSOLIDATED,
+                    "members": {"x": _TO_METADATA_JSON_ARRAY},
                 }
             ),
             {
@@ -1814,7 +1815,7 @@ _TO_METADATA_JSON_CONSOLIDATED = {"kind": "inline", "must_understand": False, "m
         "array-aliased-attrs-dimension-names",
         "array-extra-field",
         "base-group",
-        "group-consolidated-metadata",
+        "group-consolidated-metadata-with-members",
         "group-with-members",
     ],
 )
@@ -1822,11 +1823,15 @@ def test_to_metadata_json(
     spec: AnyArraySpec | AnyBaseGroupSpec, expected: dict[str, object]
 ) -> None:
     """
-    `to_metadata_json` returns the node's Zarr V3 metadata document: `dimension_names`
-    omitted when `None`, attributes dumped by alias, extra fields as
-    top-level members, and a group's members left out. The result reads as a valid document in `zarr-metadata`.
+    `to_metadata_json` returns the node's Zarr V3 metadata document: `dimension_names` omitted
+    when `None`, attributes dumped by alias, extra fields as top-level members, and a group's
+    members left out, also when the group holds extra fields. The result reads as a valid
+    document in `zarr-metadata`.
     """
     document = spec.to_metadata_json()
     assert document == expected
     model = ZarrV3ArrayMetadata if is_array_spec(spec) else ZarrV3GroupMetadata
-    assert json.dumps(model.from_json(document).to_json()) == json.dumps(document)
+    # compared as JSON text, which equates tuples and lists; key order is not compared
+    assert json.dumps(model.from_json(document).to_json(), sort_keys=True) == json.dumps(
+        document, sort_keys=True
+    )
