@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 import pytest
 from packaging.version import Version
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
+from zarr_metadata.model import ZarrV3ArrayMetadata, ZarrV3GroupMetadata
 from zarr_metadata.v3.definition import CORE
 
 from pydantic_zarr.core import tuplify_json
@@ -1725,3 +1726,112 @@ def test_with_sharding_codec_round_trip() -> None:
     ).with_sharding_codec((4, 4))
     arr = sharded.to_zarr(zarr.storage.MemoryStore(), path="x")
     assert ArraySpec.from_zarr(arr) == sharded
+
+
+class _AliasedAttrs(BaseModel):
+    proj_code: str = Field(alias="proj:code")
+
+
+_TO_METADATA_JSON_ARRAY = _make_array_spec()
+_TO_METADATA_JSON_EXTENSION = {
+    "name": "my_ext",
+    "must_understand": False,
+    "configuration": {"x": [1]},
+}
+_TO_METADATA_JSON_CONSOLIDATED = {"kind": "inline", "must_understand": False, "metadata": {}}
+
+
+@pytest.mark.parametrize(
+    ("spec", "expected"),
+    [
+        (
+            _TO_METADATA_JSON_ARRAY,
+            {
+                "zarr_format": 3,
+                "node_type": "array",
+                "attributes": {},
+                "shape": (4,),
+                "data_type": "uint8",
+                "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (4,)}},
+                "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
+                "fill_value": 0,
+                "codecs": ({"name": "bytes"},),
+                "storage_transformers": (),
+            },
+        ),
+        (
+            ArraySpec[_AliasedAttrs].model_validate(
+                {
+                    **_TO_METADATA_JSON_ARRAY.model_dump(),
+                    "attributes": {"proj:code": "EPSG:4326"},
+                    "dimension_names": ("x",),
+                }
+            ),
+            {
+                **_TO_METADATA_JSON_ARRAY.model_dump(),
+                "attributes": {"proj:code": "EPSG:4326"},
+                "dimension_names": ("x",),
+            },
+        ),
+        (
+            ArraySpec.model_validate(
+                {**_TO_METADATA_JSON_ARRAY.model_dump(), "my_ext": _TO_METADATA_JSON_EXTENSION}
+            ),
+            # extra fields are held, like other JSON values, with arrays as tuples
+            {
+                **_TO_METADATA_JSON_ARRAY.model_dump(),
+                "my_ext": tuplify_json(_TO_METADATA_JSON_EXTENSION),
+            },
+        ),
+        (
+            BaseGroupSpec(attributes={"a": [1, 2]}),
+            {"zarr_format": 3, "node_type": "group", "attributes": {"a": [1, 2]}},
+        ),
+        (
+            GroupSpec.model_validate(
+                {
+                    "zarr_format": 3,
+                    "node_type": "group",
+                    "consolidated_metadata": _TO_METADATA_JSON_CONSOLIDATED,
+                    "members": {"x": _TO_METADATA_JSON_ARRAY},
+                }
+            ),
+            {
+                "zarr_format": 3,
+                "node_type": "group",
+                "attributes": {},
+                "consolidated_metadata": _TO_METADATA_JSON_CONSOLIDATED,
+            },
+        ),
+        (
+            GroupSpec(
+                attributes={"a": 1}, members={"x": _TO_METADATA_JSON_ARRAY, "g": GroupSpec()}
+            ),
+            {"zarr_format": 3, "node_type": "group", "attributes": {"a": 1}},
+        ),
+    ],
+    ids=[
+        "array",
+        "array-aliased-attrs-dimension-names",
+        "array-extra-field",
+        "base-group",
+        "group-consolidated-metadata-with-members",
+        "group-with-members",
+    ],
+)
+def test_to_metadata_json(
+    spec: AnyArraySpec | AnyBaseGroupSpec, expected: dict[str, object]
+) -> None:
+    """
+    `to_metadata_json` returns the node's Zarr V3 metadata document: `dimension_names` omitted
+    when `None`, attributes dumped by alias, extra fields as top-level members, and a group's
+    members left out, also when the group holds extra fields. The result reads as a valid
+    document in `zarr-metadata`.
+    """
+    document = spec.to_metadata_json()
+    assert document == expected
+    model = ZarrV3ArrayMetadata if is_array_spec(spec) else ZarrV3GroupMetadata
+    # compared as JSON text, which equates tuples and lists; key order is not compared
+    assert json.dumps(model.from_json(document).to_json(), sort_keys=True) == json.dumps(
+        document, sort_keys=True
+    )
