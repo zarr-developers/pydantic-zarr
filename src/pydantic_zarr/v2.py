@@ -48,21 +48,20 @@ if TYPE_CHECKING:
 # with un-narrowed attributes must serialize with its own fields, not the
 # empty base schema.
 type TBaseAttr = Mapping[str, object] | SerializeAsAny[BaseModel]
-# the default (TBaseItem) stays bare for recursive runtime validation; the
-# bound (TAnyItem) is Any-parameterized to accept narrowed member specs —
+# TBaseItem's bare, recursive spelling serves as TItem's bound and default;
 # see the notes on the v3 spellings.
 type TBaseItem = Union["GroupSpec", "ArraySpec", "BaseGroupSpec"]
-type TAnyItem = Union["GroupSpec[Any, Any]", "ArraySpec[Any]", "BaseGroupSpec[Any]"]
 
-# Aliases for specs of any specialization; not redundant with the bare class
-# names — see the note on the v3 aliases (bare `ArraySpec` is the invariant
-# `ArraySpec[TBaseAttr]`, which mypy refuses narrowed specs for).
-type AnyArraySpec = "ArraySpec[Any]"
-type AnyGroupSpec = "GroupSpec[Any, Any]"
-type AnyBaseGroupSpec = "BaseGroupSpec[Any]"
+# Aliases for specs of any specialization: ordinary wide types, equal to the
+# bare class names, since the covariant parameters make a narrowed spec
+# substitutable for a wider one — see the note on the v3 aliases.
+type AnyArraySpec = "ArraySpec[TBaseAttr]"
+type AnyGroupSpec = "GroupSpec[TBaseAttr, TBaseItem]"
+type AnyBaseGroupSpec = "BaseGroupSpec[TBaseAttr]"
 
-TAttr = TypeVar("TAttr", bound=TBaseAttr, default=TBaseAttr)
-TItem = TypeVar("TItem", bound=TAnyItem, default=TBaseItem)
+# covariant because the specs are frozen; see the note on the v3 TypeVars
+TAttr = TypeVar("TAttr", bound=TBaseAttr, default=TBaseAttr, covariant=True)
+TItem = TypeVar("TItem", bound=TBaseItem, default=TBaseItem, covariant=True)
 TDefault = TypeVar("TDefault")
 
 DtypeStr = Annotated[str, BeforeValidator(parse_dtype_v2)]
@@ -250,7 +249,9 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         cls,
         array: npt.NDArray[Any] | zarr.Array,
         chunks: Literal["auto"] | tuple[int, ...] = "auto",
-        attributes: Literal["auto"] | TAttr = "auto",
+        # TBaseAttr, not TAttr: covariant parameters may not appear in
+        # argument positions. Validation enforces the class's attribute type.
+        attributes: Literal["auto"] | TBaseAttr = "auto",
         fill_value: Literal["auto"] | float | None = "auto",
         order: Literal["auto"] | MemoryOrder = "auto",
         filters: Literal["auto"] | list[CodecDict] | None = "auto",
@@ -272,7 +273,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             The chunks for this `ArraySpec`. If `chunks` is "auto" (the default), then this method first checks if `array` has a `chunksize` attribute, using it if present.
             This supports copying chunk sizes from dask arrays. If `array` does not have `chunksize`, then a routine from `zarr-python` is used to guess the chunk size,
             given the `shape` and `dtype` of `array`. If `chunks` is not auto, then it should be a tuple of ints.
-        attributes : "auto" | TAttr, default = "auto"
+        attributes : "auto" | TBaseAttr, default = "auto"
             User-defined metadata associated with this array. Should be JSON-serializable. The default is "auto", which means that `array.attributes` will be used,
             with a fallback value of the empty dict `{}`.
         fill_value : "auto" | int | float | None, default = "auto"
