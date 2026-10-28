@@ -1,12 +1,13 @@
 """
-Downstream typing conformance, checked by pyright in CI.
+Downstream typing conformance, checked by ty and pyright in CI.
 
-This file holds the parameterizations downstream code writes, so the
-typecheck job fails if they stop type-checking. It is checked by pyright
-because the bugs it guards are variance bugs: pyrefly is variance-lenient
-and mypy does not apply PEP 696 TypeVar defaults inside the lazy `type`
-aliases, so neither sees an invariant bound refuse a narrowed spec — the
-regression that reached a release candidate once (zarr-developers/pydantic-zarr#190).
+This file holds the parameterizations downstream code writes — narrowed
+specs, groups parameterized with them, and covariant widening to the Any*
+aliases — so the typecheck job fails if they stop type-checking. ty and
+pyright check it because the bugs it guards are variance bugs: pyrefly (the
+project checker) is variance-lenient, so a bound refusing a narrowed spec,
+or covariance regressing to invariance, would pass it unseen — the former
+reached a release candidate once (zarr-developers/pydantic-zarr#190).
 
 It is not a pytest module; it only needs to type-check.
 """
@@ -14,12 +15,15 @@ It is not a pytest module; it only needs to type-check.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
 import pydantic_zarr.v2 as v2
 import pydantic_zarr.v3 as v3
+
+if TYPE_CHECKING:
+    import numpy.typing as npt
 
 
 class Attrs(BaseModel):
@@ -77,3 +81,15 @@ def widened_array_v2(spec: NarrowArrayV2) -> v2.AnyArraySpec:
 def checked_read_through_wide_type(spec: v3.AnyArraySpec) -> Mapping[str, object] | BaseModel:
     """Attributes read through the wide type keep a checked type, not Any."""
     return spec.attributes
+
+
+def from_array_keeps_self(data: npt.NDArray[Any]) -> NarrowArrayV3:
+    """
+    `from_array` on a narrowed class returns the narrowed type (`Self`).
+
+    Its `attributes` parameter is deliberately `TBaseAttr` rather than `TAttr`
+    (a covariant parameter may not appear in argument positions), so the
+    argument is checked against the class's attribute type by validation, not
+    statically — the trade that keeps `Self` returns for subclasses.
+    """
+    return NarrowArrayV3.from_array(data, attributes=Attrs())
