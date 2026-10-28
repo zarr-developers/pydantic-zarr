@@ -164,13 +164,13 @@ def get_attribute(attributes: object, key: str, default: object = None) -> objec
 class _HasMembers(Protocol):
     """
     The structural shape path traversal needs from a group: a `members`
-    mapping, `None` when the members are unknown. The v2 and v3 `GroupSpec`
+    mapping. The v2 and v3 `GroupSpec`
     both have it; `ArraySpec` and `BaseGroupSpec` do not, which is how
     traversal tells a group with members from every other node.
     """
 
     @property
-    def members(self) -> Mapping[str, object] | None: ...
+    def members(self) -> Mapping[str, object]: ...
 
 
 def resolve_member_path(node: object, path: str) -> object:
@@ -185,9 +185,9 @@ def resolve_member_path(node: object, path: str) -> object:
     ValueError
         If the path holds no member names, or an empty one (`"a//b"`).
     KeyError
-        Naming the segment that failed: a member name that does not exist, a
-        segment that descends into a node that is not a group with members,
-        or a group whose members are unknown (`members=None`).
+        Naming the segment that failed: a member name that does not exist, or
+        a segment that descends into a node that is not a group with members
+        (an array, or a `BaseGroupSpec`, whose members were not read).
     """
     stripped = path.strip("/")
     if stripped == "":
@@ -201,9 +201,6 @@ def resolve_member_path(node: object, path: str) -> object:
             raise ValueError(msg)
         if not isinstance(node, _HasMembers):
             msg = f"Cannot resolve {segment!r}: {where} is not a group with members."
-            raise KeyError(msg)
-        if node.members is None:
-            msg = f"Cannot resolve {segment!r}: the members of {where} are unknown (members=None)."
             raise KeyError(msg)
         if segment not in node.members:
             available = ", ".join(repr(name) for name in sorted(node.members)) or "(none)"
@@ -385,3 +382,21 @@ def json_eq(a: object, b: object) -> bool:
 
     # otherwise → regular equality
     return a == b
+
+
+def validate_group_depth(depth: int) -> None:
+    """
+    Check the `depth` of a `GroupSpec.from_zarr` traversal: -1 (the whole
+    hierarchy) or a positive number of levels. Depth 0 reads no members, so
+    it cannot produce a `GroupSpec`; `BaseGroupSpec.from_zarr` reads a group
+    without its members.
+    """
+    if depth < -1:
+        msg = f"Invalid value for depth. Got {depth}, expected an integer greater than or equal to -1."
+        raise ValueError(msg)
+    if depth == 0:
+        msg = (
+            "Invalid value for depth. Got 0, which reads no members; use "
+            "BaseGroupSpec.from_zarr to model a group without its members."
+        )
+        raise ValueError(msg)

@@ -37,6 +37,7 @@ from packaging.version import Version
 
 from pydantic_zarr.v2 import (
     AnyArraySpec,
+    AnyBaseGroupSpec,
     AnyGroupSpec,
     ArraySpec,
     BaseGroupSpec,
@@ -617,9 +618,9 @@ def test_array_like_with_zarr() -> None:
 
 # todo: parametrize
 def test_group_like() -> None:
-    tree: dict[str, GroupSpec | ArraySpec] = {
-        "": GroupSpec(attributes={"path": ""}, members=None),
-        "/a": GroupSpec(attributes={"path": "/a"}, members=None),
+    tree: dict[str, BaseGroupSpec | ArraySpec] = {
+        "": BaseGroupSpec(attributes={"path": ""}),
+        "/a": BaseGroupSpec(attributes={"path": "/a"}),
         "/b": ArraySpec.from_array(np.arange(10), attributes={"path": "/b"}),
         "/a/b": ArraySpec.from_array(np.arange(10), attributes={"path": "/a/b"}),
     }
@@ -630,48 +631,94 @@ def test_group_like() -> None:
     assert group.like(group.model_copy(update={"attributes": None}), include={"members"})
 
 
-# todo: parametrize
-def test_from_zarr_depth() -> None:
+def _depth_hierarchy() -> tuple[zarr_mod.Group, dict[int, object]]:
+    """
+    Store a three-level hierarchy and return it with the spec `from_zarr`
+    should read from it at each depth: a group at the depth limit is a
+    `BaseGroupSpec`, whose members were not read.
+    """
     zarr = pytest.importorskip("zarr")
-    tree: dict[str, GroupSpec | ArraySpec] = {
-        "": GroupSpec(members=None, attributes={"level": 0, "type": "group"}),
-        "/1": GroupSpec(members=None, attributes={"level": 1, "type": "group"}),
-        "/1/2": GroupSpec(members=None, attributes={"level": 2, "type": "group"}),
-        "/1/2/1": GroupSpec(members=None, attributes={"level": 3, "type": "group"}),
-        "/1/2/2": ArraySpec.from_array(np.arange(20), attributes={"level": 3, "type": "array"}),
+    array: AnyArraySpec = ArraySpec.from_array(np.arange(20), attributes={"level": 3})
+    tree: dict[str, AnyArraySpec | AnyBaseGroupSpec] = {
+        "": BaseGroupSpec(attributes={"level": 0}),
+        "/1": BaseGroupSpec(attributes={"level": 1}),
+        "/1/2": BaseGroupSpec(attributes={"level": 2}),
+        "/1/2/1": BaseGroupSpec(attributes={"level": 3}),
+        "/1/2/2": array,
     }
+    stored = GroupSpec.from_flat(tree).to_zarr(zarr.storage.MemoryStore(), path="test")
+    array_read = ArraySpec.from_zarr(cast("zarr_mod.Array", stored["1/2/2"]))
+    level_3 = {"1": GroupSpec(attributes={"level": 3}), "2": array_read}
+    expected: dict[int, object] = {
+        0: tree[""],
+        1: GroupSpec(attributes={"level": 0}, members={"1": tree["/1"]}),
+        2: GroupSpec(
+            attributes={"level": 0},
+            members={"1": GroupSpec(attributes={"level": 1}, members={"2": tree["/1/2"]})},
+        ),
+        3: GroupSpec(
+            attributes={"level": 0},
+            members={
+                "1": GroupSpec(
+                    attributes={"level": 1},
+                    members={
+                        "2": GroupSpec(
+                            attributes={"level": 2},
+                            members={"1": tree["/1/2/1"], "2": array_read},
+                        )
+                    },
+                )
+            },
+        ),
+        -1: GroupSpec(
+            attributes={"level": 0},
+            members={
+                "1": GroupSpec(
+                    attributes={"level": 1},
+                    members={"2": GroupSpec(attributes={"level": 2}, members=level_3)},
+                )
+            },
+        ),
+    }
+    return stored, expected
 
-    store = zarr.storage.MemoryStore()
-    group_out = GroupSpec.from_flat(tree).to_zarr(store, path="test")
-    group_in_0 = GroupSpec.from_zarr(group_out, depth=0)  # type: ignore[var-annotated]
-    assert group_in_0 == tree[""]
 
-    group_in_1 = GroupSpec.from_zarr(group_out, depth=1)  # type: ignore[var-annotated]
-    assert group_in_1.attributes == tree[""].attributes
-    assert group_in_1.members is not None
-    assert group_in_1.members["1"] == tree["/1"]
+@pytest.mark.parametrize("depth", [0, 1, 2, 3, -1])
+def test_from_zarr_depth(depth: int) -> None:
+    """
+    `from_zarr` reads `depth` levels of members, and a group at the depth
+    limit is a `BaseGroupSpec`; at depth 0 that is the group itself.
+    `GroupSpec.from_zarr` agrees for every depth that reads members. A
+    `BaseGroupSpec` member survives a dump and validation, and writing it
+    back stores a hierarchy that reads back the same.
+    """
+    zarr = pytest.importorskip("zarr")
+    stored, expected = _depth_hierarchy()
+    observed = from_zarr(stored, depth=depth)
+    assert observed == expected[depth]
+    assert type(observed).model_validate(observed.model_dump()) == observed
+    assert type(observed).model_validate_json(observed.model_dump_json()) == observed
+    if depth != 0:
+        assert GroupSpec.from_zarr(stored, depth=depth) == observed
+    # array keyword arguments reach the arrays, not the groups whose members were not read
+    kwargs: dict[str, Any] = {} if depth == 0 else {"config": {"order": "C"}}
+    copy = observed.to_zarr(zarr.storage.MemoryStore(), path="copy", **kwargs)
+    assert from_zarr(copy, depth=depth) == observed
 
-    group_in_2 = GroupSpec.from_zarr(group_out, depth=2)  # type: ignore[var-annotated]
-    assert group_in_2.members is not None
-    sub_2_1 = group_in_2.members["1"]
-    assert is_group_spec(sub_2_1)
-    assert sub_2_1.members is not None
-    assert sub_2_1.members["2"] == tree["/1/2"]
-    assert group_in_2.attributes == tree[""].attributes
-    assert sub_2_1.attributes == tree["/1"].attributes
 
-    group_in_3 = GroupSpec.from_zarr(group_out, depth=3)  # type: ignore[var-annotated]
-    assert group_in_3.members is not None
-    sub_3_1 = group_in_3.members["1"]
-    assert is_group_spec(sub_3_1)
-    assert sub_3_1.members is not None
-    sub_3_2 = sub_3_1.members["2"]
-    assert is_group_spec(sub_3_2)
-    assert sub_3_2.members is not None
-    assert sub_3_2.members["1"] == tree["/1/2/1"]
-    assert group_in_3.attributes == tree[""].attributes
-    assert sub_3_1.attributes == tree["/1"].attributes
-    assert sub_3_2.attributes == tree["/1/2"].attributes
+@pytest.mark.parametrize("depth", [0, -2])
+def test_group_from_zarr_invalid_depth(depth: int) -> None:
+    """`GroupSpec.from_zarr` refuses a depth that reads no members, or below -1."""
+    zarr = pytest.importorskip("zarr")
+    group = zarr.group(store=zarr.storage.MemoryStore(), zarr_format=2)
+    with pytest.raises(ValueError, match="Invalid value for depth"):
+        GroupSpec.from_zarr(group, depth=depth)
+
+
+def test_members_none_refused() -> None:
+    """`members` may not be `None`: a group without members is a `BaseGroupSpec`."""
+    with pytest.raises(ValidationError, match="members"):
+        GroupSpec(members=None)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(("dtype_example"), DTYPE_EXAMPLES_V2, ids=str)
@@ -836,3 +883,10 @@ def test_resolve_path_v2() -> None:
     assert root["a/b"] == leaf
     with pytest.raises(KeyError, match="No member named 'zz' in a"):
         root.resolve_path("a/zz")
+
+
+def test_resolve_path_through_base_group_v2() -> None:
+    """Resolution through a `BaseGroupSpec`, whose members were not read, raises `KeyError`."""
+    root: AnyGroupSpec = GroupSpec(members={"a": BaseGroupSpec()})
+    with pytest.raises(KeyError, match="a is not a group with members"):
+        root.resolve_path("a/b")
