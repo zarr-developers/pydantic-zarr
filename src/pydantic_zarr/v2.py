@@ -270,6 +270,7 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         `attributes`. The JSON arrays the type declares as tuples (the
         `filters` pipeline, and a structured `dtype`) are tuples here too;
         JSON arrays inside a codec's configuration are left as they are.
+        Its `extra_fields` are written as top-level members.
         """
         document = self.model_dump()
         document["dtype"] = tuplify_json(document["dtype"])

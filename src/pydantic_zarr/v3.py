@@ -861,7 +861,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         Unlike `model_dump`, this takes no options, so its result has one
         static type, `zarr_metadata`'s `ZarrV3ArrayMetadataJSON`. The document
         is what `model_dump()` returns: `dimension_names` is omitted when it is
-        `None`, and an attributes model is dumped by alias.
+        `None`, an attributes model is dumped by alias, and `extra_fields` are
+        written as top-level members.
         """
         return cast("ZarrV3ArrayMetadataJSON", self.model_dump())
 
@@ -1476,9 +1477,10 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         This group's Zarr V3 metadata document: the content of its `zarr.json`.
 
         Unlike `model_dump`, this takes no options, so its result has one
-        static type, `zarr_metadata`'s `ZarrV3GroupMetadataJSON`. A group's
-        members are not part of its metadata document, so a `GroupSpec`'s
-        `members` are left out.
+        static type, `zarr_metadata`'s `ZarrV3GroupMetadataJSON`. Its
+        `extra_fields` (such as `consolidated_metadata`) are written as
+        top-level members. A group's members are not part of its metadata
+        document, so a `GroupSpec`'s `members` are left out.
         """
         return cast("ZarrV3GroupMetadataJSON", self.model_dump(exclude={"members"}))
 

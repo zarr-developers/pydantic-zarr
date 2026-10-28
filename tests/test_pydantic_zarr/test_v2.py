@@ -924,6 +924,11 @@ _TO_JSON_ARRAY: AnyArraySpec = ArraySpec(
             },
         ),
         (
+            ArraySpec.model_validate({**_TO_JSON_ARRAY.model_dump(), "foo": [1]}),
+            # extra fields are held, like other JSON values, with arrays as tuples
+            {**_TO_JSON_ARRAY.to_json(), "foo": (1,)},
+        ),
+        (
             BaseGroupSpec(attributes={"a": 1}),
             {"zarr_format": 2, "attributes": {"a": 1}},
         ),
@@ -936,6 +941,7 @@ _TO_JSON_ARRAY: AnyArraySpec = ArraySpec(
         "array",
         "array-structured-dtype",
         "array-filter-config-list",
+        "array-extra-field",
         "base-group",
         "group-with-members",
     ],
@@ -945,7 +951,8 @@ def test_to_json_v2(spec: AnyArraySpec | AnyBaseGroupSpec, expected: dict[str, o
     `to_json` returns the node's Zarr V2 metadata as one document holding the
     `.zarray` / `.zgroup` fields and, under `attributes`, the `.zattrs`, with
     the JSON arrays the type declares as tuples held as tuples (but not those
-    inside a codec's configuration), and a group's members left out. The
+    inside a codec's configuration), extra fields as top-level members, and
+    a group's members left out. The
     result reads as a valid document in `zarr-metadata`.
     """
     document = spec.to_json()

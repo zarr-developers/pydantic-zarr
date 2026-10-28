@@ -1733,6 +1733,8 @@ class _AliasedAttrs(BaseModel):
 
 
 _TO_JSON_ARRAY = _make_array_spec()
+_TO_JSON_EXTENSION = {"name": "my_ext", "must_understand": False, "configuration": {"x": [1]}}
+_TO_JSON_CONSOLIDATED = {"kind": "inline", "must_understand": False, "metadata": {}}
 
 
 @pytest.mark.parametrize(
@@ -1768,21 +1770,48 @@ _TO_JSON_ARRAY = _make_array_spec()
             },
         ),
         (
+            ArraySpec.model_validate({**_TO_JSON_ARRAY.model_dump(), "my_ext": _TO_JSON_EXTENSION}),
+            # extra fields are held, like other JSON values, with arrays as tuples
+            {**_TO_JSON_ARRAY.model_dump(), "my_ext": tuplify_json(_TO_JSON_EXTENSION)},
+        ),
+        (
             BaseGroupSpec(attributes={"a": [1, 2]}),
             {"zarr_format": 3, "node_type": "group", "attributes": {"a": [1, 2]}},
+        ),
+        (
+            GroupSpec.model_validate(
+                {
+                    "zarr_format": 3,
+                    "node_type": "group",
+                    "consolidated_metadata": _TO_JSON_CONSOLIDATED,
+                }
+            ),
+            {
+                "zarr_format": 3,
+                "node_type": "group",
+                "attributes": {},
+                "consolidated_metadata": _TO_JSON_CONSOLIDATED,
+            },
         ),
         (
             GroupSpec(attributes={"a": 1}, members={"x": _TO_JSON_ARRAY, "g": GroupSpec()}),
             {"zarr_format": 3, "node_type": "group", "attributes": {"a": 1}},
         ),
     ],
-    ids=["array", "array-aliased-attrs-dimension-names", "base-group", "group-with-members"],
+    ids=[
+        "array",
+        "array-aliased-attrs-dimension-names",
+        "array-extra-field",
+        "base-group",
+        "group-consolidated-metadata",
+        "group-with-members",
+    ],
 )
 def test_to_json(spec: AnyArraySpec | AnyBaseGroupSpec, expected: dict[str, object]) -> None:
     """
     `to_json` returns the node's Zarr V3 metadata document: `dimension_names`
-    omitted when `None`, attributes dumped by alias, and a group's members
-    left out. The result reads as a valid document in `zarr-metadata`.
+    omitted when `None`, attributes dumped by alias, extra fields as
+    top-level members, and a group's members left out. The result reads as a valid document in `zarr-metadata`.
     """
     document = spec.to_json()
     assert document == expected
