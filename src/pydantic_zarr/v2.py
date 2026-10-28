@@ -37,6 +37,7 @@ from pydantic_zarr.core import (
     model_like,
     parse_dtype_v2,
     resolve_member_path,
+    tuplify_json,
     walk_zarr_hierarchy,
 )
 
@@ -45,6 +46,7 @@ if TYPE_CHECKING:
     from numcodecs.abc import Codec
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
+    from zarr_metadata import ZarrV2ArrayMetadataJSON, ZarrV2GroupMetadataJSON
 
 # SerializeAsAny: see the note on the v3 TBaseAttr — a model held by a spec
 # with un-narrowed attributes must serialize with its own fields, not the
@@ -255,6 +257,26 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
             )
             raise ValueError(msg)
         return self
+
+    def to_metadata_json(self) -> ZarrV2ArrayMetadataJSON:
+        """
+        This array's Zarr V2 metadata, as one document holding its `.zarray`
+        and, under `attributes`, its `.zattrs`.
+
+        Unlike `model_dump`, this takes no options, so its result has one
+        static type, `zarr_metadata`'s `ZarrV2ArrayMetadataJSON`. The stored
+        `.zarray` is this document without `attributes` (the type
+        `zarr_metadata.ZarrV2ZArrayJSON`), and the stored `.zattrs` is
+        `attributes`. The JSON arrays the type declares as tuples (the
+        `filters` pipeline, and a structured `dtype`) are tuples here too;
+        JSON arrays inside a codec's configuration are left as they are.
+        Its `extra_fields` are written as top-level members.
+        """
+        document = self.model_dump()
+        document["dtype"] = tuplify_json(document["dtype"])
+        if document["filters"] is not None:
+            document["filters"] = tuple(document["filters"])
+        return cast("ZarrV2ArrayMetadataJSON", document)
 
     @classmethod
     def from_array(
@@ -570,6 +592,20 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         invalid change is refused.
         """
         return type(self).model_validate({**self.model_dump(), **changes})
+
+    def to_metadata_json(self) -> ZarrV2GroupMetadataJSON:
+        """
+        This group's Zarr V2 metadata, as one document holding its `.zgroup`
+        and, under `attributes`, its `.zattrs`.
+
+        Unlike `model_dump`, this takes no options, so its result has one
+        static type, `zarr_metadata`'s `ZarrV2GroupMetadataJSON`. The stored
+        `.zgroup` is this document without `attributes` (the type
+        `zarr_metadata.ZarrV2ZGroupJSON`), and the stored `.zattrs` is
+        `attributes`. A group's members are not part of its metadata, so a
+        `GroupSpec`'s `members` are left out.
+        """
+        return cast("ZarrV2GroupMetadataJSON", self.model_dump(exclude={"members"}))
 
     @classmethod
     def from_zarr(cls, group: zarr.Group) -> Self:

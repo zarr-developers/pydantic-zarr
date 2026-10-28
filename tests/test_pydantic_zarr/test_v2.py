@@ -34,6 +34,7 @@ from typing import TypedDict
 import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
+from zarr_metadata.model import ZarrV2ArrayMetadata, ZarrV2GroupMetadata
 
 from pydantic_zarr.v2 import (
     AnyArraySpec,
@@ -855,3 +856,113 @@ def test_resolve_path_v2() -> None:
     assert root["a/b"] == leaf
     with pytest.raises(KeyError, match="No member named 'zz' in a"):
         root.resolve_path("a/zz")
+
+
+_TO_METADATA_JSON_ARRAY: AnyArraySpec = ArraySpec(
+    attributes={"a": [1, 2]},
+    shape=(4,),
+    chunks=(2,),
+    dtype="<f8",
+    fill_value="NaN",
+    filters=[{"id": "delta", "dtype": "<f8"}],
+    compressor={"id": "zstd", "level": 1},
+)
+
+
+@pytest.mark.parametrize(
+    ("spec", "expected"),
+    [
+        (
+            _TO_METADATA_JSON_ARRAY,
+            {
+                "zarr_format": 2,
+                "attributes": {"a": [1, 2]},
+                "shape": (4,),
+                "chunks": (2,),
+                "dtype": "<f8",
+                "fill_value": "NaN",
+                "order": "C",
+                "filters": ({"id": "delta", "dtype": "<f8"},),
+                "dimension_separator": "/",
+                "compressor": {"id": "zstd", "level": 1},
+            },
+        ),
+        (
+            ArraySpec(shape=(4,), chunks=(2,), dtype=[("a", "<i4"), ("b", "<f8")], fill_value=None),
+            {
+                "zarr_format": 2,
+                "attributes": {},
+                "shape": (4,),
+                "chunks": (2,),
+                "dtype": (("a", "<i4"), ("b", "<f8")),
+                "fill_value": None,
+                "order": "C",
+                "filters": None,
+                "dimension_separator": "/",
+                "compressor": None,
+            },
+        ),
+        (
+            ArraySpec(
+                shape=(4,),
+                chunks=(2,),
+                dtype="<U1",
+                fill_value="",
+                filters=[{"id": "categorize", "labels": ["a", "b"], "dtype": "<U1"}],
+            ),
+            {
+                "zarr_format": 2,
+                "attributes": {},
+                "shape": (4,),
+                "chunks": (2,),
+                "dtype": "<U1",
+                "fill_value": "",
+                "order": "C",
+                "filters": ({"id": "categorize", "labels": ["a", "b"], "dtype": "<U1"},),
+                "dimension_separator": "/",
+                "compressor": None,
+            },
+        ),
+        (
+            ArraySpec.model_validate({**_TO_METADATA_JSON_ARRAY.model_dump(), "foo": [1]}),
+            # extra fields are held, like other JSON values, with arrays as tuples
+            {**_TO_METADATA_JSON_ARRAY.to_metadata_json(), "foo": (1,)},
+        ),
+        (
+            BaseGroupSpec(attributes={"a": 1}),
+            {"zarr_format": 2, "attributes": {"a": 1}},
+        ),
+        (
+            GroupSpec(
+                attributes={"a": 1}, members={"x": _TO_METADATA_JSON_ARRAY, "g": GroupSpec()}
+            ),
+            {"zarr_format": 2, "attributes": {"a": 1}},
+        ),
+    ],
+    ids=[
+        "array",
+        "array-structured-dtype",
+        "array-filter-config-list",
+        "array-extra-field",
+        "base-group",
+        "group-with-members",
+    ],
+)
+def test_to_metadata_json_v2(
+    spec: AnyArraySpec | AnyBaseGroupSpec, expected: dict[str, object]
+) -> None:
+    """
+    `to_metadata_json` returns the node's Zarr V2 metadata as one document holding the `.zarray`
+    / `.zgroup` fields and, under `attributes`, the `.zattrs`, with the JSON arrays the type
+    declares as tuples held as tuples (but not those inside a codec's configuration), extra
+    fields as top-level members, and a group's members left out. (A v2 group holds no extra
+    fields: `.zgroup` admits no other keys.) The result reads as a valid document in
+    `zarr-metadata`.
+    """
+    document = spec.to_metadata_json()
+    assert document == expected
+    model = ZarrV2ArrayMetadata if is_array_spec(spec) else ZarrV2GroupMetadata
+    # compared as JSON text, which equates tuples and lists; key order is not compared
+    assert json.dumps(model.from_json(document).to_json(), sort_keys=True) == json.dumps(
+        document, sort_keys=True
+    )
