@@ -6,7 +6,7 @@
 
 The `GroupSpec` and `ArraySpec` classes represent Zarr v2 groups and arrays, respectively. To create an instance of a `GroupSpec` or `ArraySpec` from an existing Zarr group or array, pass the Zarr group / array to the `.from_zarr` method defined on the `GroupSpec` / `ArraySpec` classes. This will result in a `pydantic-zarr` model of the Zarr object.
 
-> By default `GroupSpec.from_zarr(zarr_group)` will traverse the entire hierarchy under `zarr_group`. This can be extremely slow if used on an extensive Zarr group on high latency storage. To limit the depth of traversal to a specific depth, use the `depth` keyword argument, e.g. `GroupSpec.from_zarr(zarr_group, depth=1)`
+> `GroupSpec.from_zarr(zarr_group)` traverses the entire hierarchy under `zarr_group`. This can be extremely slow if used on an extensive Zarr group on high latency storage. To read only part of the hierarchy, use `from_zarr_flat(zarr_group, depth=1)`, which returns a flat mapping from paths to `ArraySpec` and `BaseGroupSpec` values, `depth` levels deep. To read a group without any of its members, use `BaseGroupSpec.from_zarr(zarr_group)`.
 
 Note that `from_zarr` will _not_ read the data inside an array.
 
@@ -114,14 +114,14 @@ methods to convert to / from these dictionaries.
 This example demonstrates how to create a `GroupSpec` from a `dict` representation of a Zarr hierarchy.
 
 ```python
-from pydantic_zarr.v2 import ArraySpec, GroupSpec
+from pydantic_zarr.v2 import ArraySpec, BaseGroupSpec, GroupSpec
 
 # other than the key representing the root path "",
 # the keys must be valid paths in the Zarr storage hierarchy
 # note that groups appear as `BaseGroupSpec` instances, without a `members` attribute.
 tree = {
-    "": GroupSpec(members=None, attributes={"root": True}),
-    "/a": GroupSpec(members=None, attributes={"root": False}),
+    "": BaseGroupSpec(attributes={"root": True}),
+    "/a": BaseGroupSpec(attributes={"root": False}),
     "/a/b": ArraySpec(shape=(10, 10), dtype="uint8", chunks=(1, 1), attributes={}),
 }
 
@@ -362,4 +362,33 @@ print(ArraySpec.from_array(np.arange(10)).model_dump())
     'compressor': None,
 }
 """
+```
+
+## Extra fields
+
+The Zarr V2 spec treats keys it does not define differently in array and group
+metadata. In `.zarray`, other keys "SHOULD NOT be present within the metadata
+object and SHOULD be ignored by implementations", so `ArraySpec` accepts any
+other key with a JSON value, gives it no meaning, and keeps it in the
+`extra_fields` mapping, dumped back as a top-level member. `zarr-python` drops
+these keys when it reads or writes an array, so `from_zarr` never finds any
+and `to_zarr` does not write them. In `.zgroup`, "Other keys MUST NOT be
+present", so the group specs refuse them.
+
+```python
+from pydantic import ValidationError
+
+from pydantic_zarr.v2 import ArraySpec, GroupSpec
+
+array = ArraySpec.model_validate(
+    {"shape": (10,), "chunks": (10,), "dtype": "<i8", "written_by": "acme"}
+)
+print(array.extra_fields)
+#> {'written_by': 'acme'}
+
+try:
+    GroupSpec.model_validate({"zarr_format": 2, "attributes": {}, "written_by": "acme"})
+except ValidationError as e:
+    print(e.errors()[0]["type"])
+    #> extra_forbidden
 ```

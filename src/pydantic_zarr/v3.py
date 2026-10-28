@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 import sys
@@ -31,19 +32,24 @@ from pydantic import (
     Field,
     SerializeAsAny,
     SerializerFunctionWrapHandler,
+    ValidationError,
     ValidationInfo,
     model_serializer,
     model_validator,
 )
 from typing_extensions import TypedDict, TypeIs, TypeVar
 from zarr_metadata import (
+    ZARR_V3_CONSOLIDATED_METADATA_KEY,
     DefaultChunkKeyEncodingMetadata,
     JSONValue,
     MetadataValidationError,
     RegularChunkGridMetadata,
     V2ChunkKeyEncodingMetadata,
+    ZarrV3ExtensionField,
 )
+from zarr_metadata.definition._envelope import envelope_problems
 from zarr_metadata.model import ZarrV3ArrayMetadata as ZarrV3ArrayMetadataModel
+from zarr_metadata.model import ZarrV3GroupMetadata as ZarrV3GroupMetadataModel
 from zarr_metadata.model import validate_node_name_v3
 from zarr_metadata.v3.chunk_grid.regular import RegularChunkGridConfiguration
 from zarr_metadata.v3.chunk_key_encoding.default import (
@@ -56,24 +62,28 @@ from zarr_metadata.v3.chunk_key_encoding.v2 import (
 )
 from zarr_metadata.v3.definition import (
     CORE_AND_EXTENSIONS,
+    ArrayExtraFieldDefinition,
     ChunkGridDefinition,
     ChunkKeyEncodingDefinition,
     CodecDefinition,
     DataTypeDefinition,
+    GroupExtraFieldDefinition,
     StorageTransformerDefinition,
 )
 
 from pydantic_zarr._metadata import CONTEXT_KEY as CONTEXT_KEY
-from pydantic_zarr._metadata import format_problems, scope_from_context
+from pydantic_zarr._metadata import format_lines, format_problems, scope_from_context
 from pydantic_zarr.core import (
+    ExtraFieldsBase,
     IncEx,
-    StrictBase,
     ensure_multiple,
+    flatten_extra_fields,
     guess_chunks,
     maybe_node,
     model_like,
     resolve_member_path,
     tuplify_json,
+    walk_zarr_hierarchy,
 )
 
 if TYPE_CHECKING:
@@ -90,7 +100,9 @@ if TYPE_CHECKING:
 # serializes with the model's own fields; annotated as plain BaseModel it
 # would serialize through the base schema, silently dumping {}.
 type TBaseAttr = Mapping[str, object] | SerializeAsAny[BaseModel]
-type TBaseItem = Union["GroupSpec", "ArraySpec", "BaseGroupSpec"]
+# BaseGroupSpec is not a member type: a GroupSpec is a complete hierarchy,
+# and a group whose members are unknown is never part of one.
+type TBaseItem = Union["GroupSpec", "ArraySpec"]
 
 # Aliases for specs of any specialization. Since the spec parameters are
 # covariant (specs are frozen, so a narrowed spec IS-A wider one), these are
@@ -175,7 +187,7 @@ V2ChunkKeyEncodingConfig = V2ChunkKeyEncodingConfiguration
 V2ChunkKeyEncoding = V2ChunkKeyEncodingObject
 
 
-class NodeSpec(StrictBase):
+class NodeSpec(ExtraFieldsBase):
     """
     The base class for V3 ArraySpec and GroupSpec.
 
@@ -209,7 +221,24 @@ class NodeSpec(StrictBase):
         scope), so a strict core class refuses them. Enforced by
         `ArraySpec`'s document validation; a group document has no
         extension points, and its members are validated as their own
-        classes.
+        classes. Strict validation also refuses every extra field whose key
+        nothing in the scope claims.
+
+    Notes
+    -----
+    A metadata document may hold members the Zarr V3 spec does not define
+    (its "additional fields"), and a spec accepts the ones the spec permits,
+    judged in the same scope as the rest of the document. An extra field
+    whose key a definition in the scope claims is judged by that definition
+    (``CORE`` claims a group's ``consolidated_metadata``). Any other extra
+    field is one the reader does not recognize, which the spec admits only
+    as an extension object, ``{"name": ..., "configuration": ...}``, that
+    sets ``"must_understand": false``; every other unknown key is refused,
+    which also catches a misspelled field name. Accepted extra fields are
+    kept in the `extra_fields` mapping (see `ExtraFieldsBase`) and written
+    back as top-level members wherever the document is written:
+    ``model_dump``, ``model_dump_json``, ``update``, ``like``, ``to_zarr``
+    and ``from_zarr``.
     """
 
     zarr_format: Literal[3] = 3
@@ -225,6 +254,40 @@ class NodeSpec(StrictBase):
         """
         scope = scope_from_context(context)
         return cls.zarr_scope if scope is None else scope
+
+    def _refuse_unjudged(
+        self,
+        kind: ExtraFieldKind,
+        scope: ZarrV3Context | None,
+        unclaimed_extension_points: Sequence[str] = (),
+    ) -> None:
+        """
+        Refuse what a whole-document read in `scope` (``CORE_AND_EXTENSIONS``
+        when `None`) leaves unjudged and the spec or this class does not
+        allow: the extra fields the spec's rule for fields a reader does not
+        recognize refuses, and, on a class with `zarr_scope_strict` set, every
+        extra field and extension-point name (`unclaimed_extension_points`)
+        nothing in `scope` claims. Extra fields a definition in `scope` claims
+        are judged by that definition when the whole document is read, not
+        here.
+        """
+        extra = self.extra_fields
+        scope_actual = CORE_AND_EXTENSIONS if scope is None else scope
+        node_type = "array" if kind is ArrayExtraFieldDefinition else "group"
+        refused = _refused_extra_fields(extra, kind, scope_actual)
+        if refused:
+            raise ValueError(format_lines(refused, node_type))
+        if type(self).zarr_scope_strict:
+            unclaimed = [
+                *unclaimed_extension_points,
+                *_unclaimed_extra_fields(extra, kind, scope_actual),
+            ]
+            if unclaimed:
+                msg = (
+                    "Names the scope leaves unjudged, refused because this class "
+                    "sets `zarr_scope_strict`:\n" + "\n".join(unclaimed)
+                )
+                raise ValueError(msg)
 
 
 def parse_dtype_v3(
@@ -469,6 +532,67 @@ def _unclaimed_extension_point_names(
     return problems
 
 
+type ExtraFieldKind = type[ArrayExtraFieldDefinition[Any] | GroupExtraFieldDefinition[Any]]
+
+
+def _refused_extra_fields(
+    extra_fields: Mapping[str, object], kind: ExtraFieldKind, scope: ZarrV3Context
+) -> list[str]:
+    """
+    The extra fields of a node document that the Zarr V3 spec's rules for
+    additional fields refuse in `scope`, each as a ``<loc>: <message>`` line.
+
+    An extra field whose key a definition in `scope` claims is one the reader
+    recognizes: that definition judges it when the whole document is read, so
+    it is skipped here. Every other extra field is one the reader does not
+    recognize, which the spec admits only as an extension object (a ``name``
+    that is an extension name, an optional ``configuration`` object, and no
+    other members) that explicitly sets ``"must_understand": false``: "An
+    implementation MUST fail to open Zarr groups or arrays if any metadata
+    fields are present which (a) the implementation does not recognize and (b)
+    are not explicitly set to ``"must_understand": false``." The envelope is
+    checked by the same rule `zarr-metadata` applies to every other extension
+    object.
+    """
+    problems: list[str] = []
+    for key, value in extra_fields.items():
+        if scope.claimant(kind, key) is not None:
+            continue
+        if not isinstance(value, Mapping):
+            problems.append(
+                f"{key}: not a field of this spec, and not an extra field the spec permits: "
+                'an extra field is an extension object with "must_understand": false, '
+                f"got {value!r}"
+            )
+            continue
+        if value.get("must_understand") is not False:
+            problems.append(
+                f"{key}: no {kind.label} in the scope recognizes this field, and it does not "
+                'set "must_understand": false, so the spec requires a reader to refuse it'
+            )
+            continue
+        for problem in envelope_problems(value, allow_must_understand_false=True):
+            loc = ".".join(str(part) for part in (key, *problem.loc))
+            problems.append(f"{loc}: {problem.message} (an extra field is an extension object)")
+    return problems
+
+
+def _unclaimed_extra_fields(
+    extra_fields: Mapping[str, object], kind: ExtraFieldKind, scope: ZarrV3Context
+) -> list[str]:
+    """
+    The extra fields of a node document whose key nothing in `scope` claims,
+    each as a ``<loc>: <message>`` line: the extra fields a reader in `scope`
+    does not recognize, which a strict class refuses even when they set
+    ``"must_understand": false``.
+    """
+    return [
+        f"{key}: no {kind.label} in the scope claims {key!r}"
+        for key in extra_fields
+        if scope.claimant(kind, key) is None
+    ]
+
+
 def reject_bare_codec(data: object) -> object:
     """
     Refuse a single codec where a pipeline is expected: iterating a lone
@@ -499,6 +623,7 @@ class ArraySpecOverrides(TypedDict, total=False):
     codecs: Sequence[CodecLike]
     storage_transformers: Sequence[AnyNamedConfig]
     dimension_names: Sequence[str | None] | None
+    extra_fields: Mapping[str, ZarrV3ExtensionField]
 
 
 class ArraySpecUpdate(ArraySpecOverrides, total=False):
@@ -512,13 +637,15 @@ class BaseGroupSpecUpdate(TypedDict, total=False):
     """The fields a `BaseGroupSpec.update` call may replace."""
 
     attributes: TBaseAttr
+    extra_fields: Mapping[str, ZarrV3ExtensionField]
 
 
 class GroupSpecUpdate(TypedDict, total=False):
     """The fields a `GroupSpec.update` call may replace."""
 
     attributes: TBaseAttr
-    members: Mapping[str, TBaseItem] | None
+    members: Mapping[str, TBaseItem]
+    extra_fields: Mapping[str, ZarrV3ExtensionField]
 
 
 class ArraySpec(NodeSpec, Generic[TAttr]):
@@ -670,25 +797,26 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         under the key `pydantic_zarr.v3.CONTEXT_KEY`), falling back to this
         class's `zarr_scope`, then to `zarr_metadata`'s `CORE_AND_EXTENSIONS`.
 
+        Extra fields (members the spec does not define) are judged in the
+        same scope: one whose key a definition in the scope claims, by that
+        definition; any other, by the spec's rule for fields a reader does
+        not recognize (an extension object with ``"must_understand": false``).
+
         On a class with `zarr_scope_strict` set, names the scope leaves
         unjudged are refused instead: the document must be built from
-        extension-point names the operative scope claims.
+        extension-point names and extra-field keys the operative scope claims.
 
         The `attributes` field is not part of this check: its type and
         contents are governed by this class's `TAttr` parameter alone.
         """
         scope = self._scope(info.context)
         self._canonical_document(context=scope)
+        unclaimed: list[str] = []
         if type(self).zarr_scope_strict:
             unclaimed = _unclaimed_extension_point_names(
                 self.model_dump(), CORE_AND_EXTENSIONS if scope is None else scope
             )
-            if unclaimed:
-                msg = (
-                    "Names the scope leaves unjudged, refused because this class "
-                    "sets `zarr_scope_strict`:\n" + "\n".join(unclaimed)
-                )
-                raise ValueError(msg)
+        self._refuse_unjudged(ArrayExtraFieldDefinition, scope, unclaimed)
         return self
 
     def _canonical_document(
@@ -718,9 +846,10 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         Omit `dimension_names` when it is `None`: the Zarr V3 spec allows the
         key to be absent, not null. This is a model serializer rather than a
         `model_dump` override so the omission also applies to arrays nested as
-        members in a group's dump, and to JSON serialization.
+        members in a group's dump, and to JSON serialization. Like every
+        spec's, it writes the extra fields as top-level members.
         """
-        document = handler(self)
+        document = flatten_extra_fields(handler(self))
         if document.get("dimension_names") is None:
             document.pop("dimension_names", None)
         return document
@@ -971,6 +1100,11 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         else:
             meta_json = tuplify_json(array.metadata.to_dict())
         meta_any = cast("dict[str, Any]", meta_json)
+        # zarr-python 3.1 and later keep a document's extra fields, and
+        # write them as top-level keys in `to_dict`
+        extra_fields = {
+            key: value for key, value in meta_any.items() if key not in cls.model_fields
+        }
         return cls(
             attributes=meta_any["attributes"],
             shape=array.shape,
@@ -981,6 +1115,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             codecs=meta_any["codecs"],
             storage_transformers=meta_any["storage_transformers"],
             dimension_names=meta_any.get("dimension_names", None),
+            extra_fields=extra_fields,
         )
 
     def to_zarr(
@@ -1022,6 +1157,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         except ImportError as e:
             raise ImportError("zarr must be installed to use to_zarr") from e
 
+        self._check_storable()
         store_path = sync(make_store_path(store, path=path))
         extant_node = maybe_node(store, path, zarr_format=3)
         if isinstance(extant_node, zarr.Array):
@@ -1040,6 +1176,22 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         sync(async_array._save_metadata(meta))
         return Array(_async_array=async_array)
 
+    def _check_storable(self) -> None:
+        """
+        Refuse, before anything is written, an array whose extra fields
+        `to_zarr` cannot store: zarr-python keeps an array's extra fields
+        from 3.1.
+        """
+        from zarr.core.metadata.v3 import ArrayV3Metadata
+
+        if self.extra_fields and not _stores_extra_fields(ArrayV3Metadata):
+            msg = (
+                f"This array holds extra fields ({', '.join(map(repr, self.extra_fields))}), "
+                f"which zarr-python {version('zarr')} cannot store; zarr-python 3.1 and "
+                "later can."
+            )
+            raise ValueError(msg)
+
     def update(self, **changes: Unpack[ArraySpecUpdate]) -> Self:
         """
         Return a revalidated copy of this model with `changes` applied.
@@ -1047,9 +1199,10 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         All changes land in one validation pass, so correlated fields (for an
         array, a new `data_type` with a matching `fill_value`, or a new
         `shape` with a matching `chunk_grid`) change together atomically.
-        Unlike `model_copy(update=...)`, the result is validated.
+        Unlike `model_copy(update=...)`, the result is validated. Passing
+        `extra_fields` replaces the extra fields as a whole.
         """
-        return type(self).model_validate({**self.model_dump(), **changes})
+        return self._updated(changes)
 
     def with_sharding_codec(
         self,
@@ -1098,7 +1251,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         ----------
         other : ArraySpec | zarr.Array
             The array (model or actual) to compare with. If other is a `zarr.Array`, it will be
-            converted to `ArraySpec` first.
+            converted to `ArraySpec` first; one whose metadata does not validate as a spec (one
+            holding an extra field the spec's rules refuse, say) is like no spec.
         include : IncEx, default = None
             A specification of fields to include in the comparison. The default value is `None`,
             which means that all fields will be included. See the documentation of
@@ -1135,7 +1289,12 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
         other_parsed: ArraySpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Array):
-            other_parsed = ArraySpec.from_zarr(other)
+            try:
+                other_parsed = ArraySpec.from_zarr(other)
+            except ValidationError:
+                # a stored array that does not validate as a spec (one holding
+                # an extra field the spec's rules refuse, say) is like no spec
+                return False
         else:
             other_parsed = other  # type: ignore[assignment]
 
@@ -1152,7 +1311,48 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
 
-def ensure_member_names_v3(data: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+def _stores_extra_fields(metadata_class: type) -> bool:
+    """
+    Whether a zarr-python metadata class keeps a document's extra fields:
+    ``ArrayV3Metadata`` does from zarr-python 3.1, ``GroupMetadata`` from 3.4.
+    """
+    return any(field.name == "extra_fields" for field in dataclasses.fields(metadata_class))
+
+
+def _stored_group_extra_fields(group: zarr.Group) -> dict[str, object]:
+    """
+    The extra fields of a stored group's metadata document, as zarr-python
+    read them (it keeps them from zarr-python 3.4), except
+    ``consolidated_metadata``: zarr-python's record of the hierarchy below
+    the group, which a spec reads as members instead.
+    """
+    document = group.metadata.to_dict()
+    own = {"zarr_format", "node_type", "attributes", ZARR_V3_CONSOLIDATED_METADATA_KEY}
+    return {key: tuplify_json(value) for key, value in document.items() if key not in own}
+
+
+def _write_group_extra_fields(
+    group: zarr.Group, extra_fields: Mapping[str, object] | None
+) -> zarr.Group:
+    """
+    Rewrite a stored group's metadata document with `extra_fields` added,
+    returning the group as rewritten. `BaseGroupSpec._check_storable` has
+    confirmed that zarr-python can store them.
+    """
+    if not extra_fields:
+        return group
+    from zarr.core.group import AsyncGroup, Group, GroupMetadata
+    from zarr.core.sync import sync
+
+    metadata = GroupMetadata.from_dict(
+        {**group.metadata.to_dict(), **json.loads(json.dumps(extra_fields))}
+    )
+    async_group = AsyncGroup(metadata=metadata, store_path=group.store_path)
+    sync(async_group._save_metadata())
+    return Group(async_group)
+
+
+def ensure_member_names_v3(data: Mapping[str, Any]) -> Mapping[str, Any]:
     """
     Ensure that every key of a members mapping is a valid Zarr V3 node name.
 
@@ -1162,8 +1362,6 @@ def ensure_member_names_v3(data: Mapping[str, Any] | None) -> Mapping[str, Any] 
     The empty string names the root node, so it is not a valid *member*
     name and is rejected here as well.
     """
-    if data is None:
-        return data
     for key in data:
         if key == "":
             msg = 'Invalid member name "": the empty string names the root node'
@@ -1197,14 +1395,81 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
     node_type: Literal["group"] = "group"
     attributes: TAttr = Field(default={}, validate_default=True)
 
+    @model_validator(mode="after")
+    def validate_metadata_document(self, info: ValidationInfo) -> Self:
+        """
+        Validate this spec's extra fields as part of a Zarr V3 group metadata
+        document, via `zarr-metadata`.
+
+        A group document's only members beyond the fields this class declares
+        are its extra fields, so only a spec holding some has anything to
+        read. The scope is resolved as for `ArraySpec`: an extra field whose
+        key a definition in the scope claims is judged by that definition
+        (``CORE`` claims ``consolidated_metadata``, whose contents are kept as
+        written and not read as members); any other must be an extension
+        object with ``"must_understand": false``. On a class with
+        `zarr_scope_strict` set, an extra field nothing in the scope claims is
+        refused. Attributes and members are not part of this check.
+        """
+        if not self.extra_fields:
+            return self
+        scope = self._scope(info.context)
+        document = {"zarr_format": 3, "node_type": "group", "attributes": {}, **self.extra_fields}
+        try:
+            ZarrV3GroupMetadataModel.from_json(document, context=scope)
+        except MetadataValidationError as e:
+            raise ValueError(format_problems(e, "group")) from e
+        self._refuse_unjudged(GroupExtraFieldDefinition, scope)
+        return self
+
     def update(self, **changes: Unpack[BaseGroupSpecUpdate]) -> Self:
         """
         Return a revalidated copy of this model with `changes` applied.
 
         Unlike `model_copy(update=...)`, the result is validated, so an
-        invalid change is refused.
+        invalid change is refused. Passing `extra_fields` replaces the extra fields as a whole.
         """
-        return type(self).model_validate({**self.model_dump(), **changes})
+        return self._updated(changes)
+
+    def _own_metadata(self) -> AnyBaseGroupSpec:
+        """
+        This group's own metadata, as a `BaseGroupSpec`: its attributes and
+        extra fields, without members. Constructed without validation, since
+        this spec was validated already, possibly in a scope that a bare
+        `BaseGroupSpec` would not read its extra fields in.
+        """
+        return BaseGroupSpec.model_construct(
+            attributes=self.attributes, extra_fields=self.extra_fields
+        )
+
+    def _check_storable(self) -> None:
+        """
+        Refuse, before anything is written, a group whose extra fields
+        `to_zarr` cannot store: ``consolidated_metadata``, which records the
+        members of a hierarchy as it was consolidated (writing it as held
+        could record members other than the ones written; reading and writing
+        it is left to a dedicated consolidated-metadata API), and any extra
+        field on a zarr-python too old to store one.
+        """
+        extra = self.extra_fields
+        if ZARR_V3_CONSOLIDATED_METADATA_KEY in extra:
+            msg = (
+                f"This group holds `{ZARR_V3_CONSOLIDATED_METADATA_KEY}`, which `to_zarr` does "
+                "not write: it lists the members of the hierarchy as it was consolidated, "
+                "which need not be the members written. Drop it before writing (pass "
+                "`update` the `extra_fields` without it), and consolidate the written "
+                "hierarchy with `zarr.consolidate_metadata`."
+            )
+            raise ValueError(msg)
+        if extra:
+            from zarr.core.group import GroupMetadata
+
+            if not _stores_extra_fields(GroupMetadata):
+                msg = (
+                    f"This group holds extra fields ({', '.join(map(repr, extra))}), which "
+                    f"zarr-python {version('zarr')} cannot store; zarr-python 3.4 and later can."
+                )
+                raise ValueError(msg)
 
     def to_json(self) -> ZarrV3GroupMetadataJSON:
         """
@@ -1221,8 +1486,14 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
     def from_zarr(cls, group: zarr.Group) -> Self:
         """
         Create a `BaseGroupSpec` from a zarr group, without reading its members.
+
+        The group's extra fields are read with it, except
+        ``consolidated_metadata``: it is zarr-python's record of the
+        hierarchy below the group, not part of the group's own metadata.
         """
-        return cls(attributes=group.attrs.asdict())
+        return cls.model_validate(
+            {"attributes": group.attrs.asdict(), **_stored_group_extra_fields(group)}
+        )
 
     def to_zarr(self, store: Store, path: str, *, overwrite: bool = False) -> zarr.Group:
         """
@@ -1236,6 +1507,7 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         except ImportError as e:
             raise ImportError("zarr must be installed to use to_zarr") from e
 
+        self._check_storable()
         extant_node = maybe_node(store, path, zarr_format=3)
         if isinstance(extant_node, zarr.Group):
             if not self.like(extant_node):
@@ -1250,7 +1522,7 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
 
         result = zarr.group(store=store, path=path, overwrite=overwrite, zarr_format=3)
         result.attrs.put(self.model_dump()["attributes"])
-        return result
+        return _write_group_extra_fields(result, self.extra_fields)
 
     def like(
         self,
@@ -1262,13 +1534,19 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         """
         Compare this group's own metadata to another group's. Members never
         participate in the comparison: a `GroupSpec` or `zarr.Group` is reduced
-        to its own metadata first.
+        to its own metadata first. A `zarr.Group` whose metadata does not
+        validate as a spec (one holding an extra field the spec's rules refuse,
+        say) is like no spec.
         """
         other_parsed: AnyBaseGroupSpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
-            other_parsed = BaseGroupSpec(attributes=other.attrs.asdict())
+            try:
+                other_parsed = BaseGroupSpec.from_zarr(other)
+            except ValidationError:
+                # a stored group that does not validate as a spec is like no spec
+                return False
         elif isinstance(other, GroupSpec):
-            other_parsed = BaseGroupSpec(attributes=other.attributes)
+            other_parsed = other._own_metadata()
         else:
             other_parsed = cast("AnyBaseGroupSpec", other)
 
@@ -1286,12 +1564,14 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         The type of this node. Must be the string "group".
     attributes: TAttr
         The user-defined attributes of this group.
-    members: dict[str, TItem] | None
-        The members of this group. `members` is a dict with string keys and values that
-        must inherit from either ArraySpec or GroupSpec.
+    members: dict[str, TItem], default = {}
+        The members of this group: a `Mapping` with string keys and values that are
+        `ArraySpec` or `GroupSpec`. A `GroupSpec` is a complete hierarchy, so an empty
+        mapping means the group has no members. A group whose members are unknown is a
+        `BaseGroupSpec`, which has no `members` field and is never a member.
     """
 
-    members: Mapping[str, TItem] | None = {}
+    members: Mapping[str, TItem] = {}
 
     @model_validator(mode="after")
     def validate_member_names(self) -> Self:
@@ -1312,11 +1592,11 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
 
         All changes land in one validation pass, so `attributes` and `members`
         change together atomically. Unlike `model_copy(update=...)`, the
-        result is validated.
+        result is validated. Passing `extra_fields` replaces the extra fields as a whole.
         """
-        return type(self).model_validate({**self.model_dump(), **changes})
+        return self._updated(changes)
 
-    def resolve_path(self, path: str) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec:
+    def resolve_path(self, path: str) -> AnyArraySpec | AnyGroupSpec:
         """
         Return the node at a `/`-separated path of member names relative to
         this group (`"a"`, `"a/b/c"`; leading and trailing `/` are ignored).
@@ -1330,23 +1610,23 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
             If the path holds no member names, or an empty one (`"a//b"`).
         KeyError
             Naming the segment that failed: a member name that does not
-            exist, a segment that descends into a node that is not a group,
-            or a group whose members are unknown (`members=None`).
+            exist, or a segment that descends into a node that is not a
+            group.
         """
         node = resolve_member_path(self, path)
-        return cast("AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec", node)
+        return cast("AnyArraySpec | AnyGroupSpec", node)
 
-    def __getitem__(self, path: str) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec:
+    def __getitem__(self, path: str) -> AnyArraySpec | AnyGroupSpec:
         """`group[path]` resolves a member path: see `resolve_path`."""
         return self.resolve_path(path)
 
     def get_path(
         self, path: str, default: TDefault | None = None
-    ) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec | TDefault | None:
+    ) -> AnyArraySpec | AnyGroupSpec | TDefault | None:
         """
         `resolve_path` that returns `default` instead of raising when the path
-        does not resolve (a missing member, a non-group on the way, or unknown
-        members); a malformed path still raises `ValueError`. This non-raising
+        does not resolve (a missing member, or a non-group on the way); a
+        malformed path still raises `ValueError`. This non-raising
         form suits pydantic validators, which turn `ValueError` into a
         validation error but let `KeyError` escape.
         """
@@ -1362,11 +1642,13 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
 
         The flattened hierarchy is a
         `dict` with the following constraints: keys must be valid paths; values must
-        be `ArraySpec` or `GroupSpec` instances.
+        be `ArraySpec` or `BaseGroupSpec` instances, as `to_flat` emits them. A `GroupSpec`
+        value is read as its own metadata: its members are ignored, since a group's members
+        are the entries under its path.
 
         Parameters
         ----------
-        data : Dict[str, ArraySpec | GroupSpec]
+        data : Dict[str, ArraySpec | BaseGroupSpec]
             A flattened representation of a Zarr hierarchy.
 
         Returns
@@ -1377,13 +1659,13 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         Examples
         --------
         ```py
-        from pydantic_zarr.v3 import GroupSpec, ArraySpec
+        from pydantic_zarr.v3 import BaseGroupSpec, GroupSpec, ArraySpec
         import numpy as np
-        flat = {'': GroupSpec(attributes={'foo': 10}, members=None)}
+        flat = {'': BaseGroupSpec(attributes={'foo': 10})}
         GroupSpec.from_flat(flat)
         # GroupSpec(zarr_format=3, node_type='group', attributes={'foo': 10}, members={})
         flat = {
-            '': GroupSpec(attributes={'foo': 10}, members=None),
+            '': BaseGroupSpec(attributes={'foo': 10}),
             '/a': ArraySpec.from_array(np.arange(10))}
         GroupSpec.from_flat(flat)
         # GroupSpec(
@@ -1414,7 +1696,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         This method returns a `dict` with string keys and values that are `GroupSpec` or
         `ArraySpec`.
 
-        Then the resulting `dict` will contain a copy of the input with a null `members` attribute
+        Then the resulting `dict` will contain the input's own metadata, as a `BaseGroupSpec`,
         under the key `root_path`, as well as copies of the result of calling `node.to_flat` on each
         element of `node.members`, each under a key created by joining `root_path` with a '/`
         character to the name of each member, and so on recursively for each sub-member.
@@ -1434,7 +1716,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         --------
 
         >>> from pydantic_zarr.v3 import GroupSpec
-        >>> g1 = GroupSpec(members=None, attributes={'foo': 'bar'})
+        >>> g1 = GroupSpec(attributes={'foo': 'bar'})
         >>> g1.to_flat()
         {'': BaseGroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'})}
         >>> g1.to_flat(root_path='baz')
@@ -1446,21 +1728,20 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
 
     @classmethod
     @override
-    def from_zarr(cls, group: zarr.Group, *, depth: int = -1) -> Self:
+    def from_zarr(cls, group: zarr.Group) -> Self:
         """
         Create a GroupSpec from a zarr group. Subgroups and arrays contained in the zarr
         group will be converted to instances of GroupSpec and ArraySpec, respectively,
         and these spec instances will be stored in the .members attribute of the parent
         GroupSpec. This occurs recursively, so the entire zarr hierarchy below a given
-        group can be represented as a GroupSpec.
+        group can be represented as a GroupSpec. Reading the entire hierarchy may be slow
+        for large hierarchies on high-latency storage. To read part of a hierarchy, use
+        `from_zarr_flat`; to read a group without its members, use `BaseGroupSpec.from_zarr`.
 
         Parameters
         ----------
         group : zarr.Group
             The Zarr group to model.
-        depth : int, default = -1
-            An integer which may be no lower than -1. Determines how far into the tree to parse.
-            The default value of -1 indicates that the entire hierarchy should be parsed.
 
         Returns
         -------
@@ -1471,25 +1752,16 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         except ImportError as e:
             raise ImportError("zarr must be installed to use from_zarr") from e
 
-        attributes = group.attrs.asdict()
+        metadata = {"attributes": group.attrs.asdict(), **_stored_group_extra_fields(group)}
         members = {}
 
-        if depth < -1:
-            msg = (
-                f"Invalid value for depth. Got {depth}, expected an integer "
-                "greater than or equal to -1."
-            )
-            raise ValueError(msg)
-        if depth == 0:
-            return cls(attributes=attributes, members=None)
-        new_depth = max(depth - 1, -1)
         for name, item in group.members():
             if isinstance(item, zarr.Array):
                 # convert to dict before the final typed GroupSpec construction
                 item_out = ArraySpec.from_zarr(item).model_dump()
             elif isinstance(item, zarr.Group):
                 # convert to dict before the final typed GroupSpec construction
-                item_out = GroupSpec.from_zarr(item, depth=new_depth).model_dump()
+                item_out = GroupSpec.from_zarr(item).model_dump()
             else:
                 msg = (  # type: ignore[unreachable]
                     f"Unparsable object encountered: {type(item)}. Expected zarr.Array"
@@ -1499,7 +1771,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
                 raise ValueError(msg)  # noqa: TRY004
             members[name] = item_out
 
-        return cls(attributes=attributes, members=members)
+        return cls.model_validate({**metadata, "members": members})
 
     @override
     def to_zarr(
@@ -1532,6 +1804,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
 
         spec_dict = self.model_dump(exclude={"members": True})
         attrs = spec_dict.pop("attributes")
+        _check_storable_tree(self)
         extant_node = maybe_node(store, path, zarr_format=3)
         if isinstance(extant_node, zarr.Group):
             if not self.like(extant_node):
@@ -1566,11 +1839,10 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
 
         result = zarr.group(store=store, path=path, overwrite=overwrite, zarr_format=3)
         result.attrs.put(attrs)
-        # consider raising an exception if a partial GroupSpec is provided
-        if self.members is not None:
-            for name, member in self.members.items():
-                subpath = f"{path.rstrip('/')}/{name.lstrip('/')}"
-                member.to_zarr(store, subpath, overwrite=overwrite, **kwargs)
+        result = _write_group_extra_fields(result, self.extra_fields)
+        for name, member in self.members.items():
+            subpath = f"{path.rstrip('/')}/{name.lstrip('/')}"
+            member.to_zarr(store, subpath, overwrite=overwrite, **kwargs)
 
         return result
 
@@ -1591,11 +1863,9 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         documents (a fill value written `"NaN"` equals one written
         `"0x7fc00000"`), exactly as `ArraySpec.like` judges them directly.
         A `BaseGroupSpec` — a group considered without members — compares as
-        that projection at any depth: by the group's own metadata alone,
-        whatever this side's members hold. A `GroupSpec` whose members are
-        unknown (`members=None`) is alike a group whose members are likewise
-        unknown, or a `BaseGroupSpec` projection, never a group with known
-        members.
+        that projection: by the group's own metadata alone, whatever this
+        side's members hold. A `zarr.Group` whose hierarchy does not validate
+        as a spec is like no spec.
         With filters, models are converted to `dict` via the `model_dump`
         method of `pydantic.BaseModel` and compared with the `==` operator.
 
@@ -1645,11 +1915,14 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
             # a group without members compares by the group's own metadata;
             # this side projects to its own metadata too, or the comparison
             # would always fail on the members field itself
-            projection = BaseGroupSpec(attributes=self.attributes)
-            return projection.like(other, include=include, exclude=exclude)
+            return self._own_metadata().like(other, include=include, exclude=exclude)
         other_parsed: AnyGroupSpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
-            other_parsed = GroupSpec.from_zarr(other)
+            try:
+                other_parsed = GroupSpec.from_zarr(other)
+            except ValidationError:
+                # a stored hierarchy that does not validate as a spec is like no spec
+                return False
         else:
             other_parsed = other  # type: ignore[assignment]
 
@@ -1660,8 +1933,6 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
             # judges them directly.
             if not model_like(self, other_parsed, exclude={"members"}):
                 return False
-            if self.members is None or other_parsed.members is None:
-                return self.members is None and other_parsed.members is None
             if self.members.keys() != other_parsed.members.keys():
                 return False
             for name, member in self.members.items():
@@ -1669,39 +1940,46 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
                 if isinstance(member, ArraySpec):
                     if not isinstance(other_member, ArraySpec) or not member.like(other_member):
                         return False
-                elif isinstance(other_member, ArraySpec):
-                    return False
-                elif not member.like(other_member):
-                    # a `BaseGroupSpec` member is the projection it is
-                    # everywhere else: it compares by the group's own
-                    # metadata, at any depth, exactly as at the top level.
-                    # Two `GroupSpec` members agree on whether their members
-                    # are known (members=None matches only members=None).
+                elif isinstance(other_member, ArraySpec) or not member.like(other_member):
                     return False
             return True
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
 
-@overload
-def from_zarr(element: zarr.Array, *, depth: int = ...) -> AnyArraySpec: ...
+def _check_storable_tree(node: AnyArraySpec | AnyBaseGroupSpec, path: str = "") -> None:
+    """
+    Refuse, before anything is written, a hierarchy holding a node whose
+    extra fields `to_zarr` cannot store, naming the node's path. A group's
+    `to_zarr` writes itself before its members, so checking only the group
+    would leave a partial hierarchy behind when a member is refused.
+    """
+    try:
+        node._check_storable()
+    except ValueError as e:
+        msg = f"Cannot write the node at {path or '/'!r}: {e}"
+        raise ValueError(msg) from e
+    if isinstance(node, GroupSpec):
+        for name, member in node.members.items():
+            _check_storable_tree(member, f"{path}/{name}")
 
 
 @overload
-def from_zarr(element: zarr.Group, *, depth: int = ...) -> AnyGroupSpec: ...
+def from_zarr(element: zarr.Array) -> AnyArraySpec: ...
 
 
-def from_zarr(element: zarr.Array | zarr.Group, *, depth: int = -1) -> AnyArraySpec | AnyGroupSpec:
+@overload
+def from_zarr(element: zarr.Group) -> AnyGroupSpec: ...
+
+
+def from_zarr(element: zarr.Array | zarr.Group) -> AnyArraySpec | AnyGroupSpec:
     """
     Recursively parse a Zarr group or Zarr array into an ArraySpec or GroupSpec.
+    A group is read with its entire hierarchy; to read part of one, use `from_zarr_flat`.
 
     Parameters
     ----------
     element : a zarr Array or zarr Group
-
-    depth : int, default = -1
-        An integer which may be no lower than -1. Determines how far into the tree to parse.
-        The default value of -1 indicates that the entire hierarchy should be parsed.
 
     Returns
     -------
@@ -1714,7 +1992,49 @@ def from_zarr(element: zarr.Array | zarr.Group, *, depth: int = -1) -> AnyArrayS
     if isinstance(element, zarr.Array):
         return ArraySpec.from_zarr(element)
     else:
-        return GroupSpec.from_zarr(element, depth=depth)
+        return GroupSpec.from_zarr(element)
+
+
+def from_zarr_flat(
+    element: zarr.Array | zarr.Group, *, depth: int = -1
+) -> dict[str, AnyArraySpec | AnyBaseGroupSpec]:
+    """
+    Read a zarr array or group, and the members under it up to `depth` levels deep, into a
+    flat hierarchy: a `dict` from paths to `ArraySpec` and `BaseGroupSpec` values, in the form
+    `to_flat` produces and `from_flat` takes.
+
+    This is how to read part of a hierarchy. A `GroupSpec` is always a complete hierarchy, so
+    `GroupSpec.from_zarr` reads every member; a flat hierarchy makes no claim that it lists
+    every node, so it can stop at any depth. `from_flat` turns a complete one into a
+    `GroupSpec`. It reads its input as the complete hierarchy, so passing it a result read
+    with a `depth` limit yields a `GroupSpec` whose groups at that limit have no members.
+
+    Parameters
+    ----------
+    element : zarr.Array | zarr.Group
+        The zarr array or group to read. Its path in the result is `""`.
+    depth : int, default = -1
+        How many levels of members to read: -1 reads the whole hierarchy, 0 reads `element`
+        alone, 1 its members, and so on. This has no effect if `element` is an array.
+
+    Returns
+    -------
+    dict[str, ArraySpec | BaseGroupSpec]
+        The nodes read, keyed by path relative to `element`.
+
+    Raises
+    ------
+    ValueError
+        If `depth` is lower than -1.
+    """
+    import zarr
+
+    return {
+        path: ArraySpec.from_zarr(node)
+        if isinstance(node, zarr.Array)
+        else BaseGroupSpec.from_zarr(node)
+        for path, node in walk_zarr_hierarchy(element, depth=depth)
+    }
 
 
 @overload
@@ -1777,9 +2097,10 @@ def from_flat(
     Parameters
     ----------
 
-    data : Dict[str, ArraySpec | GroupSpec]
+    data : Dict[str, ArraySpec | BaseGroupSpec]
         A flat representation of a Zarr hierarchy. This is a `dict` with keys that are strings,
-        and values that are either `GroupSpec` or `ArraySpec` instances.
+        and values that are either `BaseGroupSpec` or `ArraySpec` instances. A `GroupSpec`
+        value is read as its own metadata: its members are ignored.
 
     Returns
     -------
@@ -1902,7 +2223,11 @@ def from_flat_group(
     for subparent_name, submemb in submember_by_parent_name.items():
         member_groups[subparent_name] = from_flat_group(submemb)
 
-    return GroupSpec(members={**member_groups, **member_arrays}, attributes=root_node.attributes)
+    return GroupSpec(
+        members={**member_groups, **member_arrays},
+        attributes=root_node.attributes,
+        extra_fields=root_node.extra_fields,
+    )
 
 
 def auto_attributes(data: object) -> Mapping[str, object]:
@@ -1984,8 +2309,8 @@ def to_flat(
 
     If the input is an `ArraySpec`, then this function just returns the dict `{root_path: node}`.
 
-    If the input is a `GroupSpec`, then the resulting `dict` will contain a copy of the input
-    with a null `members` attribute under the key `root_path`, as well as copies of the result of
+    If the input is a `GroupSpec`, then the resulting `dict` will contain the input's own
+    metadata, as a `BaseGroupSpec`, under the key `root_path`, as well as copies of the result of
     calling `flatten_node` on each element of `node.members`, each under a key created by joining
     `root_path` with a '/` character to the name of each member, and so on recursively for each
     sub-member.
@@ -2007,7 +2332,7 @@ def to_flat(
     --------
 
     >>> from pydantic_zarr.v3 import to_flat, GroupSpec
-    >>> g1 = GroupSpec(members=None, attributes={'foo': 'bar'})
+    >>> g1 = GroupSpec(attributes={'foo': 'bar'})
     >>> to_flat(g1)
     {'': BaseGroupSpec(zarr_format=3, node_type='group', attributes={'foo': 'bar'})}
     >>> to_flat(g1, root_path='baz')
@@ -2020,8 +2345,8 @@ def to_flat(
     if isinstance(node, ArraySpec):
         model_copy = node.model_copy(deep=True)
     else:
-        model_copy = BaseGroupSpec(attributes=node.model_copy(deep=True).attributes)
-        if isinstance(node, GroupSpec) and node.members is not None:
+        model_copy = node.model_copy(deep=True)._own_metadata()
+        if isinstance(node, GroupSpec):
             for name, value in node.members.items():
                 result.update(to_flat(value, f"{root_path}/{name}"))
 

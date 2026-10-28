@@ -90,7 +90,7 @@ dependencies = [
 [tool.hatch.envs.test.scripts]
 test = "pytest tests/test_pydantic_zarr/"
 test-cov = "pytest --cov-config=pyproject.toml --cov=pkg --cov-report html --cov=src tests/test_pydantic_zarr"
-list-env = "pip list"
+list-env = "{env:HATCH_UV} pip list"
 
 [[tool.hatch.envs.test.matrix]]
 python = ["3.12", "3.13", "3.14"]
@@ -102,7 +102,7 @@ dependency-groups = ["test-base"]
 [tool.hatch.envs.test-base.scripts]
 test = "pytest tests/test_pydantic_zarr/"
 test-cov = "pytest --cov-config=pyproject.toml --cov=pkg --cov-report html --cov=src tests/test_pydantic_zarr"
-list-env = "pip list"
+list-env = "{env:HATCH_UV} pip list"
 
 [[tool.hatch.envs.test-base.matrix]]
 python = ["3.12", "3.13", "3.14"]

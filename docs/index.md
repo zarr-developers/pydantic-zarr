@@ -76,7 +76,9 @@ Note the use of the term "modeled": Zarr arrays are useful because they store N-
 In `pydantic-zarr`, Zarr groups are modeled by the `GroupSpec` class, which is a [`Pydantic model`](https://docs.pydantic.dev/latest/concepts/models/) with two fields:
 
 - `attributes`: either a `Mapping` or a `pydantic.BaseModel`.
-- `members`: either a mapping with string keys and values that must be `GroupSpec` or `ArraySpec` instances, or the value `Null`. The use of nullability is explained in its own [section](#nullable-members).
+- `members`: a mapping with string keys and values that must be `ArraySpec` or `GroupSpec` instances. The default is the empty mapping `{}`: a group with no members.
+
+A group whose members are unknown is modeled by `BaseGroupSpec`, explained in its own [section](#groups-whose-members-are-unknown).
 
 Zarr arrays are represented by the `ArraySpec` class, which has a similar `attributes` field, as well as fields for all the Zarr array properties (`dtype`, `shape`, `chunks`, etc).
 
@@ -84,15 +86,19 @@ Zarr arrays are represented by the `ArraySpec` class, which has a similar `attri
 
 Examples using this generic typing functionality can be found in the [usage guide](usage_zarr_v2.md#using-generic-types).
 
-### Nullable `members`
+### Groups whose members are unknown
 
 When a Zarr group has no members, a `GroupSpec` model of that Zarr group will have its `members` attribute set to the empty dict `{}`. But there are scenarios where the members of a Zarr group are unknown:
 
 - Some Zarr storage backends do not support directory listing, in which case it is possible to access a Zarr group and inspect its attributes, but impossible to discover its members. So the members of such a Zarr group are unknown.
 - Traversing a deeply nested large Zarr group on high latency storage can be slow. This can be mitigated by only partially traversing the hierarchy, e.g. only inspecting the root group and N subgroups. This defines a sub-hierarchy of the full hierarchy; leaf groups of this subtree by definition did not have their members checked, and so their members are unknown.
-- A Zarr hierarchy can be represented as a mapping `M` from paths to nodes (array or group). In this case, if `M["key"]` is a model of a Zarr group `G`, then `M["key/subkey"]` would encode a member of `G`. Since the key structure of the mapping `M` is doing the work of encoding the members of `G`, there is no value in `G` having a members attribute that claims anything about the members of `G`, and so `G.members` should be modeled as unknown.
+- A Zarr hierarchy can be represented as a mapping `M` from paths to nodes (array or group). In this case, if `M["key"]` is a model of a Zarr group `G`, then `M["key/subkey"]` would encode a member of `G`. Since the key structure of the mapping `M` is doing the work of encoding the members of `G`, there is no value in `G` having a members attribute that claims anything about the members of `G`.
 
-To handle these cases, `pydantic-zarr` allows the `members` attribute of a `GroupSpec` to be `Null`.
+A `GroupSpec` is always a complete hierarchy: every group in it has known members, so an empty `members` mapping always means "no members", never "not read". `pydantic-zarr` models a group whose members are unknown with `BaseGroupSpec`, a group's own metadata without a `members` field, and keeps it out of `GroupSpec` hierarchies. In each scenario above:
+
+- `BaseGroupSpec.from_zarr(group)` reads a group without its members.
+- `from_zarr_flat(group, depth=n)` reads `n` levels of a hierarchy into a flat mapping from paths to `ArraySpec` and `BaseGroupSpec` values. A flat mapping makes no claim that it lists every node, so it can stop at any depth.
+- `to_flat` emits a `BaseGroupSpec` for every group, and `from_flat` builds a `GroupSpec` from a flat mapping, reading it as the complete hierarchy.
 
 ## Standardization
 

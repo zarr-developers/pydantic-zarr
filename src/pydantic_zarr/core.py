@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import (
     TYPE_CHECKING,
+    Annotated,
     Any,
     Literal,
     Protocol,
+    Self,
     TypeVar,
     overload,
     override,
@@ -18,8 +20,17 @@ import numpy.typing as npt
 from pydantic import (
     AliasChoices,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
 )
+
+# pydantic resolves the `extra_fields` annotation at runtime
+from zarr_metadata import JSONValue  # noqa: TC002
 
 if TYPE_CHECKING:
     # both pydantic spellings below re-export pydantic_core's sentinel, and
@@ -37,6 +48,8 @@ else:
         from pydantic.experimental.missing_sentinel import MISSING
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     import zarr
     from zarr.storage._common import StoreLike
 
@@ -88,6 +101,109 @@ class StrictBase(BaseModel):
         """Serialize to JSON with `by_alias=True` unless told otherwise; see `model_dump`."""
         kwargs.setdefault("by_alias", True)
         return super().model_dump_json(**kwargs)
+
+
+EXTRA_FIELDS = "extra_fields"
+"""The name of the field in which `ExtraFieldsBase` keeps a document's extra fields."""
+
+
+def flatten_extra_fields(document: dict[str, Any]) -> dict[str, Any]:
+    """
+    Turn a dumped spec's `extra_fields` mapping back into top-level members
+    of the document, where the metadata document holds them.
+    """
+    extra = document.pop(EXTRA_FIELDS, None)
+    if extra:
+        document.update(extra)
+    return document
+
+
+class ExtraFieldsBase(StrictBase):
+    """
+    A base class for specs of metadata documents that may hold members the
+    spec class does not declare ("extra fields").
+
+    The members a document holds beyond the declared fields are gathered into
+    the `extra_fields` mapping, by key, and dumped back as top-level members:
+    `model_dump` and `model_dump_json` write the document as it was read.
+    They are held in a field of their own rather than as pydantic extras
+    (`extra="allow"`), because pydantic applies a model's `extra` setting to
+    every TypedDict the model holds, which would open the closed TypedDicts
+    of field and attribute types. Which extra fields a document may hold is
+    up to each subclass; a key nobody validates is still kept out of
+    `extra_fields` when it names a declared field.
+
+    Attributes
+    ----------
+    extra_fields: Mapping[str, JSONValue], default = {}
+        The document's members that this class does not declare, by key,
+        with arrays held as tuples.
+    """
+
+    extra_fields: Mapping[str, Annotated[JSONValue, BeforeValidator(tuplify_json)]] = Field(
+        default={}
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _collect_extra_fields(cls, data: object) -> object:
+        """
+        Gather the members of an input document that this class does not
+        declare into `extra_fields`, alongside any given there directly.
+        """
+        if not isinstance(data, Mapping):
+            return data
+        declared = cls.model_fields
+        extra = {key: value for key, value in data.items() if key not in declared}
+        if not extra:
+            return data
+        given = data.get(EXTRA_FIELDS, {})
+        if not isinstance(given, Mapping):
+            # field validation reports the malformed mapping
+            return data
+        twice = sorted(set(extra) & set(given))
+        if twice:
+            msg = f"Extra fields given both as members and in `{EXTRA_FIELDS}`: {twice}"
+            raise ValueError(msg)
+        return {
+            **{key: value for key, value in data.items() if key in declared},
+            EXTRA_FIELDS: {**given, **extra},
+        }
+
+    @field_validator(EXTRA_FIELDS, mode="after")
+    @classmethod
+    def _refuse_declared_keys(cls, value: Mapping[str, JSONValue]) -> Mapping[str, JSONValue]:
+        """Refuse an extra field named after a field this class declares."""
+        declared = sorted(set(value) & set(cls.model_fields))
+        if declared:
+            msg = f"{declared} name fields of this spec, so they are not extra fields"
+            raise ValueError(msg)
+        return value
+
+    @model_serializer(mode="wrap")
+    def _serialize_document(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """Write the extra fields as top-level members of the dumped document."""
+        return flatten_extra_fields(handler(self))
+
+    def __repr_args__(self) -> Iterator[tuple[str | None, Any]]:
+        """Show `extra_fields` last, and only when the document holds some."""
+        extra: object = None
+        for name, value in super().__repr_args__():
+            if name == EXTRA_FIELDS:
+                extra = value
+                continue
+            yield name, value
+        if extra:
+            yield EXTRA_FIELDS, extra
+
+    def _updated(self, changes: Mapping[str, object]) -> Self:
+        """
+        A revalidated copy of this spec with `changes` applied: the engine of
+        each subclass's `update`. The extra fields are passed as the
+        `extra_fields` mapping, so a change to `extra_fields` replaces them.
+        """
+        document = self.model_dump(exclude={EXTRA_FIELDS})
+        return type(self).model_validate({**document, EXTRA_FIELDS: self.extra_fields, **changes})
 
 
 class AttributesBase(BaseModel):
@@ -164,13 +280,13 @@ def get_attribute(attributes: object, key: str, default: object = None) -> objec
 class _HasMembers(Protocol):
     """
     The structural shape path traversal needs from a group: a `members`
-    mapping, `None` when the members are unknown. The v2 and v3 `GroupSpec`
+    mapping. The v2 and v3 `GroupSpec`
     both have it; `ArraySpec` and `BaseGroupSpec` do not, which is how
     traversal tells a group with members from every other node.
     """
 
     @property
-    def members(self) -> Mapping[str, object] | None: ...
+    def members(self) -> Mapping[str, object]: ...
 
 
 def resolve_member_path(node: object, path: str) -> object:
@@ -185,9 +301,8 @@ def resolve_member_path(node: object, path: str) -> object:
     ValueError
         If the path holds no member names, or an empty one (`"a//b"`).
     KeyError
-        Naming the segment that failed: a member name that does not exist, a
-        segment that descends into a node that is not a group with members,
-        or a group whose members are unknown (`members=None`).
+        Naming the segment that failed: a member name that does not exist, or
+        a segment that descends into a node that is not a group.
     """
     stripped = path.strip("/")
     if stripped == "":
@@ -201,9 +316,6 @@ def resolve_member_path(node: object, path: str) -> object:
             raise ValueError(msg)
         if not isinstance(node, _HasMembers):
             msg = f"Cannot resolve {segment!r}: {where} is not a group with members."
-            raise KeyError(msg)
-        if node.members is None:
-            msg = f"Cannot resolve {segment!r}: the members of {where} are unknown (members=None)."
             raise KeyError(msg)
         if segment not in node.members:
             available = ", ".join(repr(name) for name in sorted(node.members)) or "(none)"
@@ -385,3 +497,38 @@ def json_eq(a: object, b: object) -> bool:
 
     # otherwise → regular equality
     return a == b
+
+
+def walk_zarr_hierarchy(
+    node: zarr.Array | zarr.Group, *, depth: int = -1
+) -> Iterator[tuple[str, zarr.Array | zarr.Group]]:
+    """
+    Yield `(path, node)` for a zarr array or group and the members under it,
+    `depth` levels deep, with paths in the flat-hierarchy form `to_flat` uses:
+    `""` for `node` itself, then `"/a"`, `"/a/b"` and so on. A `depth` of -1
+    walks the whole hierarchy and 0 yields `node` alone. The shared engine of
+    the v2 and v3 `from_zarr_flat`.
+
+    Raises
+    ------
+    ValueError
+        If `depth` is lower than -1.
+    """
+    if depth < -1:
+        msg = f"Invalid value for depth. Got {depth}, expected an integer greater than or equal to -1."
+        raise ValueError(msg)
+    yield "", node
+    yield from _walk_members(node, "", depth)
+
+
+def _walk_members(
+    node: zarr.Array | zarr.Group, prefix: str, depth: int
+) -> Iterator[tuple[str, zarr.Array | zarr.Group]]:
+    import zarr
+
+    if depth == 0 or not isinstance(node, zarr.Group):
+        return
+    for name, member in node.members():
+        path = f"{prefix}/{name}"
+        yield path, member
+        yield from _walk_members(member, path, max(depth - 1, -1))

@@ -30,6 +30,9 @@ from pydantic_zarr.v3 import (
     RegularChunking,
     RegularChunkingConfig,
     auto_codecs,
+    from_flat,
+    from_zarr,
+    from_zarr_flat,
     is_array_spec,
     is_group_spec,
     parse_dtype_v3,
@@ -38,6 +41,7 @@ from pydantic_zarr.v3 import (
 from .conftest import DTYPE_EXAMPLES_V3, ZARR_PYTHON_VERSION, DTypeExample
 
 if TYPE_CHECKING:
+    import zarr
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
 
@@ -331,50 +335,70 @@ class TestGroupSpec:
         members_flat, root = get_flat_example()
         assert GroupSpec.from_flat(members_flat) == root
 
-    @staticmethod
-    def test_from_zarr_depth() -> None:
-        zarr = pytest.importorskip("zarr")
-        codecs: tuple[CodecLike, ...] = ({"name": "bytes", "configuration": {"endian": "little"}},)
-        tree: dict[str, AnyGroupSpec | AnyArraySpec] = {
-            "": GroupSpec(members=None, attributes={"level": 0, "type": "group"}),
-            "/1": GroupSpec(members=None, attributes={"level": 1, "type": "group"}),
-            "/1/2": GroupSpec(members=None, attributes={"level": 2, "type": "group"}),
-            "/1/2/1": GroupSpec(members=None, attributes={"level": 3, "type": "group"}),
-            "/1/2/2": ArraySpec.from_array(
-                np.arange(20), attributes={"level": 3, "type": "array"}, codecs=codecs
-            ),
-        }
-        store = zarr.storage.MemoryStore()
-        group_out = GroupSpec.from_flat(tree).to_zarr(store, path="test")
-        group_in_0 = GroupSpec.from_zarr(group_out, depth=0)  # type: ignore[var-annotated]
-        assert group_in_0 == tree[""]
 
-        group_in_1 = GroupSpec.from_zarr(group_out, depth=1)  # type: ignore[var-annotated]
-        assert group_in_1.attributes == tree[""].attributes
-        assert group_in_1.members is not None
-        assert group_in_1.members["1"] == tree["/1"]
+def _stored_hierarchy() -> tuple[zarr.Group, dict[str, AnyArraySpec | AnyBaseGroupSpec]]:
+    """Store a three-level hierarchy, and return it with its flat form as read back."""
+    zarr = pytest.importorskip("zarr")
+    codecs: tuple[CodecLike, ...] = ({"name": "bytes", "configuration": {"endian": "little"}},)
+    array: AnyArraySpec = ArraySpec.from_array(
+        np.arange(20), attributes={"level": 3}, codecs=codecs
+    )
+    tree: dict[str, AnyArraySpec | AnyBaseGroupSpec] = {
+        "": BaseGroupSpec(attributes={"level": 0}),
+        "/1": BaseGroupSpec(attributes={"level": 1}),
+        "/1/2": BaseGroupSpec(attributes={"level": 2}),
+        "/1/2/1": BaseGroupSpec(attributes={"level": 3}),
+        "/1/2/2": array,
+    }
+    stored = GroupSpec.from_flat(tree).to_zarr(zarr.storage.MemoryStore(), path="test")
+    array_read = ArraySpec.from_zarr(cast("zarr.Array", stored["1/2/2"]))
+    return stored, {**tree, "/1/2/2": array_read}
 
-        group_in_2 = GroupSpec.from_zarr(group_out, depth=2)  # type: ignore[var-annotated]
-        assert group_in_2.members is not None
-        sub_2_1 = group_in_2.members["1"]
-        assert is_group_spec(sub_2_1)
-        assert sub_2_1.members is not None
-        assert sub_2_1.members["2"] == tree["/1/2"]
-        assert group_in_2.attributes == tree[""].attributes
-        assert sub_2_1.attributes == tree["/1"].attributes
 
-        group_in_3 = GroupSpec.from_zarr(group_out, depth=3)  # type: ignore[var-annotated]
-        assert group_in_3.members is not None
-        sub_3_1 = group_in_3.members["1"]
-        assert is_group_spec(sub_3_1)
-        assert sub_3_1.members is not None
-        sub_3_2 = sub_3_1.members["2"]
-        assert is_group_spec(sub_3_2)
-        assert sub_3_2.members is not None
-        assert sub_3_2.members["1"] == tree["/1/2/1"]
-        assert group_in_3.attributes == tree[""].attributes
-        assert sub_3_1.attributes == tree["/1"].attributes
-        assert sub_3_2.attributes == tree["/1/2"].attributes
+@pytest.mark.parametrize(
+    ("path", "depth", "expected_keys"),
+    [
+        ("", 0, [""]),
+        ("", 1, ["", "/1"]),
+        ("", 2, ["", "/1", "/1/2"]),
+        ("", -1, ["", "/1", "/1/2", "/1/2/1", "/1/2/2"]),
+        ("1", 1, ["/1", "/1/2"]),
+        ("1/2/2", -1, ["/1/2/2"]),
+    ],
+)
+def test_from_zarr_flat(path: str, depth: int, expected_keys: list[str]) -> None:
+    """
+    `from_zarr_flat` reads a node and `depth` levels of members under it,
+    keyed by path relative to that node. Read in full, it is the flat form
+    of what `from_zarr` reads.
+    """
+    stored, flat = _stored_hierarchy()
+    node = stored[path] if path else stored
+    prefix = f"/{path}" if path else ""
+    expected = {key.removeprefix(prefix): flat[key] for key in expected_keys}
+    observed = from_zarr_flat(node, depth=depth)
+    assert observed == expected
+    if depth == -1:
+        assert from_flat(observed) == from_zarr(node)
+
+
+def test_from_zarr_flat_invalid_depth() -> None:
+    """`from_zarr_flat` refuses a depth below -1."""
+    stored, _ = _stored_hierarchy()
+    with pytest.raises(ValueError, match="Invalid value for depth"):
+        from_zarr_flat(stored, depth=-2)
+
+
+def test_members_none_refused() -> None:
+    """`members` may not be `None`: a group without members is a `BaseGroupSpec`."""
+    with pytest.raises(ValidationError, match="members"):
+        GroupSpec(members=None)  # type: ignore[arg-type]
+
+
+def test_base_group_member_refused() -> None:
+    """A `GroupSpec` is a complete hierarchy, so a `BaseGroupSpec` is not a member."""
+    with pytest.raises(ValidationError, match="members"):
+        GroupSpec(members={"a": BaseGroupSpec()})  # type: ignore[dict-item]
 
 
 def test_mix_v3_v2_fails() -> None:
@@ -937,7 +961,7 @@ def test_group_member_names_accepted() -> None:
     array: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
     names = ("plain", "with.dots", "with spaces", "ünïcode", "_single_underscore", "0", "a..b")
     group: AnyGroupSpec = GroupSpec(attributes={}, members=dict.fromkeys(names, array))
-    assert tuple(group.members or {}) == names
+    assert tuple(group.members) == names
 
 
 @pytest.mark.parametrize(
@@ -966,7 +990,6 @@ def test_typevar_defaults() -> None:
 
     array = ArraySpec(**_v3_array_kwargs())
     group = GroupSpec(attributes={"a": 1}, members={"x": array})
-    assert group.members is not None
     assert tuple(group.members) == ("x",)
 
     class MyAttrs(BaseModel):
@@ -1155,18 +1178,17 @@ def test_group_like_canonical() -> None:
     "other_members",
     [
         {},
-        None,
         {"y": ArraySpec(**_v3_array_kwargs())},
         {"x": GroupSpec(attributes={})},
         {"x": ArraySpec(**_v3_array_kwargs(shape=(8, 8)))},
     ],
-    ids=["no_members", "none_members", "renamed_member", "kind_mismatch", "unalike_member"],
+    ids=["no_members", "renamed_member", "kind_mismatch", "unalike_member"],
 )
-def test_group_like_canonical_unalike(other_members: dict[str, object] | None) -> None:
+def test_group_like_canonical_unalike(other_members: dict[str, object]) -> None:
     """
     The canonical group comparison still distinguishes groups that differ in
-    substance: a missing, renamed or unalike member, members of different node
-    kinds, and unknown (`None`) against empty members are all not alike.
+    substance: a missing, renamed or unalike member, and members of different
+    node kinds are all not alike.
     """
     group: AnyGroupSpec = GroupSpec(attributes={}, members={"x": ArraySpec(**_v3_array_kwargs())})
     other = GroupSpec.model_validate(
@@ -1381,13 +1403,6 @@ def test_resolve_path_invalid(path: str, exception: type[Exception], match: str)
         root.resolve_path(path)
 
 
-def test_resolve_path_unknown_members() -> None:
-    """Resolution through a group whose members are unknown raises `KeyError`."""
-    unknown: AnyGroupSpec = GroupSpec(members=None)
-    with pytest.raises(KeyError, match="unknown"):
-        unknown.resolve_path("x")
-
-
 def test_attributes_serialized_by_alias() -> None:
     """
     Dumping a spec serializes attribute models with their aliases, so stored
@@ -1457,35 +1472,14 @@ def test_get_path() -> None:
         root.resolve_path("a/zz")
 
 
-def test_group_like_base_group_member_projection() -> None:
+def test_group_like_base_group_projection() -> None:
     """
-    A `BaseGroupSpec` compares as the projection it is — by the group's own
-    metadata alone — at the top level and in member position alike, so the
-    comparison does not depend on depth. A `GroupSpec` with unknown members
-    (`members=None`) is a different state: it matches the same, or a
-    projection, never a group with known members.
+    A `BaseGroupSpec` compares as the projection it is: by the group's own
+    metadata alone, whatever the `GroupSpec` side's members hold.
     """
-    g_full: AnyGroupSpec = GroupSpec(attributes={"a": 1}, members={})
-    g_base = BaseGroupSpec(attributes={"a": 1})
-    assert g_full.like(g_base)
-    outer_full: AnyGroupSpec = GroupSpec(members={"g": g_full})
-    outer_base: AnyGroupSpec = GroupSpec(members={"g": g_base})
-    members = outer_base.members
-    assert members is not None
-    assert isinstance(members["g"], BaseGroupSpec)
-    assert not isinstance(members["g"], GroupSpec)
-    assert outer_full.like(outer_base)
-    assert outer_base.like(outer_full)
-    # differing own metadata still distinguishes the projection
-    other_attrs: AnyGroupSpec = GroupSpec(members={"g": BaseGroupSpec(attributes={"a": 2})})
-    assert not outer_full.like(other_attrs)
-    # members=None matches members=None or a projection, never known members
-    outer_unknown: AnyGroupSpec = GroupSpec(
-        members={"g": GroupSpec(attributes={"a": 1}, members=None)}
-    )
-    assert not outer_full.like(outer_unknown)
-    assert outer_unknown.like(outer_unknown)
-    assert outer_unknown.like(outer_base)
+    group: AnyGroupSpec = GroupSpec(attributes={"a": 1}, members={"g": GroupSpec()})
+    assert group.like(BaseGroupSpec(attributes={"a": 1}))
+    assert not group.like(BaseGroupSpec(attributes={"a": 2}))
 
 
 def test_bytes_codec_canonicalized_inside_sharding() -> None:
