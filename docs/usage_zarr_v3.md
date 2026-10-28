@@ -159,7 +159,8 @@ carries into nested validation, reaches the members either way).
 Because unclaimed names pass unjudged, a smaller scope judges *less*, not
 more. A class that also sets `zarr_scope_strict` flips that: every
 extension-point name in the document — a sharding codec's inner and index
-pipelines included — must be claimed in the operative scope, so
+pipelines included — and every [extra field](#extra-fields) key must be
+claimed in the operative scope, so
 `zarr_scope = CORE` plus strict accepts exactly the documents built from
 names the core spec defines:
 
@@ -210,3 +211,96 @@ The variable-length data types and their codecs (`string`, `bytes`,
 `vlen-utf8`, `vlen-bytes`) are extensions that no current scope claims, as are
 the legacy spellings `zarr-python` has stored (`"str"`,
 `"variable_length_bytes"`), so a strict class refuses variable-length arrays.
+
+## Extra fields
+
+A Zarr V3 metadata document may hold members the spec does not define. The
+spec's rule for these [additional
+fields](https://zarr-specs.readthedocs.io/en/latest/v3/core/index.html#additional-fields)
+is the `must_understand` rule for extensions: "An implementation MUST fail to
+open Zarr groups or arrays if any metadata fields are present which (a) the
+implementation does not recognize and (b) are not explicitly set to
+`"must_understand": false`." Specs apply it in the same scope as the rest of
+the document, to arrays and groups alike:
+
+- An extra field whose key a definition in the scope claims is recognized,
+  and judged by that definition. `CORE` (and so `CORE_AND_EXTENSIONS`) claims
+  a group's `consolidated_metadata`, which `zarr-python` writes and which the
+  spec allows on groups "for historical reasons".
+- Any other extra field is unrecognized, and accepted only as an extension
+  object — a `name` that is an extension name, an optional `configuration`
+  object, no other members — that sets `"must_understand": false`.
+
+Every other unknown key is refused, which is also what a misspelled field name
+meets. Accepted extra fields are kept in the `extra_fields` mapping and written
+back as top-level members of the document:
+
+```python
+from pydantic import ValidationError
+
+from pydantic_zarr.v3 import ArraySpec, GroupSpec
+
+# a group document as zarr-python writes it after consolidating the hierarchy
+group = GroupSpec.model_validate(
+    {
+        "zarr_format": 3,
+        "node_type": "group",
+        "attributes": {},
+        "consolidated_metadata": {"kind": "inline", "must_understand": False, "metadata": {}},
+    }
+)
+print(list(group.extra_fields))
+#> ['consolidated_metadata']
+print(group.model_dump(exclude={"members"}))
+"""
+{
+    'zarr_format': 3,
+    'node_type': 'group',
+    'attributes': {},
+    'consolidated_metadata': {
+        'kind': 'inline',
+        'must_understand': False,
+        'metadata': {},
+    },
+}
+"""
+
+array = ArraySpec.from_shape_and_data_type(
+    (4, 4),
+    "uint8",
+    extra_fields={"provenance": {"name": "acme.provenance", "must_understand": False}},
+)
+print(array.model_dump()["provenance"])
+#> {'name': 'acme.provenance', 'must_understand': False}
+
+# an extension object a reader must understand, which nothing here recognizes
+try:
+    ArraySpec.model_validate({**array.model_dump(), "provenance": {"name": "acme.provenance"}})
+except ValidationError as e:
+    print(e.errors()[0]["msg"])
+    """
+    Value error, Invalid Zarr V3 array metadata:
+    provenance: no array extra field in the scope recognizes this field, and it does not set "must_understand": false, so the spec requires a reader to refuse it
+    """
+
+# a misspelled field name is an extra field the spec does not permit
+try:
+    ArraySpec.model_validate({**array.model_dump(), "dimensions_names": ["y", "x"]})
+except ValidationError as e:
+    print(e.errors()[0]["msg"])
+    """
+    Value error, Invalid Zarr V3 array metadata:
+    dimensions_names: not a field of this spec, and not an extra field the spec permits: an extra field is an extension object with "must_understand": false, got ('y', 'x')
+    """
+```
+
+`update(extra_fields=...)` replaces the extra fields as a whole. `to_zarr`
+writes them and `from_zarr` reads them back (`zarr-python` stores them on
+arrays from 3.1 and on groups from 3.4; `to_zarr` refuses extra fields an
+older `zarr-python` cannot store). `consolidated_metadata` is the exception:
+`zarr-python` writes it as a record of the hierarchy below the group, so
+`from_zarr` reads the members themselves and leaves it out, and `to_zarr`
+refuses a group holding it rather than write a record that need not match the
+members written; drop it first and consolidate the written hierarchy with
+`zarr.consolidate_metadata`. Its contents are kept as written, not read as
+members.

@@ -325,3 +325,32 @@ print(ArraySpec.from_array(np.arange(10)).model_dump())
 }
 """
 ```
+
+## Extra fields
+
+The Zarr V2 spec treats keys it does not define differently in array and group
+metadata. In `.zarray`, other keys "SHOULD NOT be present within the metadata
+object and SHOULD be ignored by implementations", so `ArraySpec` accepts any
+other key with a JSON value, gives it no meaning, and keeps it in the
+`extra_fields` mapping, dumped back as a top-level member. `zarr-python` drops
+these keys when it reads or writes an array, so `from_zarr` never finds any
+and `to_zarr` does not write them. In `.zgroup`, "Other keys MUST NOT be
+present", so the group specs refuse them.
+
+```python
+from pydantic import ValidationError
+
+from pydantic_zarr.v2 import ArraySpec, GroupSpec
+
+array = ArraySpec.model_validate(
+    {"shape": (10,), "chunks": (10,), "dtype": "<i8", "written_by": "acme"}
+)
+print(array.extra_fields)
+#> {'written_by': 'acme'}
+
+try:
+    GroupSpec.model_validate({"zarr_format": 2, "attributes": {}, "written_by": "acme"})
+except ValidationError as e:
+    print(e.errors()[0]["type"])
+    #> extra_forbidden
+```
