@@ -155,7 +155,9 @@ ZarrV3GroupStoredJSON = TypedDict(
 )
 """
 A Zarr V3 group's metadata as a store holds it: its own `zarr.json` document,
-and each member's at `<member path>/zarr.json`.
+and each member's at its metadata key: the member's hierarchy path relative to
+the group, with no leading `/`, then `/zarr.json` (`"a/b/zarr.json"` for the
+member at `/a/b`).
 """
 
 FillValue = JSONValue
@@ -1691,11 +1693,14 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         """
         This hierarchy's Zarr V3 metadata as a store holds it: a mapping from
         each store key to the JSON document stored there. That is this
-        group's `zarr.json`, and each member's at any depth, at
-        `<member path>/zarr.json` (`"a/zarr.json"`, `"a/b/zarr.json"`). These
-        are the metadata documents `to_zarr` writes, so a consumer can write
-        the hierarchy by writing each document, as JSON, at its key under the
-        hierarchy's root. `from_stored_metadata_json` reads it back.
+        group's `zarr.json`, and each member's at any depth, at its metadata
+        key (`"a/zarr.json"`, `"a/b/zarr.json"`). A key is the member's path
+        as `to_flat` spells it (`"/a/b"`), with the leading `/` stripped and
+        `/zarr.json` appended, as the Zarr V3 spec forms metadata keys from
+        hierarchy paths (https://github.com/zarr-developers/zarr-specs/blob/fc7dd9c9beb5a50b87f9b08b00bf50fc0048482f/docs/v3/core/index.rst#L382-L388).
+        These are the metadata documents `to_zarr` writes, so a consumer can
+        write the hierarchy by writing each document, as JSON, at its key
+        under the hierarchy's root. `from_stored_metadata_json` reads it back.
         """
         members: dict[str, ZarrV3StoredDocumentJSON] = {
             f"{path.removeprefix('/')}/{ZARR_V3_GROUP_METADATA_STORE_KEY}": node.to_metadata_json()
@@ -2041,8 +2046,9 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
 def _stored_nodes(data: Mapping[str, object]) -> StoredNodes:
     """
     Read a stored layout, a mapping from store key to parsed JSON document,
-    as each node's type and metadata document, keyed by the node's path (the
-    root's is `""`). The type is the document's `node_type` when that is
+    as each node's type and metadata document, keyed by the node's key prefix
+    (see `split_store_key`): `""` for the root, `"a/b"` for the node at
+    `/a/b`. The type is the document's `node_type` when that is
     `"array"` or `"group"`, and `None` otherwise. Raises `ValueError` naming a
     malformed key, or a key other than a node's `zarr.json`.
     """

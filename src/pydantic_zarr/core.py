@@ -532,8 +532,9 @@ type StoredNodeType = Literal["array", "group"]
 type StoredNodes = Mapping[str, tuple[StoredNodeType | None, object]]
 """
 A stored layout read as each node's type and metadata document, keyed by the
-node's path (the root's is `""`). The type is `None` when the document does
-not say, and the document is then left for validation to judge.
+node's key prefix (see `split_store_key`): `""` for the root, `"a/b"` for the
+node at hierarchy path `/a/b`. The type is `None` when the document does not
+say, and the document is then left for validation to judge.
 """
 
 _A_NODE: dict[StoredNodeType, str] = {"array": "an array", "group": "a group"}
@@ -541,14 +542,30 @@ _A_NODE: dict[StoredNodeType, str] = {"array": "an array", "group": "a group"}
 
 def split_store_key(key: str) -> tuple[str, str]:
     """
-    Split a store key in a stored layout into the node's path (the root's is
-    `""`) and the document's name. Raises `ValueError` when the key starts
-    with `/` or has an empty path segment, which would alias another node's
-    key.
+    Split a store key in a stored layout into the node's key prefix and the
+    document's name: `"a/b/zarr.json"` into `("a/b", "zarr.json")`, and
+    `"zarr.json"` into `("", "zarr.json")`.
+
+    A node's path and its store keys are spelled differently. In Zarr V3 a
+    node's hierarchy path starts with `/` (the root's is `/`, a member's
+    `/a/b`), and its metadata key is that path with the leading `/` stripped,
+    then `/zarr.json` appended (`a/b/zarr.json`); the root's is `zarr.json`
+    (https://github.com/zarr-developers/zarr-specs/blob/fc7dd9c9beb5a50b87f9b08b00bf50fc0048482f/docs/v3/core/index.rst#L382-L388).
+    In Zarr V2 a node's logical path is normalized, stripping any leading or
+    trailing `/` and collapsing repeated `/`, before it prefixes the node's
+    keys (`a/b/.zarray`) (https://github.com/zarr-developers/zarr-specs/blob/fc7dd9c9beb5a50b87f9b08b00bf50fc0048482f/docs/v2/v2.0.rst#L250-L276).
+    Either way a store key has no leading `/` and no empty segment, so this
+    raises `ValueError` for one that does: it would name the same node as
+    another key (`"/zarr.json"` as `"zarr.json"`) and replace that key's
+    document.
     """
     *segments, name = key.split("/")
     if "" in segments:
-        msg = f"Invalid store key {key!r}: a store key has no leading '/' and no empty segment."
+        msg = (
+            f"Invalid store key {key!r}: a store key is the node's path with no leading "
+            "'/' and no empty segment ('zarr.json' for the root, 'a/b/zarr.json' for the "
+            "node at '/a/b')."
+        )
         raise ValueError(msg)
     return "/".join(segments), name
 
@@ -587,7 +604,9 @@ def stored_flat[A: BaseModel, G: BaseModel](
     """
     The hierarchy `nodes` describe, as `from_flat` reads one: each node
     validated as an `array_class` or a `group_class` (a node whose type is not
-    stated as the latter), keyed by `"/"` and its path (the root's is `""`).
+    stated as the latter), keyed by its path in `to_flat`'s spelling. That is
+    the key prefix with `/` put back in front (`"/a/b"`, the V3 hierarchy path),
+    except that the root's is `""`, not `/`.
 
     Raises `ValueError` when `nodes` hold no group at the root, or a node whose
     parent is not a group among `nodes` (a store holds no implicit groups),

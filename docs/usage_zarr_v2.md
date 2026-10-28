@@ -334,6 +334,12 @@ a group whose members were not read from one with none, so
 the members the layout holds, and `BaseGroupSpec.from_stored_metadata_json`
 reads only the root's documents.
 
+A key has no leading `/`: the Zarr V2 spec normalizes a node's logical path,
+stripping any leading or trailing `/` and collapsing repeated `/`, before using
+it as the prefix of the node's keys ([spec](https://github.com/zarr-developers/zarr-specs/blob/fc7dd9c9beb5a50b87f9b08b00bf50fc0048482f/docs/v2/v2.0.rst#L250-L276)).
+`from_stored_metadata_json` refuses a key with a leading `/` or an empty
+segment, since `/.zattrs` would name the same node as `.zattrs`.
+
 To write a hierarchy's metadata, write each document as JSON at its key
 under the hierarchy's root. `json.dumps` writes the tuples in the documents as
 JSON arrays. It writes a non-finite float in the attributes (`float("nan")`)

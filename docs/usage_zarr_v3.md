@@ -146,6 +146,13 @@ group = GroupSpec(attributes={"foo": 42}, members={"sub": GroupSpec(members={"ar
 assert GroupSpec.from_stored_metadata_json(group.to_stored_metadata_json()) == group
 ```
 
+A key has no leading `/`: the Zarr V3 spec forms a node's metadata key by
+stripping the leading `/` from its hierarchy path and appending `/zarr.json`,
+so the root's key is `zarr.json` and the key of the node at `/sub/array` is
+`sub/array/zarr.json` ([spec](https://github.com/zarr-developers/zarr-specs/blob/fc7dd9c9beb5a50b87f9b08b00bf50fc0048482f/docs/v3/core/index.rst#L382-L388)).
+`from_stored_metadata_json` refuses a key with a leading `/` or an empty
+segment, since `/zarr.json` would name the same node as `zarr.json`.
+
 To write a hierarchy's metadata, write each document as JSON at its key
 under the hierarchy's root. `json.dumps` writes the tuples in the documents as
 JSON arrays. It writes a non-finite float in the attributes (`float("nan")`)

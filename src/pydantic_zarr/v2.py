@@ -125,8 +125,9 @@ ZarrV2GroupStoredJSON = TypedDict(
 )
 """
 A Zarr V2 group's metadata as a store holds it: its own `.zgroup` and
-`.zattrs` documents, and each member's at `<member path>/.zarray` (or
-`.zgroup`) and `<member path>/.zattrs`.
+`.zattrs` documents, and each member's prefixed by the member's normalized
+logical path relative to the group, which has no leading `/`
+(`"a/b/.zarray"` or `"a/b/.zgroup"`, and `"a/b/.zattrs"`).
 """
 
 
@@ -1140,7 +1141,11 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         each store key to the JSON document stored there. That is this
         group's `.zgroup` and `.zattrs`, and each member's at any depth,
         prefixed by the member's path (`"a/.zgroup"`, `"a/b/.zarray"`,
-        `"a/b/.zattrs"`). These are the metadata documents `to_zarr` writes,
+        `"a/b/.zattrs"`). The prefix is the member's path as `to_flat` spells
+        it (`"/a/b"`) normalized as the Zarr V2 spec normalizes logical paths,
+        which strips the leading `/`
+        (https://github.com/zarr-developers/zarr-specs/blob/fc7dd9c9beb5a50b87f9b08b00bf50fc0048482f/docs/v2/v2.0.rst#L250-L276).
+        These are the metadata documents `to_zarr` writes,
         so a consumer can write the hierarchy by writing each document, as
         JSON, at its key under the hierarchy's root.
         `from_stored_metadata_json` reads it back.
@@ -1241,7 +1246,8 @@ def _stored_nodes(data: Mapping[str, object]) -> StoredNodes:
     Read a stored layout, a mapping from store key to parsed JSON document,
     as each node's type and merged metadata document (its `.zarray` or
     `.zgroup` with its `.zattrs` under `attributes`, empty when missing),
-    keyed by the node's path (the root's is `""`). Raises `ValueError` naming
+    keyed by the node's key prefix (see `split_store_key`): `""` for the
+    root, `"a/b"` for the node at logical path `a/b`. Raises `ValueError` naming
     a malformed key, a key other than a node's `.zarray`, `.zgroup` or
     `.zattrs`, a path with both a `.zarray` and a `.zgroup`, or a `.zattrs`
     with neither.
