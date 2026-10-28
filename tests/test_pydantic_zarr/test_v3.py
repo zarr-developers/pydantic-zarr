@@ -724,6 +724,84 @@ def test_metadata_document_validation_context_key_type_error() -> None:
         ArraySpec.model_validate(document, context={CONTEXT_KEY: "not a scope"})
 
 
+def _scale_offset_kwargs() -> dict[str, Any]:
+    """
+    Kwargs whose validity depends on the scope: the `scale_offset` codec is
+    claimed by the zarr-extensions scope, where its unknown configuration key
+    is refused; a scope that does not claim it (`CORE`) leaves it unjudged.
+    """
+    return _v3_array_kwargs(
+        codecs=(
+            {"name": "bytes", "configuration": {"endian": "little"}},
+            {"name": "scale_offset", "configuration": {"bogus": 1}},
+        )
+    )
+
+
+def test_zarr_scope_class_default() -> None:
+    """
+    A class-level `zarr_scope` is the scope validation reads in when the
+    validation context carries none, making the scope a property of the
+    model rather than of each call: it applies at direct construction,
+    sticks through derived operations (which re-validate as the class),
+    and reaches members validated as the class.
+    """
+    from collections.abc import Mapping
+
+    from zarr_metadata.v3.definition import CORE
+
+    class CoreArraySpec(ArraySpec):
+        zarr_scope = CORE
+
+    spec = CoreArraySpec(**_scale_offset_kwargs())
+    assert spec.codecs[-1]["name"] == "scale_offset"  # type: ignore[index]
+    # derived operations re-validate as the class, so the scope sticks
+    assert spec.update(attributes={"a": 1}).attributes == {"a": 1}
+    # from_shape_and_data_type validates in the class scope too
+    derived = CoreArraySpec.from_shape_and_data_type(
+        (4, 4), "float32", codecs=_scale_offset_kwargs()["codecs"]
+    )
+    assert derived.codecs[-1]["name"] == "scale_offset"  # type: ignore[index]
+    # a group's members are validated as their own classes, scope included
+    group = GroupSpec[Mapping[str, object], CoreArraySpec].model_validate(
+        {"attributes": {}, "members": {"x": _scale_offset_kwargs()}}
+    )
+    assert isinstance(group.members["x"], CoreArraySpec)  # type: ignore[index]
+
+
+def test_zarr_scope_context_overrides_classvar() -> None:
+    """An explicit validation context wins over the class's `zarr_scope`."""
+    from zarr_metadata.v3.definition import CORE, CORE_AND_EXTENSIONS
+
+    class CoreArraySpec(ArraySpec):
+        zarr_scope = CORE
+
+    document = {"zarr_format": 3, "node_type": "array", **_scale_offset_kwargs()}
+    with pytest.raises(ValidationError, match="scale_offset|bogus"):
+        CoreArraySpec.model_validate(document, context=CORE_AND_EXTENSIONS)
+
+
+def test_zarr_scope_absent_falls_back_to_default_scope() -> None:
+    """With no class scope and no context, the default scope judges claimed names."""
+    with pytest.raises(ValidationError, match="scale_offset|bogus"):
+        ArraySpec(**_scale_offset_kwargs())
+
+
+def test_zarr_scope_reaches_dtype_guard() -> None:
+    """
+    The ambiguous-numpy-spelling guard in data type parsing reads the class
+    scope: a scope claiming nothing leaves `"float32"` unclaimed, and numpy
+    reads it as a data type, so it is refused.
+    """
+    from zarr_metadata.v3.definition import ZarrV3Context
+
+    class EmptyScopeSpec(ArraySpec):
+        zarr_scope = ZarrV3Context()
+
+    with pytest.raises(ValidationError, match="names no data type in the scope"):
+        EmptyScopeSpec(**_v3_array_kwargs())
+
+
 def test_like_compares_documents_canonically() -> None:
     """
     With no include/exclude filters, `like` compares the metadata documents by

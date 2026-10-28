@@ -10,6 +10,7 @@ from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
+    ClassVar,
     Generic,
     Literal,
     NotRequired,
@@ -166,9 +167,32 @@ class NodeSpec(StrictBase):
 
     zarr_format: Literal[3]
         The Zarr version represented by this node. Must be 3.
+    zarr_scope: ClassVar[ZarrV3Context | None]
+        The scope this class validates metadata in when the validation
+        context carries none, making the scope a property of the model
+        rather than of each ``model_validate`` call: a subclass that sets
+        it keeps its scope through direct construction and every derived
+        operation (``update``, ``from_shape_and_data_type``, ``like``, ...),
+        which re-validate as the class. An explicit validation context
+        still wins, and ``None`` (the default) means ``zarr-metadata``'s
+        ``CORE_AND_EXTENSIONS``. A group's members are validated as their
+        own classes, so a scoped tree narrows its member types to
+        scope-bearing classes (an explicit context, which pydantic carries
+        into nested validation, reaches the members either way).
     """
 
     zarr_format: Literal[3] = 3
+    zarr_scope: ClassVar[ZarrV3Context | None] = None
+
+    @classmethod
+    def _scope(cls, context: object) -> ZarrV3Context | None:
+        """
+        The scope a validation of this class reads metadata in: the validation
+        context's scope when it carries one, else this class's `zarr_scope`.
+        `None` means the readers' default (``CORE_AND_EXTENSIONS``).
+        """
+        scope = scope_from_context(context)
+        return cls.zarr_scope if scope is None else scope
 
 
 def parse_dtype_v3(
@@ -349,15 +373,13 @@ _VARIABLE_LENGTH_DATA_TYPES: Mapping[str, tuple[str, tuple[CodecLike, ...]]] = {
 _VARIABLE_LENGTH_NOMINAL_ITEM_SIZE = 8
 
 
-def _parse_dtype_v3_scoped(
-    dtype: npt.DTypeLike | Mapping[str, object], info: ValidationInfo
-) -> Mapping[str, object] | str:
-    """`parse_dtype_v3` reading the scope from the pydantic validation context."""
-    return parse_dtype_v3(dtype, scope=scope_from_context(info.context))
-
-
-DTypeLike = Annotated[str | AnyNamedConfig, BeforeValidator(_parse_dtype_v3_scoped)]
-"""A data type declaration (name or named configuration), accepting numpy data types as input."""
+DTypeLike = str | AnyNamedConfig
+"""
+A data type declaration in Zarr V3 form (name or named configuration).
+`ArraySpec` accepts numpy data types as input and converts them with
+`parse_dtype_v3` in a model validator, so the scope the conversion reads
+in can come from the class's `zarr_scope` as well as the validation context.
+"""
 
 
 def reject_bare_codec(data: object) -> object:
@@ -458,6 +480,23 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
     @model_validator(mode="before")
     @classmethod
+    def _parse_data_type(cls, data: object, info: ValidationInfo) -> object:
+        """
+        Convert a numpy `data_type` declaration to its Zarr V3 form via
+        `parse_dtype_v3`, in the scope this validation reads in. A model
+        validator rather than field metadata so the class's `zarr_scope`
+        can serve as the scope when the validation context carries none
+        (a field validator cannot see the class).
+        """
+        if not isinstance(data, Mapping) or "data_type" not in data:
+            return data
+        return {
+            **data,
+            "data_type": parse_dtype_v3(data["data_type"], scope=cls._scope(info.context)),
+        }
+
+    @model_validator(mode="before")
+    @classmethod
     def canonicalize_codecs(cls, data: object) -> object:
         """
         Normalize codec spellings the way zarr-python stores them, so a spec
@@ -541,13 +580,13 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         left unjudged, so unknown extensions pass; a claimed name with an
         invalid configuration is refused. The scope comes from the pydantic
         validation context (a `zarr_metadata` `ZarrV3Context`, directly or
-        under the key `pydantic_zarr.v3.CONTEXT_KEY`), and defaults to
-        `zarr_metadata`'s `CORE_AND_EXTENSIONS`.
+        under the key `pydantic_zarr.v3.CONTEXT_KEY`), falling back to this
+        class's `zarr_scope`, then to `zarr_metadata`'s `CORE_AND_EXTENSIONS`.
 
         The `attributes` field is not part of this check: its type and
         contents are governed by this class's `TAttr` parameter alone.
         """
-        self._canonical_document(context=scope_from_context(info.context))
+        self._canonical_document(context=self._scope(info.context))
         return self
 
     def _canonical_document(
@@ -556,8 +595,14 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         """
         This spec, attributes excluded, as a validated `zarr-metadata` document model.
 
+        With no `context`, the document is read in the class's `zarr_scope`
+        (the readers' default scope when that is `None` too), so a bare call
+        — `like`'s canonical comparison — judges by the class's own scope.
+
         Raises `ValueError` listing every problem when the document is invalid.
         """
+        if context is None:
+            context = type(self).zarr_scope
         document = self.model_dump()
         document["attributes"] = {}
         try:
@@ -718,7 +763,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         >>> ArraySpec.from_shape_and_data_type((10, 10), "uint16", dimension_names=("y", "x"))
         ArraySpec(zarr_format=3, node_type='array', attributes={}, shape=(10, 10), data_type='uint16', chunk_grid={'name': 'regular', 'configuration': {'chunk_shape': (10, 10)}}, chunk_key_encoding={'name': 'default', 'configuration': {'separator': '/'}}, fill_value=0, codecs=({'name': 'bytes', 'configuration': {'endian': 'little'}},), storage_transformers=(), dimension_names=('y', 'x'))
         """
-        parsed_data_type = parse_dtype_v3(data_type)
+        parsed_data_type = parse_dtype_v3(data_type, scope=cls.zarr_scope)
         np_dtype = _numpy_dtype_from_v3(parsed_data_type)
         variable_length = (
             _VARIABLE_LENGTH_DATA_TYPES.get(parsed_data_type)
