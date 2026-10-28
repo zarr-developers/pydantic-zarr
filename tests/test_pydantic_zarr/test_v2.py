@@ -858,7 +858,7 @@ def test_resolve_path_v2() -> None:
         root.resolve_path("a/zz")
 
 
-_TO_JSON_ARRAY: AnyArraySpec = ArraySpec(
+_TO_METADATA_JSON_ARRAY: AnyArraySpec = ArraySpec(
     attributes={"a": [1, 2]},
     shape=(4,),
     chunks=(2,),
@@ -873,7 +873,7 @@ _TO_JSON_ARRAY: AnyArraySpec = ArraySpec(
     ("spec", "expected"),
     [
         (
-            _TO_JSON_ARRAY,
+            _TO_METADATA_JSON_ARRAY,
             {
                 "zarr_format": 2,
                 "attributes": {"a": [1, 2]},
@@ -924,16 +924,18 @@ _TO_JSON_ARRAY: AnyArraySpec = ArraySpec(
             },
         ),
         (
-            ArraySpec.model_validate({**_TO_JSON_ARRAY.model_dump(), "foo": [1]}),
+            ArraySpec.model_validate({**_TO_METADATA_JSON_ARRAY.model_dump(), "foo": [1]}),
             # extra fields are held, like other JSON values, with arrays as tuples
-            {**_TO_JSON_ARRAY.to_json(), "foo": (1,)},
+            {**_TO_METADATA_JSON_ARRAY.to_metadata_json(), "foo": (1,)},
         ),
         (
             BaseGroupSpec(attributes={"a": 1}),
             {"zarr_format": 2, "attributes": {"a": 1}},
         ),
         (
-            GroupSpec(attributes={"a": 1}, members={"x": _TO_JSON_ARRAY, "g": GroupSpec()}),
+            GroupSpec(
+                attributes={"a": 1}, members={"x": _TO_METADATA_JSON_ARRAY, "g": GroupSpec()}
+            ),
             {"zarr_format": 2, "attributes": {"a": 1}},
         ),
     ],
@@ -946,16 +948,18 @@ _TO_JSON_ARRAY: AnyArraySpec = ArraySpec(
         "group-with-members",
     ],
 )
-def test_to_json_v2(spec: AnyArraySpec | AnyBaseGroupSpec, expected: dict[str, object]) -> None:
+def test_to_metadata_json_v2(
+    spec: AnyArraySpec | AnyBaseGroupSpec, expected: dict[str, object]
+) -> None:
     """
-    `to_json` returns the node's Zarr V2 metadata as one document holding the
+    `to_metadata_json` returns the node's Zarr V2 metadata as one document holding the
     `.zarray` / `.zgroup` fields and, under `attributes`, the `.zattrs`, with
     the JSON arrays the type declares as tuples held as tuples (but not those
     inside a codec's configuration), extra fields as top-level members, and
     a group's members left out. The
     result reads as a valid document in `zarr-metadata`.
     """
-    document = spec.to_json()
+    document = spec.to_metadata_json()
     assert document == expected
     model = ZarrV2ArrayMetadata if is_array_spec(spec) else ZarrV2GroupMetadata
     assert json.dumps(model.from_json(document).to_json()) == json.dumps(document)

@@ -94,21 +94,21 @@ at validation, matching the spelling `zarr-python` stores.
 ## Metadata documents
 
 `model_dump` takes options that change what it returns, so its result can only
-be typed as `dict[str, Any]`. `to_json` takes none: it returns the node's
-`zarr.json` document, typed as `zarr_metadata.ZarrV3ArrayMetadataJSON` for an
-array and `zarr_metadata.ZarrV3GroupMetadataJSON` for a group. A group's
-members are not part of its document, so they are left out.
+be typed as `dict[str, Any]`. `to_metadata_json` takes none: it returns the
+node's `zarr.json` document, typed as `zarr_metadata.ZarrV3ArrayMetadataJSON`
+for an array and `zarr_metadata.ZarrV3GroupMetadataJSON` for a group. A group's
+members are not part of its metadata document, so they are left out.
 
 ```python
 from pydantic_zarr.v3 import ArraySpec, GroupSpec
 
 array = ArraySpec.from_shape_and_data_type((10,), "uint8")
-document = array.to_json()
+document = array.to_metadata_json()
 print(document["shape"], document["data_type"])
 #> (10,) uint8
 
 group = GroupSpec(attributes={"foo": 42}, members={"array": array})
-print(group.to_json())
+print(group.to_metadata_json())
 #> {'zarr_format': 3, 'node_type': 'group', 'attributes': {'foo': 42}}
 ```
 

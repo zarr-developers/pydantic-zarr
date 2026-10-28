@@ -1732,16 +1732,20 @@ class _AliasedAttrs(BaseModel):
     proj_code: str = Field(alias="proj:code")
 
 
-_TO_JSON_ARRAY = _make_array_spec()
-_TO_JSON_EXTENSION = {"name": "my_ext", "must_understand": False, "configuration": {"x": [1]}}
-_TO_JSON_CONSOLIDATED = {"kind": "inline", "must_understand": False, "metadata": {}}
+_TO_METADATA_JSON_ARRAY = _make_array_spec()
+_TO_METADATA_JSON_EXTENSION = {
+    "name": "my_ext",
+    "must_understand": False,
+    "configuration": {"x": [1]},
+}
+_TO_METADATA_JSON_CONSOLIDATED = {"kind": "inline", "must_understand": False, "metadata": {}}
 
 
 @pytest.mark.parametrize(
     ("spec", "expected"),
     [
         (
-            _TO_JSON_ARRAY,
+            _TO_METADATA_JSON_ARRAY,
             {
                 "zarr_format": 3,
                 "node_type": "array",
@@ -1758,21 +1762,26 @@ _TO_JSON_CONSOLIDATED = {"kind": "inline", "must_understand": False, "metadata":
         (
             ArraySpec[_AliasedAttrs].model_validate(
                 {
-                    **_TO_JSON_ARRAY.model_dump(),
+                    **_TO_METADATA_JSON_ARRAY.model_dump(),
                     "attributes": {"proj:code": "EPSG:4326"},
                     "dimension_names": ("x",),
                 }
             ),
             {
-                **_TO_JSON_ARRAY.model_dump(),
+                **_TO_METADATA_JSON_ARRAY.model_dump(),
                 "attributes": {"proj:code": "EPSG:4326"},
                 "dimension_names": ("x",),
             },
         ),
         (
-            ArraySpec.model_validate({**_TO_JSON_ARRAY.model_dump(), "my_ext": _TO_JSON_EXTENSION}),
+            ArraySpec.model_validate(
+                {**_TO_METADATA_JSON_ARRAY.model_dump(), "my_ext": _TO_METADATA_JSON_EXTENSION}
+            ),
             # extra fields are held, like other JSON values, with arrays as tuples
-            {**_TO_JSON_ARRAY.model_dump(), "my_ext": tuplify_json(_TO_JSON_EXTENSION)},
+            {
+                **_TO_METADATA_JSON_ARRAY.model_dump(),
+                "my_ext": tuplify_json(_TO_METADATA_JSON_EXTENSION),
+            },
         ),
         (
             BaseGroupSpec(attributes={"a": [1, 2]}),
@@ -1783,18 +1792,20 @@ _TO_JSON_CONSOLIDATED = {"kind": "inline", "must_understand": False, "metadata":
                 {
                     "zarr_format": 3,
                     "node_type": "group",
-                    "consolidated_metadata": _TO_JSON_CONSOLIDATED,
+                    "consolidated_metadata": _TO_METADATA_JSON_CONSOLIDATED,
                 }
             ),
             {
                 "zarr_format": 3,
                 "node_type": "group",
                 "attributes": {},
-                "consolidated_metadata": _TO_JSON_CONSOLIDATED,
+                "consolidated_metadata": _TO_METADATA_JSON_CONSOLIDATED,
             },
         ),
         (
-            GroupSpec(attributes={"a": 1}, members={"x": _TO_JSON_ARRAY, "g": GroupSpec()}),
+            GroupSpec(
+                attributes={"a": 1}, members={"x": _TO_METADATA_JSON_ARRAY, "g": GroupSpec()}
+            ),
             {"zarr_format": 3, "node_type": "group", "attributes": {"a": 1}},
         ),
     ],
@@ -1807,13 +1818,15 @@ _TO_JSON_CONSOLIDATED = {"kind": "inline", "must_understand": False, "metadata":
         "group-with-members",
     ],
 )
-def test_to_json(spec: AnyArraySpec | AnyBaseGroupSpec, expected: dict[str, object]) -> None:
+def test_to_metadata_json(
+    spec: AnyArraySpec | AnyBaseGroupSpec, expected: dict[str, object]
+) -> None:
     """
-    `to_json` returns the node's Zarr V3 metadata document: `dimension_names`
+    `to_metadata_json` returns the node's Zarr V3 metadata document: `dimension_names`
     omitted when `None`, attributes dumped by alias, extra fields as
     top-level members, and a group's members left out. The result reads as a valid document in `zarr-metadata`.
     """
-    document = spec.to_json()
+    document = spec.to_metadata_json()
     assert document == expected
     model = ZarrV3ArrayMetadata if is_array_spec(spec) else ZarrV3GroupMetadata
     assert json.dumps(model.from_json(document).to_json()) == json.dumps(document)

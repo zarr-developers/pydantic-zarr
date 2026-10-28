@@ -238,19 +238,19 @@ print(GroupSpec.from_flat(tree).model_dump())
 
 ## Metadata documents
 
-`to_json` returns a node's metadata with a static type, unlike `model_dump`,
-whose options change what it returns. A Zarr V2 node stores its metadata in two
-documents, `.zarray` (or `.zgroup`) and `.zattrs`; `to_json` returns them as one
-document, with the `.zattrs` content under `attributes`, typed as
-`zarr_metadata.ZarrV2ArrayMetadataJSON` for an array and
-`zarr_metadata.ZarrV2GroupMetadataJSON` for a group. A group's members are not
-part of its metadata, so they are left out.
+`to_metadata_json` returns a node's metadata with a static type, unlike
+`model_dump`, whose options change what it returns. A Zarr V2 node stores its
+metadata in two documents, `.zarray` (or `.zgroup`) and `.zattrs`;
+`to_metadata_json` returns them as one document, with the `.zattrs` content
+under `attributes`, typed as `zarr_metadata.ZarrV2ArrayMetadataJSON` for an
+array and `zarr_metadata.ZarrV2GroupMetadataJSON` for a group. A group's
+members are not part of its metadata, so they are left out.
 
 ```python
 from pydantic_zarr.v2 import ArraySpec, GroupSpec
 
 array = ArraySpec(shape=(10,), chunks=(5,), dtype="|u1", attributes={"foo": 42})
-document = array.to_json()
+document = array.to_metadata_json()
 zattrs = document.pop("attributes")
 print(zattrs)
 #> {'foo': 42}
@@ -270,7 +270,7 @@ print(document)
 """
 
 group = GroupSpec(attributes={"bar": True}, members={"array": array})
-print(group.to_json())
+print(group.to_metadata_json())
 #> {'zarr_format': 2, 'attributes': {'bar': True}}
 ```
 

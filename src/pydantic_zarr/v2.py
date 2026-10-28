@@ -258,7 +258,7 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
             raise ValueError(msg)
         return self
 
-    def to_json(self) -> ZarrV2ArrayMetadataJSON:
+    def to_metadata_json(self) -> ZarrV2ArrayMetadataJSON:
         """
         This array's Zarr V2 metadata, as one document holding its `.zarray`
         and, under `attributes`, its `.zattrs`.
@@ -593,7 +593,7 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         """
         return type(self).model_validate({**self.model_dump(), **changes})
 
-    def to_json(self) -> ZarrV2GroupMetadataJSON:
+    def to_metadata_json(self) -> ZarrV2GroupMetadataJSON:
         """
         This group's Zarr V2 metadata, as one document holding its `.zgroup`
         and, under `attributes`, its `.zattrs`.

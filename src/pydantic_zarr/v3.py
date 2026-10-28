@@ -854,7 +854,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             document.pop("dimension_names", None)
         return document
 
-    def to_json(self) -> ZarrV3ArrayMetadataJSON:
+    def to_metadata_json(self) -> ZarrV3ArrayMetadataJSON:
         """
         This array's Zarr V3 metadata document: the content of its `zarr.json`.
 
@@ -1472,7 +1472,7 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
                 )
                 raise ValueError(msg)
 
-    def to_json(self) -> ZarrV3GroupMetadataJSON:
+    def to_metadata_json(self) -> ZarrV3GroupMetadataJSON:
         """
         This group's Zarr V3 metadata document: the content of its `zarr.json`.
 

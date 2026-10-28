@@ -104,12 +104,12 @@ def from_array_keeps_self(data: npt.NDArray[Any]) -> NarrowArrayV3:
 def documents_v3(
     array: NarrowArrayV3, group: GroupOfUnionV3
 ) -> tuple[ZarrV3ArrayMetadataJSON, ZarrV3GroupMetadataJSON]:
-    """`to_json` returns the typed metadata document, whatever the parameterization."""
-    return array.to_json(), group.to_json()
+    """`to_metadata_json` returns the typed metadata document, whatever the parameterization."""
+    return array.to_metadata_json(), group.to_metadata_json()
 
 
 def documents_v2(
     array: NarrowArrayV2, group: GroupOfUnionV2
 ) -> tuple[ZarrV2ArrayMetadataJSON, ZarrV2GroupMetadataJSON]:
     """Same contract on the v2 side."""
-    return array.to_json(), group.to_json()
+    return array.to_metadata_json(), group.to_metadata_json()
