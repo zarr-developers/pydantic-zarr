@@ -1793,4 +1793,4 @@ def test_to_json(spec: AnyArraySpec | AnyBaseGroupSpec, expected: dict[str, obje
     document = spec.to_json()
     assert document == expected
     model = ZarrV3ArrayMetadata if is_array_spec(spec) else ZarrV3GroupMetadata
-    assert tuplify_json(model.from_json(document).to_json()) == tuplify_json(document)
+    assert json.dumps(model.from_json(document).to_json()) == json.dumps(document)

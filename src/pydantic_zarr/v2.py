@@ -255,12 +255,14 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         static type, `zarr_metadata`'s `ZarrV2ArrayMetadataJSON`. The stored
         `.zarray` is this document without `attributes` (the type
         `zarr_metadata.ZarrV2ZArrayJSON`), and the stored `.zattrs` is
-        `attributes`. The JSON arrays the type declares as tuples (`filters`,
-        and a structured `dtype`) are tuples here too.
+        `attributes`. The JSON arrays the type declares as tuples (the
+        `filters` pipeline, and a structured `dtype`) are tuples here too;
+        JSON arrays inside a codec's configuration are left as they are.
         """
         document = self.model_dump()
-        for key in ("dtype", "filters"):
-            document[key] = tuplify_json(document[key])
+        document["dtype"] = tuplify_json(document["dtype"])
+        if document["filters"] is not None:
+            document["filters"] = tuple(document["filters"])
         return cast("ZarrV2ArrayMetadataJSON", document)
 
     @classmethod
