@@ -23,14 +23,13 @@ from packaging.version import Version
 from pydantic import (
     BeforeValidator,
     ConfigDict,
-    Field,
     TypeAdapter,
     field_validator,
     model_validator,
 )
 from typing_extensions import TypedDict
 
-from pydantic_zarr.core import _ExtraFieldsModel
+from pydantic_zarr.core import _OpenModel
 from pydantic_zarr.experimental.core import (
     BaseAttributes,
     IncEx,
@@ -130,12 +129,14 @@ extra_checker: TypeAdapter[dict[str, AllowedExtraField] | None] = TypeAdapter(
 )
 
 
-class NodeSpec(_ExtraFieldsModel):
+class NodeSpec(_OpenModel):
     """
     The base class for V3 ArraySpec and GroupSpec.
 
     The members of a metadata document that the spec does not declare are
-    kept in `extra_fields` and dumped back as top-level members. The model
+    read through the read-only `extra_fields` mapping and dumped back as
+    top-level members (a dump's `include` and `exclude` name them by key,
+    and `model_copy(update=...)` sets them). The model
     sets no `extra` configuration, so the TypedDicts it holds say their own
     openness: this module's metadata objects keep unknown members, and an
     attributes TypedDict behaves as it would anywhere else.
@@ -145,14 +146,13 @@ class NodeSpec(_ExtraFieldsModel):
 
     zarr_format: Literal[3]
         The Zarr version represented by this node. Must be 3.
-    extra_fields: Mapping[str, Any], default = {}
+    extra_fields: Mapping[str, Any]
         The document's members that this class does not declare, by key.
     """
 
     model_config = ConfigDict(frozen=True)
 
     zarr_format: Literal[3] = 3
-    extra_fields: Mapping[str, Any] = Field(default={})
 
     @model_validator(mode="after")
     def validate_extra_fields(self) -> Self:
@@ -161,7 +161,7 @@ class NodeSpec(_ExtraFieldsModel):
 
         Extra fields must be dicts with a 'must_understand' key set to False.
         """
-        extra_checker.validate_python(self.extra_fields)
+        extra_checker.validate_python(dict(self.extra_fields))
         return self
 
 

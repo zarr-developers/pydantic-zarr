@@ -267,7 +267,7 @@ def test_extra_field_given_twice() -> None:
 
 def test_extra_field_named_after_a_field() -> None:
     """An `extra_fields` key naming a declared field is refused."""
-    with pytest.raises(ValidationError, match=r"\['shape'\] name fields of this model"):
+    with pytest.raises(ValidationError, match=r"\['shape'\] name fields of this spec"):
         v3.ArraySpec.model_validate(_array_document(extra_fields={"shape": WAIVED}))
 
 
