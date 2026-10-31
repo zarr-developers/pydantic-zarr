@@ -22,6 +22,7 @@ just --list     # see every available task
 | Lint and format everything | `just lint` |
 | Run the tests with coverage | `just test-cov` (without zarr: `just test-base-cov`) |
 | Validate changelog fragment names | `just changelog-check` |
+| Check a pull request title | `just pr-title-check 'fix(v3): reject ...'` |
 | Preview the release notes for a version | `just release-notes 0.11.0 --draft` |
 | Check that `uv.lock` is current | `just lock-check` |
 | Check the import with only required dependencies | `just test-min-reqs` |
@@ -53,12 +54,20 @@ example `fix(v3): reject ...` or `feat(core)!: keep ...`. Footers in the
 pull request's own commits (`BREAKING CHANGE:`, `Release-As:`) are dropped by
 the squash, so mark a breaking change with `!` in the title.
 
+CI checks the title of every pull request (`ci/check_pr_title.py`, also
+`just pr-title-check '<title>'`). The valid types are `build`, `chore`, `ci`,
+`docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style` and `test`; the
+scope is free-form (`v2`, `v2,v3`, `core`, ...). Dependabot's
+pull requests are titled `ci(deps): ...` (GitHub Actions) and
+`chore(deps): ...` / `chore(deps-dev): ...` (Python), so they never cut a
+release on their own.
+
 While pydantic-zarr is below 1.0, the version is bumped like this:
 
 | Commits since the last release include | Next version (from 0.10.0) |
 | --- | --- |
 | a breaking change (`feat!:`, `fix!:`, ...) | 0.11.0 |
-| a `feat:`, `fix:` or `perf:` (and nothing breaking) | 0.10.1 |
+| a `feat:`, `fix:`, `perf:` or `revert:` (and nothing breaking) | 0.10.1 |
 | only other types (`docs:`, `ci:`, `chore:`, `test:`, ...) | no release |
 
 To release a different version than the computed one, the maintainer
