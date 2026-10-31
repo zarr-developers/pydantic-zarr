@@ -21,7 +21,6 @@ import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
 from pydantic import (
-    BaseModel,
     BeforeValidator,
     ConfigDict,
     TypeAdapter,
@@ -30,6 +29,7 @@ from pydantic import (
 )
 from typing_extensions import TypedDict
 
+from pydantic_zarr.core import _OpenModel
 from pydantic_zarr.experimental.core import (
     BaseAttributes,
     IncEx,
@@ -64,7 +64,7 @@ TName = TypeVar("TName", bound=str)
 TConfig = TypeVar("TConfig", bound=Mapping[str, object])
 
 
-class NamedConfig(TypedDict, Generic[TName, TConfig]):
+class NamedConfig(TypedDict, Generic[TName, TConfig], extra_items=object):
     """
     A Zarr V3 metadata object.
 
@@ -76,13 +76,15 @@ class NamedConfig(TypedDict, Generic[TName, TConfig]):
         The name of the metadata object.
     configuration: NotRequired[TConfig]
         The configuration of the metadata object.
+
+    Other members, such as `must_understand`, are kept as they are.
     """
 
     name: TName
     configuration: NotRequired[TConfig]
 
 
-class AnyNamedConfig(NamedConfig[str, Mapping[str, object]]):
+class AnyNamedConfig(NamedConfig[str, Mapping[str, object]], extra_items=object):
     """
     This class models any Zarr metadata object that takes the form of a
     {"name": ..., "configuration": ...} dict, where the "configuration" key is not required.
@@ -93,21 +95,21 @@ CodecLike = str | AnyNamedConfig
 """A type modelling the permissible declarations for codecs"""
 
 
-class RegularChunkingConfig(TypedDict):
+class RegularChunkingConfig(TypedDict, extra_items=object):
     chunk_shape: tuple[int, ...]
 
 
 RegularChunking = NamedConfig[Literal["regular"], RegularChunkingConfig]
 
 
-class DefaultChunkKeyEncodingConfig(TypedDict):
+class DefaultChunkKeyEncodingConfig(TypedDict, extra_items=object):
     separator: Literal[".", "/"]
 
 
 DefaultChunkKeyEncoding = NamedConfig[Literal["default"], DefaultChunkKeyEncodingConfig]
 
 
-class V2ChunkKeyEncodingConfig(TypedDict):
+class V2ChunkKeyEncodingConfig(TypedDict, extra_items=object):
     separator: Literal[".", "/"]
 
 
@@ -127,20 +129,28 @@ extra_checker: TypeAdapter[dict[str, AllowedExtraField] | None] = TypeAdapter(
 )
 
 
-class StrictBase(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="allow")
-
-
-class NodeSpec(StrictBase):
+class NodeSpec(_OpenModel):
     """
     The base class for V3 ArraySpec and GroupSpec.
+
+    The members of a metadata document that the spec does not declare are
+    read through the read-only `extra_fields` mapping and dumped back as
+    top-level members (a dump's `include` and `exclude` name them by key,
+    and `model_copy(update=...)` sets them). The model
+    sets no `extra` configuration, so the TypedDicts it holds say their own
+    openness: this module's metadata objects keep unknown members, and an
+    attributes TypedDict behaves as it would anywhere else.
 
     Attributes
     ----------
 
     zarr_format: Literal[3]
         The Zarr version represented by this node. Must be 3.
+    extra_fields: Mapping[str, Any]
+        The document's members that this class does not declare, by key.
     """
+
+    model_config = ConfigDict(frozen=True)
 
     zarr_format: Literal[3] = 3
 
@@ -151,7 +161,7 @@ class NodeSpec(StrictBase):
 
         Extra fields must be dicts with a 'must_understand' key set to False.
         """
-        extra_checker.validate_python(self.__pydantic_extra__)
+        extra_checker.validate_python(dict(self.extra_fields))
         return self
 
 

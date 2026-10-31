@@ -513,8 +513,12 @@ def test_allowed_extra(arrayspec: ArraySpec, groupspec: GroupSpec) -> None:
         "must_understand": False,
     }
 
-    assert GroupSpec(**groupspec.model_dump(), foo=extra_field).foo == extra_field  # type: ignore[attr-defined]
-    assert ArraySpec(**arrayspec.model_dump(), foo=extra_field).foo == extra_field  # type: ignore[attr-defined]
+    for spec in (
+        GroupSpec(**groupspec.model_dump(), foo=extra_field),
+        ArraySpec(**arrayspec.model_dump(), foo=extra_field),
+    ):
+        assert spec.extra_fields == {"foo": extra_field}
+        assert spec.model_dump()["foo"] == extra_field
 
 
 def test_disallowed_extra(arrayspec: ArraySpec, groupspec: GroupSpec) -> None:
@@ -527,10 +531,10 @@ def test_disallowed_extra(arrayspec: ArraySpec, groupspec: GroupSpec) -> None:
     }
 
     with pytest.raises(ValidationError, match=r"foo.must_understand"):
-        assert GroupSpec(**groupspec.model_dump(), foo=extra_field).foo == extra_field  # type: ignore[attr-defined]
+        GroupSpec(**groupspec.model_dump(), foo=extra_field)
 
     with pytest.raises(ValidationError, match=r"foo.must_understand"):
-        assert ArraySpec(**arrayspec.model_dump(), foo=extra_field).foo == extra_field  # type: ignore[attr-defined]
+        ArraySpec(**arrayspec.model_dump(), foo=extra_field)
 
 
 @pytest.mark.filterwarnings("ignore::UserWarning")

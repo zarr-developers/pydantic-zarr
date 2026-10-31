@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterator, Mapping, Sequence
+from functools import cache
+from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
+    Final,
     Literal,
     Protocol,
     Self,
@@ -23,7 +26,11 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    ModelWrapValidatorHandler,
+    PrivateAttr,
+    SerializationInfo,
     SerializerFunctionWrapHandler,
+    TypeAdapter,
     field_validator,
     model_serializer,
     model_validator,
@@ -206,7 +213,151 @@ class ExtraFieldsBase(StrictBase):
         return type(self).model_validate({**document, EXTRA_FIELDS: self.extra_fields, **changes})
 
 
-class AttributesBase(BaseModel):
+@cache
+def _declared_keys(model: type[BaseModel]) -> frozenset[str]:
+    """
+    The keys of an input document that pydantic reads into a field of
+    `model`: a field's alias or validation alias, and its name where pydantic
+    accepts names. Cached per class, since every validation asks.
+    """
+    config = model.model_config
+    by_name = bool(config.get("validate_by_name") or config.get("populate_by_name"))
+    by_alias = config.get("validate_by_alias", True)
+    keys: set[str] = set()
+    for name, field in model.model_fields.items():
+        alias = field.validation_alias if field.validation_alias is not None else field.alias
+        if alias is None or by_name:
+            keys.add(name)
+        if alias is None or not by_alias:
+            continue
+        choices = alias.choices if isinstance(alias, AliasChoices) else [alias]
+        for choice in choices:
+            first = choice if isinstance(choice, str) else choice.path[0]
+            if isinstance(first, str):
+                keys.add(first)
+    return frozenset(keys)
+
+
+_EXTRA_FIELDS_ADAPTER: Final = TypeAdapter(dict[str, Any])
+
+
+def _dumps_extra_field(key: str, value: object, info: SerializationInfo) -> bool:
+    """
+    Whether the dump `info` describes writes the extra field `key`: as for a
+    declared field, `include` must name it (when given), and neither
+    `exclude` nor `exclude_none` may drop it whole.
+    """
+    include, exclude = info.include, info.exclude
+    if include is not None and key not in include:
+        return False
+    # a set drops the key; a mapping drops it whole with `True` (or `...`)
+    excluded = (
+        exclude is not None
+        and key in exclude
+        and (isinstance(exclude, set) or exclude[key] in (True, ...))
+    )
+    return not excluded and not (info.exclude_none and value is None)
+
+
+class _OpenModel(BaseModel):
+    """
+    A model that keeps the keys of its input it does not declare ("extra
+    fields"), for documents whose keys are an open namespace: attributes,
+    and the experimental v3 specs.
+
+    The extra fields are read through `extra_fields` and dumped back as
+    top-level keys, selected by a dump's `include`, `exclude` and
+    `exclude_none` as declared fields are. They are kept apart from the
+    fields rather than as pydantic extras (`extra="allow"`), because pydantic
+    applies a model's `extra` setting to every TypedDict the model holds that
+    has no configuration of its own: `allow` would open plain TypedDicts, and
+    warns for closed ones. They are not a field either, so no input key names
+    their container, and a frozen model hashes by its declared fields alone.
+
+    A subclass that sets `extra` to `"forbid"` or `"ignore"` keeps no extra
+    fields; setting `"allow"` is refused, since it would reach the TypedDicts.
+    """
+
+    _extra_fields: dict[str, Any] = PrivateAttr(default_factory=dict)
+
+    @override
+    @classmethod
+    def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
+        super().__pydantic_init_subclass__(**kwargs)
+        if cls.model_config.get("extra") == "allow":
+            msg = (
+                f"{cls.__name__} keeps the keys it does not declare without "
+                "`extra='allow'`, which would also open the TypedDicts it holds: "
+                "leave `extra` unset"
+            )
+            raise TypeError(msg)
+
+    @property
+    def extra_fields(self) -> Mapping[str, Any]:
+        """The keys of the input this model does not declare, with their values as given."""
+        return MappingProxyType(self._extra_fields)
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _collect_extra_fields(cls, data: object, handler: ModelWrapValidatorHandler[Self]) -> Self:
+        """Validate the declared keys of an input document, and keep the others."""
+        if not isinstance(data, Mapping) or "extra" in cls.model_config:
+            return handler(data)
+        declared = _declared_keys(cls)
+        extra = {key: value for key, value in data.items() if key not in declared}
+        named = sorted(set(extra) & set(cls.model_fields))
+        if named:
+            msg = f"{named} name fields of this model, so they are not extra fields"
+            raise ValueError(msg)
+        model = handler({key: value for key, value in data.items() if key in declared})
+        model._extra_fields = extra
+        return model
+
+    @model_serializer(mode="wrap")
+    def _serialize_document(
+        self, handler: SerializerFunctionWrapHandler, info: SerializationInfo
+    ) -> dict[str, Any]:
+        """Write the extra fields the dump selects as top-level keys of the dumped document."""
+        extra = {
+            key: value
+            for key, value in self._extra_fields.items()
+            if _dumps_extra_field(key, value, info)
+        }
+        return {
+            **handler(self),
+            **_EXTRA_FIELDS_ADAPTER.dump_python(
+                extra,
+                mode="json" if info.mode_is_json() else "python",
+                by_alias=info.by_alias,
+                round_trip=info.round_trip,
+            ),
+        }
+
+    @override
+    def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
+        """
+        Copy this model as pydantic does; a key of `update` that names no
+        field is set as an extra field.
+        """
+        changes = {} if update is None else update
+        fields = type(self).model_fields
+        copied = super().model_copy(
+            update={key: value for key, value in changes.items() if key in fields}, deep=deep
+        )
+        copied._extra_fields = {
+            **copied._extra_fields,
+            **{key: value for key, value in changes.items() if key not in fields},
+        }
+        return copied
+
+    def __repr_args__(self) -> Iterator[tuple[str | None, Any]]:
+        """Show `extra_fields` last, and only when the model holds some."""
+        yield from super().__repr_args__()
+        if self._extra_fields:
+            yield EXTRA_FIELDS, self._extra_fields
+
+
+class AttributesBase(_OpenModel):
     """
     A base class for models of stored attributes ("spec-style" attributes).
 
@@ -230,17 +381,30 @@ class AttributesBase(BaseModel):
       "optional keys are omitted" specs — it leaves `None` out, and an
       explicit `None` is a validation error.
 
-    Unknown keys are preserved and round-trip (`extra="allow"`): attributes
-    read from a store keep the keys this model does not declare, so the model
-    is OPEN by default — declare `model_config` with `extra="forbid"` in a
-    subclass for a closed one. Subclasses can override this via
-    `model_config`, except alias serialization: a spec dumps its whole tree
-    with `by_alias=True`, so attributes dumped through a spec use aliases
-    whatever this model's own config says, unless the caller passes
-    `by_alias=False` to the spec's dump.
+    Unknown keys are preserved and round-trip: attributes read from a store
+    keep the keys this model does not declare, read through the read-only
+    `extra_fields` mapping, and dump them back as top-level keys (a dump's
+    `include` and `exclude` name them by key), so the model is OPEN by
+    default — declare `model_config` with `extra="forbid"` in a subclass for
+    a closed one (`extra="ignore"` drops unknown keys instead; `extra="allow"`
+    is refused). They are kept apart from pydantic's extras so that this
+    model's openness does not reach the TypedDicts it holds: each nested
+    TypedDict says its own, as it would anywhere else (a plain one drops
+    unknown keys, a closed one rejects them, one with `extra_items` keeps
+    them). `model_copy(update=...)` sets a key that names no field as an
+    extra field; assigning one as an attribute is an error. Subclasses can
+    override this via `model_config`, except alias serialization: a spec
+    dumps its whole tree with `by_alias=True`, so attributes dumped through a
+    spec use aliases whatever this model's own config says, unless the
+    caller passes `by_alias=False` to the spec's dump.
+
+    Attributes
+    ----------
+    extra_fields: Mapping[str, Any]
+        The keys this model does not declare, with their values as given.
     """
 
-    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True, extra="allow")
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
 
 def get_attribute(attributes: object, key: str, default: object = None) -> object:
@@ -270,7 +434,11 @@ def get_attribute(attributes: object, key: str, default: object = None) -> objec
             if value is MISSING:
                 return default
             return value
-        extra = attributes.__pydantic_extra__
+        extra = (
+            attributes.extra_fields
+            if isinstance(attributes, _OpenModel)
+            else attributes.__pydantic_extra__
+        )
         if extra is not None and key in extra:
             return extra[key]
     return default
