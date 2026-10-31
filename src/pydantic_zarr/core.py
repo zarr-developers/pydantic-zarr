@@ -118,7 +118,112 @@ def flatten_extra_fields(document: dict[str, Any]) -> dict[str, Any]:
     return document
 
 
-class ExtraFieldsBase(StrictBase):
+class _ExtraFieldsModel(BaseModel):
+    """
+    The machinery shared by models that keep the members of a document they
+    do not declare ("extra fields") in an `extra_fields` mapping.
+
+    The members an input document holds beyond the keys the model declares
+    are gathered into `extra_fields`, by key, and dumped back as top-level
+    members: `model_dump` and `model_dump_json` write the document as it was
+    read. They are held in a field of their own rather than as pydantic
+    extras (`extra="allow"`), because pydantic applies a model's `extra`
+    setting to every TypedDict the model holds that has no configuration of
+    its own: `allow` would open plain TypedDicts, and warns for closed ones.
+    A document member named `extra_fields` is read as this mapping.
+
+    A key is declared when pydantic would read it into a field: a field's
+    alias or validation alias, and its name where pydantic accepts names.
+    Whether the model keeps extra fields at all is `_keeps_extra_fields`.
+    Each subclass declares the `extra_fields` field, with the type of value
+    it keeps and its own mutability.
+    """
+
+    @classmethod
+    def _keeps_extra_fields(cls) -> bool:
+        """Whether this model gathers undeclared members into `extra_fields`."""
+        return True
+
+    @classmethod
+    def _declared_keys(cls) -> frozenset[str]:
+        """The keys of an input document that pydantic reads into a declared field."""
+        config = cls.model_config
+        by_name = bool(config.get("validate_by_name") or config.get("populate_by_name"))
+        by_alias = config.get("validate_by_alias", True)
+        keys: set[str] = set()
+        for name, field in cls.model_fields.items():
+            alias = field.validation_alias if field.validation_alias is not None else field.alias
+            if alias is None or by_name:
+                keys.add(name)
+            if alias is None or not by_alias:
+                continue
+            choices = alias.choices if isinstance(alias, AliasChoices) else [alias]
+            for choice in choices:
+                first = choice if isinstance(choice, str) else choice.path[0]
+                if isinstance(first, str):
+                    keys.add(first)
+        return frozenset(keys)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _collect_extra_fields(cls, data: object) -> object:
+        """
+        Gather the members of an input document that this class does not
+        declare into `extra_fields`, alongside any given there directly.
+        """
+        if not isinstance(data, Mapping) or not cls._keeps_extra_fields():
+            return data
+        declared = cls._declared_keys() | {EXTRA_FIELDS}
+        extra = {key: value for key, value in data.items() if key not in declared}
+        if not extra:
+            return data
+        given = data.get(EXTRA_FIELDS, {})
+        if not isinstance(given, Mapping):
+            # field validation reports the malformed mapping
+            return data
+        twice = sorted(set(extra) & set(given))
+        if twice:
+            msg = f"Extra fields given both as members and in `{EXTRA_FIELDS}`: {twice}"
+            raise ValueError(msg)
+        return {
+            **{key: value for key, value in data.items() if key in declared},
+            EXTRA_FIELDS: {**given, **extra},
+        }
+
+    @field_validator(EXTRA_FIELDS, mode="after", check_fields=False)
+    @classmethod
+    def _refuse_declared_keys(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        """
+        Refuse an extra field named after a key this class declares, and any
+        extra field at all in a class that does not keep them.
+        """
+        if value and not cls._keeps_extra_fields():
+            msg = f"{cls.__name__} keeps no extra fields, got {sorted(value)}"
+            raise ValueError(msg)
+        declared = sorted(set(value) & (cls._declared_keys() | set(cls.model_fields)))
+        if declared:
+            msg = f"{declared} name fields of this model, so they are not extra fields"
+            raise ValueError(msg)
+        return value
+
+    @model_serializer(mode="wrap")
+    def _serialize_document(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """Write the extra fields as top-level members of the dumped document."""
+        return flatten_extra_fields(handler(self))
+
+    def __repr_args__(self) -> Iterator[tuple[str | None, Any]]:
+        """Show `extra_fields` last, and only when the document holds some."""
+        extra: object = None
+        for name, value in super().__repr_args__():
+            if name == EXTRA_FIELDS:
+                extra = value
+                continue
+            yield name, value
+        if extra:
+            yield EXTRA_FIELDS, extra
+
+
+class ExtraFieldsBase(StrictBase, _ExtraFieldsModel):
     """
     A base class for specs of metadata documents that may hold members the
     spec class does not declare ("extra fields").
@@ -144,58 +249,6 @@ class ExtraFieldsBase(StrictBase):
         default={}
     )
 
-    @model_validator(mode="before")
-    @classmethod
-    def _collect_extra_fields(cls, data: object) -> object:
-        """
-        Gather the members of an input document that this class does not
-        declare into `extra_fields`, alongside any given there directly.
-        """
-        if not isinstance(data, Mapping):
-            return data
-        declared = cls.model_fields
-        extra = {key: value for key, value in data.items() if key not in declared}
-        if not extra:
-            return data
-        given = data.get(EXTRA_FIELDS, {})
-        if not isinstance(given, Mapping):
-            # field validation reports the malformed mapping
-            return data
-        twice = sorted(set(extra) & set(given))
-        if twice:
-            msg = f"Extra fields given both as members and in `{EXTRA_FIELDS}`: {twice}"
-            raise ValueError(msg)
-        return {
-            **{key: value for key, value in data.items() if key in declared},
-            EXTRA_FIELDS: {**given, **extra},
-        }
-
-    @field_validator(EXTRA_FIELDS, mode="after")
-    @classmethod
-    def _refuse_declared_keys(cls, value: Mapping[str, JSONValue]) -> Mapping[str, JSONValue]:
-        """Refuse an extra field named after a field this class declares."""
-        declared = sorted(set(value) & set(cls.model_fields))
-        if declared:
-            msg = f"{declared} name fields of this spec, so they are not extra fields"
-            raise ValueError(msg)
-        return value
-
-    @model_serializer(mode="wrap")
-    def _serialize_document(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
-        """Write the extra fields as top-level members of the dumped document."""
-        return flatten_extra_fields(handler(self))
-
-    def __repr_args__(self) -> Iterator[tuple[str | None, Any]]:
-        """Show `extra_fields` last, and only when the document holds some."""
-        extra: object = None
-        for name, value in super().__repr_args__():
-            if name == EXTRA_FIELDS:
-                extra = value
-                continue
-            yield name, value
-        if extra:
-            yield EXTRA_FIELDS, extra
-
     def _updated(self, changes: Mapping[str, object]) -> Self:
         """
         A revalidated copy of this spec with `changes` applied: the engine of
@@ -206,7 +259,7 @@ class ExtraFieldsBase(StrictBase):
         return type(self).model_validate({**document, EXTRA_FIELDS: self.extra_fields, **changes})
 
 
-class AttributesBase(BaseModel):
+class AttributesBase(_ExtraFieldsModel):
     """
     A base class for models of stored attributes ("spec-style" attributes).
 
@@ -230,17 +283,35 @@ class AttributesBase(BaseModel):
       "optional keys are omitted" specs — it leaves `None` out, and an
       explicit `None` is a validation error.
 
-    Unknown keys are preserved and round-trip (`extra="allow"`): attributes
-    read from a store keep the keys this model does not declare, so the model
-    is OPEN by default — declare `model_config` with `extra="forbid"` in a
-    subclass for a closed one. Subclasses can override this via
-    `model_config`, except alias serialization: a spec dumps its whole tree
-    with `by_alias=True`, so attributes dumped through a spec use aliases
-    whatever this model's own config says, unless the caller passes
+    Unknown keys are preserved and round-trip: attributes read from a store
+    keep the keys this model does not declare in `extra_fields`, and dump
+    them back as top-level keys, so the model is OPEN by default — declare
+    `model_config` with `extra="forbid"` in a subclass for a closed one
+    (`extra="ignore"` drops unknown keys instead). They are kept in a field
+    rather than as pydantic extras so that this model's openness does not
+    reach the TypedDicts it holds: each nested TypedDict says its own, as it
+    would anywhere else (a plain one drops unknown keys, a closed one rejects
+    them, one with `extra_items` keeps them). Subclasses can override this
+    via `model_config`, except alias serialization: a spec dumps its whole
+    tree with `by_alias=True`, so attributes dumped through a spec use
+    aliases whatever this model's own config says, unless the caller passes
     `by_alias=False` to the spec's dump.
+
+    Attributes
+    ----------
+    extra_fields: Mapping[str, Any], default = {}
+        The keys this model does not declare, with their values as given.
     """
 
-    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True, extra="allow")
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+    extra_fields: Mapping[str, Any] = Field(default={})
+
+    @override
+    @classmethod
+    def _keeps_extra_fields(cls) -> bool:
+        """A subclass that sets `extra` to `"forbid"` or `"ignore"` keeps none."""
+        return cls.model_config.get("extra", "allow") == "allow"
 
 
 def get_attribute(attributes: object, key: str, default: object = None) -> object:
@@ -258,6 +329,8 @@ def get_attribute(attributes: object, key: str, default: object = None) -> objec
         return attributes.get(key, default)
     if isinstance(attributes, BaseModel):
         for name, field in type(attributes).model_fields.items():
+            if name == EXTRA_FIELDS and isinstance(attributes, AttributesBase):
+                continue
             aliases: list[str] = [name]
             for alias in (field.alias, field.serialization_alias, field.validation_alias):
                 if isinstance(alias, str):
@@ -270,7 +343,11 @@ def get_attribute(attributes: object, key: str, default: object = None) -> objec
             if value is MISSING:
                 return default
             return value
-        extra = attributes.__pydantic_extra__
+        extra = (
+            attributes.extra_fields
+            if isinstance(attributes, AttributesBase)
+            else attributes.__pydantic_extra__
+        )
         if extra is not None and key in extra:
             return extra[key]
     return default

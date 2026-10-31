@@ -1,0 +1,1 @@
+Stopped `AttributesBase` and the experimental v3 `NodeSpec` from passing an `extra` setting to the TypedDicts they hold. Building a model whose attributes nest a closed TypedDict no longer emits pydantic's `TypedDictExtraConfigWarning`, and each nested TypedDict now keeps or drops unknown keys as it would under any other model.
