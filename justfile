@@ -68,6 +68,11 @@ docs-serve:
 changelog-check:
     uv run --no-sync python ci/check_changelog_entries.py
 
+# Fold the changelog fragments into docs/release-notes.md as release <version>
+# (the release workflow runs this on the release pull request; pass --draft to preview)
+release-notes version *args:
+    uvx towncrier@26.9.0 build --version {{ version }} {{ args }}
+
 # uv is pinned so a new uv release's lock-format or resolver changes cannot
 # fail (or wrongly pass) unrelated pull requests.
 # Check that uv.lock matches pyproject.toml

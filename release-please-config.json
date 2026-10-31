@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "simple",
+  "include-component-in-tag": false,
+  "include-v-in-tag": true,
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": true,
+  "skip-changelog": true,
+  "always-update": true,
+  "pull-request-header": "Merging this pull request tags the release and publishes it to PyPI. The release notes in `docs/release-notes.md` are built from the `changes/` fragments by towncrier; the list below is generated from the commit messages.",
+  "packages": {
+    ".": {}
+  }
+}

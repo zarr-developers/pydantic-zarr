@@ -300,6 +300,7 @@ checks = [
 
 [tool.towncrier]
 directory = 'changes'
+name = "pydantic-zarr"
 package = 'pydantic_zarr'
 package_dir = 'src'
 filename = "docs/release-notes.md"
