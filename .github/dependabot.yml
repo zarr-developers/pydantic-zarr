@@ -7,6 +7,11 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    # Conventional Commit titles ("ci(deps): bump ..."): an actions bump
+    # changes nothing users install, so it does not cut a release
+    commit-message:
+      prefix: ci
+      include: scope
     groups:
       actions:
         patterns:
@@ -17,6 +22,12 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    # these bumps move uv.lock and the development dependency pins, not the
+    # floors users install against, so they are `chore` and do not cut a
+    # release (retitle one that should)
+    commit-message:
+      prefix: chore
+      include: scope
     groups:
       python:
         patterns:

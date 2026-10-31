@@ -1,0 +1,105 @@
+# Cuts releases with release-please. On every push to main it opens (or
+# updates) the release pull request, whose version comes from the
+# conventional-commit messages since the last release, and folds the
+# changes/ fragments into docs/release-notes.md on that pull request with
+# towncrier. Merging the release pull request makes release-please tag the
+# release and create the GitHub release; this workflow then dispatches cd.yml
+# on the new tag, which builds and publishes to PyPI. See the "Releasing"
+# section of docs/contributing.md.
+
+name: Release
+
+on:
+  push:
+    branches: [ main ]
+
+permissions: {}
+
+# release-please force-updates the release branch on every run and the
+# release-notes job pushes on top of it, so runs must not overlap
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: Update the release pull request, or tag the release
+    # forks mirror main, but only the upstream repository releases
+    if: github.repository == 'zarr-developers/pydantic-zarr'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # push the release branch, create the tag and GitHub release
+      issues: write  # label the release pull request (autorelease: pending/tagged)
+      pull-requests: write  # open and update the release pull request
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      prs_created: ${{ steps.release.outputs.prs_created }}
+      pr: ${{ steps.release.outputs.pr }}
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  release-notes:
+    name: Build the release notes on the release pull request
+    needs: release-please
+    if: needs.release-please.outputs.prs_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # push the release notes commit to the release branch
+    steps:
+      - name: Find the release branch
+        id: branch
+        env:
+          PR: ${{ needs.release-please.outputs.pr }}
+        run: echo "name=$(jq -r .headBranchName <<< "$PR")" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.branch.outputs.name }}
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+      - name: Build the release notes
+        id: notes
+        run: |
+          version="$(jq -r '."."' .release-please-manifest.json)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          just release-notes "$version" --yes
+      - name: Push the release notes to the release branch
+        env:
+          BRANCH: ${{ steps.branch.outputs.name }}
+          VERSION: ${{ steps.notes.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/release-notes.md changes
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "docs: build the release notes for $VERSION"
+          gh auth setup-git
+          git push origin "HEAD:$BRANCH"
+
+  publish:
+    name: Publish the release to PyPI
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      # a GITHUB_TOKEN tag push does not trigger other workflows, but a
+      # workflow_dispatch does. Running cd.yml on the tag keeps PyPI's trusted
+      # publisher (cd.yml, environment `release`) and the environment's
+      # tag-only deployment rule as they are.
+      actions: write  # dispatch cd.yml
+    steps:
+      - name: Dispatch the publish workflow on the release tag
+        env:
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run cd.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
