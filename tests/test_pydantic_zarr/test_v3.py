@@ -13,8 +13,8 @@ from packaging.version import Version
 from pydantic import BaseModel, Field, ValidationError
 from zarr_metadata.model import ZarrV3ArrayMetadata, ZarrV3GroupMetadata
 
-from pydantic_zarr.core import tuplify_json
 from pydantic_zarr._metadata import CORE_AND_EXTENSIONS_CONTEXT, CORE_CONTEXT
+from pydantic_zarr.core import tuplify_json
 from pydantic_zarr.v3 import (
     _SINGLE_BYTE_DATA_TYPES,
     AnyArraySpec,
