@@ -119,7 +119,7 @@ it: a mapping from each store key to the JSON document stored there. An array
 stores one document, so its mapping has one key, `zarr.json`, typed as
 `pydantic_zarr.v3.ZarrV3ArrayStoredJSON`. A `GroupSpec`'s mapping holds its own
 `zarr.json` and each member's, at any depth, at the member's path:
-these are the metadata documents `to_zarr` writes. It is typed as
+these are the metadata documents a Zarr implementation writes. It is typed as
 `pydantic_zarr.v3.ZarrV3GroupStoredJSON`, which types the group's own
 `zarr.json` exactly and every other key as either document type.
 
@@ -166,8 +166,6 @@ import json
 import tempfile
 from pathlib import Path
 
-import zarr
-
 from pydantic_zarr.v3 import ArraySpec, GroupSpec
 
 array = ArraySpec.from_shape_and_data_type((10,), "uint8")
@@ -178,8 +176,51 @@ with tempfile.TemporaryDirectory() as root:
         path = Path(root) / key
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(document))
-    assert GroupSpec.from_zarr(zarr.open_group(root, mode="r")) == group
+    # the directory is now a Zarr store any implementation can open; read it back
+    documents = {
+        str(path.relative_to(root)): json.loads(path.read_text())
+        for path in Path(root).rglob("zarr.json")
+    }
+    assert GroupSpec.from_stored_metadata_json(documents) == group
 ```
+
+## Reading and writing with zarr-python
+
+pydantic-zarr does no IO. A spec is a metadata document, or a hierarchy of
+them; moving documents in and out of a store is the job of a Zarr
+implementation, and the two meet at the stored-documents mapping above. With
+zarr-python, `zarr.create_hierarchy` (zarr-python 3.0.5 and later) writes a
+hierarchy from zarr-python's metadata objects, which it builds from the
+documents, and a stored node's `metadata.to_buffer_dict` gives its documents
+back as the store holds them. Two functions connect them to the specs:
+
+```python
+--8<-- "examples/zarr_io.py:write"
+```
+
+```python
+--8<-- "examples/zarr_io.py:read"
+```
+
+Together they round-trip a hierarchy through any zarr-python store:
+
+```python
+--8<-- "examples/zarr_io.py:round_trip"
+```
+
+Both live in
+[`examples/zarr_io.py`](https://github.com/zarr-developers/pydantic-zarr/blob/main/examples/zarr_io.py),
+which the example scripts import; copy them into a project that needs them.
+They handle Zarr V2 specs the same way. Neither reads or writes array data:
+`write_hierarchy` creates the metadata documents, and the arrays are then
+filled through zarr-python as usual.
+
+The `to_zarr` and `from_zarr` methods of the specs, the module-level
+`to_zarr`, `from_zarr` and `from_zarr_flat`, and `like` or
+`ArraySpec.from_array` given a `zarr.Array` or `zarr.Group`, did this inside
+pydantic-zarr through zarr-python internals. They are deprecated and will be
+removed in pydantic-zarr 0.12; each warns once, naming its replacement. Until
+then they still work, and need the `zarr` extra: `pip install "pydantic-zarr[zarr]"`.
 
 ## Validation scopes
 
@@ -384,13 +425,14 @@ except ValidationError as e:
     """
 ```
 
-`update(extra_fields=...)` replaces the extra fields as a whole. `to_zarr`
-writes them and `from_zarr` reads them back (`zarr-python` stores them on
-arrays from 3.1 and on groups from 3.4; `to_zarr` refuses extra fields an
-older `zarr-python` cannot store). `consolidated_metadata` is the exception:
-`zarr-python` writes it as a record of the hierarchy below the group, so
-`from_zarr` reads the members themselves and leaves it out, and `to_zarr`
-refuses a group holding it rather than write a record that need not match the
-members written; drop it first and consolidate the written hierarchy with
-`zarr.consolidate_metadata`. Its contents are kept as written, not read as
-members.
+`update(extra_fields=...)` replaces the extra fields as a whole. The stored
+documents carry them, and `from_stored_metadata_json` reads them back.
+Whether a store written through `zarr-python` holds them depends on
+`zarr-python`, which keeps an array's extra fields from 3.1 and a group's from
+3.4, and drops them before that. `consolidated_metadata` is a special case:
+`zarr-python` writes it as a record of the hierarchy below the group, and the
+specs keep its contents as written, not read as members. A hierarchy written
+from a spec holding it would carry a record that need not match the members
+written, so drop it first and consolidate the written hierarchy with
+`zarr.consolidate_metadata`. The deprecated `to_zarr` refuses such a group,
+and `from_zarr` reads the members themselves and leaves the record out.

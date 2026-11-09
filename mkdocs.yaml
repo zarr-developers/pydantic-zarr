@@ -68,6 +68,7 @@ markdown_extensions:
   - pymdownx.snippets:
       base_path: ['.']
       check_paths: true
+      dedent_subsections: true
   - pymdownx.superfences
   - pymdownx.tabbed:
       alternate_style: true

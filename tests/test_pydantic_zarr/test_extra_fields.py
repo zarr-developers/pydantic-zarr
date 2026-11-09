@@ -30,6 +30,12 @@ if TYPE_CHECKING:
 
 ZARR_AVAILABLE = importlib.util.find_spec("zarr") is not None
 
+pytestmark = pytest.mark.filterwarnings(
+    # the zarr-python IO entry points still work, warning, until pydantic-zarr 0.12;
+    # `test_zarr_io_deprecated` checks the warnings themselves
+    "ignore:`[^`]+` is deprecated and will be removed in pydantic-zarr:DeprecationWarning"
+)
+
 CONSOLIDATED: dict[str, Any] = {"kind": "inline", "must_understand": False, "metadata": {}}
 """An empty `consolidated_metadata` member, as zarr-python writes it."""
 

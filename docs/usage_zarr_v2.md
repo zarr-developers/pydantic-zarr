@@ -2,34 +2,36 @@
 
 ## Reading and writing a zarr hierarchy
 
-### Reading
+The `GroupSpec` and `ArraySpec` classes model Zarr v2 groups and arrays as their metadata documents. `pydantic-zarr` does no IO of its own: a spec gives the documents a store holds (`to_stored_metadata_json`) and reads such documents back (`from_stored_metadata_json`), and moving documents in and out of a store is the job of a Zarr implementation such as `zarr-python`. [Stored metadata documents](#stored-metadata-documents) describes the documents; [Reading and writing with zarr-python](#reading-and-writing-with-zarr-python) connects them to a `zarr-python` store. Neither direction reads or writes array data.
 
-The `GroupSpec` and `ArraySpec` classes represent Zarr v2 groups and arrays, respectively. To create an instance of a `GroupSpec` or `ArraySpec` from an existing Zarr group or array, pass the Zarr group / array to the `.from_zarr` method defined on the `GroupSpec` / `ArraySpec` classes. This will result in a `pydantic-zarr` model of the Zarr object.
+> The `to_zarr` and `from_zarr` methods, the module-level `to_zarr`, `from_zarr` and `from_zarr_flat`, and `like` given a `zarr.Array` or `zarr.Group` are deprecated and will be removed in `pydantic-zarr` 0.12. Each warns once, naming its replacement.
 
-> `GroupSpec.from_zarr(zarr_group)` traverses the entire hierarchy under `zarr_group`. This can be extremely slow if used on an extensive Zarr group on high latency storage. To read only part of the hierarchy, use `from_zarr_flat(zarr_group, depth=1)`, which returns a flat mapping from paths to `ArraySpec` and `BaseGroupSpec` values, `depth` levels deep. To read a group without any of its members, use `BaseGroupSpec.from_zarr(zarr_group)`.
-
-Note that `from_zarr` will _not_ read the data inside an array.
-
-### Writing
-
-To write a hierarchy to some zarr-compatible storage backend, `GroupSpec` and `ArraySpec` have `to_zarr` methods that take a Zarr store and a path and return a Zarr array or group created in the store at the given path.
-
-Note that `to_zarr` will _not_ write any array data. You have to do this separately.
+Reading a hierarchy `zarr-python` wrote means collecting the documents it stored. A `zarr.Group` lists the nodes under it, and each node's `metadata.to_buffer_dict` gives its documents as the store holds them (`.zarray` or `.zgroup`, and `.zattrs`):
 
 ```python
-from zarr import create_array, create_group
+import json
+
+import zarr
+from zarr.core.buffer import default_buffer_prototype
 
 from pydantic_zarr.v2 import GroupSpec
 
 # create an in-memory Zarr group + array with attributes
-grp = create_group(store={}, path='foo', zarr_format=2)
-grp.attrs.put({'group_metadata': 10})
-arr = create_array(
-    name='foo/bar', store=grp.store, shape=(10,), dtype="f8", compressors=None, zarr_format=2
-)
+grp = zarr.create_group(store={}, path='foo', zarr_format=2, attributes={'group_metadata': 10})
+arr = grp.create_array(name='bar', shape=(10,), dtype="f8", compressors=None)
 arr.attrs.put({'array_metadata': True})
 
-spec = GroupSpec.from_zarr(grp)
+# the documents zarr-python stored, keyed as the store keys them
+prototype = default_buffer_prototype()
+documents = {
+    f"{path}/{name}" if path else name: json.loads(buffer.to_bytes())
+    for path, node in [("", grp), *grp.members(max_depth=None)]
+    for name, buffer in node.metadata.to_buffer_dict(prototype).items()
+}
+print(sorted(documents))
+#> ['.zattrs', '.zgroup', 'bar/.zarray', 'bar/.zattrs']
+
+spec = GroupSpec.from_stored_metadata_json(documents)
 print(spec.model_dump())
 """
 {
@@ -61,15 +63,32 @@ spec_dict2['attributes'] = {'a': 100, 'b': 'metadata'}
 # change the properties of an array member
 spec_dict2['members']['bar']['shape'] = (100,)
 
-# serialize the spec to the store
-group2 = GroupSpec(**spec_dict2).to_zarr(grp.store, path='foo2')
+spec2 = GroupSpec(**spec_dict2)
 
-print(dict(group2.attrs))
+# writing goes the other way: each node's document becomes one of zarr-python's
+# metadata objects, and `zarr.create_hierarchy` writes them all under a path
+from zarr.core.group import GroupMetadata
+from zarr.core.metadata import ArrayV2Metadata
+
+from pydantic_zarr.v2 import is_array_spec, to_flat
+
+nodes = {
+    f"foo2{path}": (ArrayV2Metadata if is_array_spec(node) else GroupMetadata).from_dict(
+        node.to_metadata_json()
+    )
+    for path, node in to_flat(spec2).items()
+}
+written = dict(zarr.create_hierarchy(store=grp.store, nodes=nodes))
+
+print(dict(written['foo2'].attrs))
 #> {'a': 100, 'b': 'metadata'}
 
-print(dict(group2['bar'].attrs))
-#> {'array_metadata': True}
+print(written['foo2/bar'].shape)
+#> (100,)
 ```
+
+Writing goes the other way from reading: each node's `to_metadata_json` document becomes one of `zarr-python`'s metadata objects, and `zarr.create_hierarchy` writes them all under a path. `to_flat` lists the nodes of a hierarchy with their paths.
+[Reading and writing with zarr-python](#reading-and-writing-with-zarr-python) wraps both directions in two functions.
 
 ### Creating from an array
 
@@ -311,8 +330,8 @@ array, that is `.zarray` (the `to_metadata_json` document without
 `pydantic_zarr.v2.ZarrV2ArrayStoredJSON`. `.zattrs` is included even when the
 attributes are empty, as zarr-python writes it. A `GroupSpec`'s mapping holds
 its own `.zgroup` and `.zattrs` and each member's, at any depth, prefixed by
-the member's path: these are the metadata documents `to_zarr` writes. It is
-typed as `pydantic_zarr.v2.ZarrV2GroupStoredJSON`, which types the group's own
+the member's path: these are the metadata documents a Zarr implementation
+writes. It is typed as `pydantic_zarr.v2.ZarrV2GroupStoredJSON`, which types the group's own
 documents exactly and every other key as any of the three document types.
 
 ```python
@@ -353,8 +372,6 @@ import json
 import tempfile
 from pathlib import Path
 
-import zarr
-
 from pydantic_zarr.v2 import ArraySpec, GroupSpec
 
 array = ArraySpec(shape=(10,), chunks=(5,), dtype="|u1", attributes={"foo": 42})
@@ -366,7 +383,30 @@ with tempfile.TemporaryDirectory() as root:
         path = Path(root) / key
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(document))
-    assert GroupSpec.from_zarr(zarr.open_group(root, mode="r")) == group
+    # the directory is now a Zarr store any implementation can open; read it back
+    documents = {
+        str(path.relative_to(root)): json.loads(path.read_text())
+        for path in Path(root).rglob(".z*")
+    }
+    assert GroupSpec.from_stored_metadata_json(documents) == group
+```
+
+## Reading and writing with zarr-python
+
+The two functions below write a spec's documents to a `zarr-python` store with
+`zarr.create_hierarchy` (zarr-python 3.0.5 and later) and read a stored node's
+documents back, for Zarr V2 and V3 specs alike. They live in
+[`examples/zarr_io.py`](https://github.com/zarr-developers/pydantic-zarr/blob/main/examples/zarr_io.py),
+which the example scripts import; copy them into a project that needs them.
+The [Zarr V3 guide](usage_zarr_v3.md#reading-and-writing-with-zarr-python)
+discusses them.
+
+```python
+--8<-- "examples/zarr_io.py:write"
+```
+
+```python
+--8<-- "examples/zarr_io.py:read"
 ```
 
 ## Comparing `GroupSpec` and `ArraySpec` models
@@ -378,9 +418,6 @@ The `like` method works by converting both input models to `dict` via `pydantic.
 The `like` method takes keyword arguments `include` and `exclude`, which determine the attributes included or excluded from the model comparison. So it's possible to use `like` to check if two `ArraySpec` instances have the same `shape`, `dtype` and `chunks` by calling `array_a.like(array_b, include={'shape', 'dtype', 'chunks'})`. This is useful if you don't care about the compressor or filters and just want to ensure that you can safely write an in-memory array to a Zarr array, which depends just on the two arrays having matching `shape`, `dtype`, and `chunks` attributes.
 
 ```python
-import zarr
-import zarr.storage
-
 from pydantic_zarr.v2 import ArraySpec, GroupSpec
 
 arr_a = ArraySpec(shape=(1,), dtype='uint8', chunks=(1,), attributes={})
@@ -393,23 +430,6 @@ print(arr_a.like(arr_b))
 
 # Returns True, because we exclude shape.
 print(arr_a.like(arr_b, exclude={'shape'}))
-#> True
-
-# `ArraySpec.like` will convert a zarr.Array to ArraySpec
-store = zarr.storage.MemoryStore()
-# This is a zarr.Array
-arr_a_stored = arr_a.to_zarr(store, path='arr_a')
-
-# arr_a is like the zarr.Array version of itself
-print(arr_a.like(arr_a_stored))
-#> True
-
-# Returns False, because of mismatched shape
-print(arr_b.like(arr_a_stored))
-#> False
-
-# Returns True, because we exclude shape.
-print(arr_b.like(arr_a_stored, exclude={'shape'}))
 #> True
 
 # The same thing, but for groups
@@ -427,11 +447,10 @@ print(g_a.like(g_b))
 # Returns True, because we ignore attributes
 print(g_a.like(g_b, exclude={'attributes'}))
 #> True
-
-# g_a is like its zarr.Group counterpart
-print(g_a.like(g_a.to_zarr(store, path='g_a')))
-#> True
 ```
+
+To compare a spec with a stored node, read the node's documents into a spec first
+(see [Reading and writing with zarr-python](#reading-and-writing-with-zarr-python)).
 
 ## Creating from an array
 
@@ -466,9 +485,9 @@ metadata. In `.zarray`, other keys "SHOULD NOT be present within the metadata
 object and SHOULD be ignored by implementations", so `ArraySpec` accepts any
 other key with a JSON value, gives it no meaning, and keeps it in the
 `extra_fields` mapping, dumped back as a top-level member. `zarr-python` drops
-these keys when it reads or writes an array, so `from_zarr` never finds any
-and `to_zarr` does not write them. In `.zgroup`, "Other keys MUST NOT be
-present", so the group specs refuse them.
+these keys when it reads or writes an array, so a store written through it
+holds none. In `.zgroup`, "Other keys MUST NOT be present", so the group specs
+refuse them.
 
 ```python
 from pydantic import ValidationError

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from collections.abc import Iterator, Mapping, Sequence
 from functools import cache
 from types import MappingProxyType
@@ -642,6 +643,40 @@ def model_like(a: BaseModel, b: BaseModel, exclude: IncEx = None, include: IncEx
     return json_eq(a_dict, b_dict)
 
 
+IO_REMOVAL_VERSION = "0.12"
+"""The pydantic-zarr release that removes the deprecated zarr-python IO entry points."""
+
+TO_ZARR_REPLACEMENT = (
+    "Write the documents `to_stored_metadata_json` gives with zarr-python, for instance "
+    "through `zarr.create_hierarchy`."
+)
+FROM_ZARR_REPLACEMENT = (
+    "Read the node's stored metadata documents with zarr-python and pass them to "
+    "`from_stored_metadata_json`."
+)
+IO_DOCS_URL = "https://pydantic-zarr.readthedocs.io/en/latest/usage_zarr_v3/#reading-and-writing-with-zarr-python"
+
+
+def warn_deprecated_io(name: str, replacement: str, *, stacklevel: int = 3) -> None:
+    """
+    Warn that `name`, an entry point that reads or writes zarr-python nodes,
+    is deprecated, pointing at `replacement`.
+
+    pydantic-zarr models metadata documents; reading them from a store and
+    writing them to one is zarr-python's job, so the entry points that take
+    or return zarr-python nodes go in `IO_REMOVAL_VERSION`. Every such entry
+    point warns through this helper, so the message has one shape:
+    ```<name>` is deprecated and will be removed in pydantic-zarr <version>: ...``.
+    The default `stacklevel` names the caller of the deprecated entry point.
+    """
+    msg = (
+        f"`{name}` is deprecated and will be removed in pydantic-zarr {IO_REMOVAL_VERSION}: "
+        "pydantic-zarr models metadata documents and leaves reading and writing them to "
+        f"zarr-python. {replacement} See {IO_DOCS_URL}"
+    )
+    warnings.warn(msg, DeprecationWarning, stacklevel=stacklevel)
+
+
 # TODO: expose contains_array and contains_group as public functions in zarr-python
 # and replace these custom implementations
 def maybe_node(
@@ -807,14 +842,27 @@ def walk_zarr_hierarchy(
     Yield `(path, node)` for a zarr array or group and the members under it,
     `depth` levels deep, with paths in the flat-hierarchy form `to_flat` uses:
     `""` for `node` itself, then `"/a"`, `"/a/b"` and so on. A `depth` of -1
-    walks the whole hierarchy and 0 yields `node` alone. The shared engine of
-    the v2 and v3 `from_zarr_flat`.
+    walks the whole hierarchy and 0 yields `node` alone.
+
+    .. deprecated:: 0.11
+        Removed in pydantic-zarr 0.12 with the rest of the zarr-python IO.
+        Walk the hierarchy with zarr-python (`zarr.Group.members`).
 
     Raises
     ------
     ValueError
         If `depth` is lower than -1.
     """
+    warn_deprecated_io(
+        "walk_zarr_hierarchy", "Walk the hierarchy with zarr-python (`zarr.Group.members`)."
+    )
+    return _walk_zarr_hierarchy(node, depth=depth)
+
+
+def _walk_zarr_hierarchy(
+    node: zarr.Array | zarr.Group, *, depth: int = -1
+) -> Iterator[tuple[str, zarr.Array | zarr.Group]]:
+    """`walk_zarr_hierarchy` without the deprecation warning: the engine of the v2 and v3 `from_zarr_flat`."""
     if depth < -1:
         msg = f"Invalid value for depth. Got {depth}, expected an integer greater than or equal to -1."
         raise ValueError(msg)

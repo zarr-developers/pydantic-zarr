@@ -66,6 +66,7 @@ from typing import Self
 from pydantic import Field, ValidationError, model_validator
 from typing_extensions import TypedDict
 from zarr.storage import MemoryStore
+from zarr_io import read_documents, write_hierarchy
 
 from pydantic_zarr.core import MISSING, AttributesBase, get_attribute
 from pydantic_zarr.v3 import ArraySpec, CodecLike, GroupSpec, is_array_spec
@@ -200,13 +201,13 @@ assert temperature.dimension_names == ("time", "y", "x")
 assert temperature.fill_value == "NaN"
 assert temperature.attributes.FillValue == "AAAAAICHw8A="
 
-# round trip through an in-memory Zarr V3 store
+# round trip through an in-memory Zarr V3 store, written and read with zarr-python
 store = MemoryStore()
-group = dataset.to_zarr(store, path="")
-back = ClimateDataset.from_zarr(group)
+group = write_hierarchy(dataset, store)
+back = ClimateDataset.from_stored_metadata_json(read_documents(group))
 assert back.like(dataset)
 assert back == dataset
-print("store round trip: from_zarr(to_zarr(dataset)) is the same model")
+print("store round trip: the documents read back are the same model")
 
 # a dimension length that disagrees between members is refused
 try:
@@ -276,7 +277,6 @@ from pathlib import Path
 
 import numpy as np
 import xarray as xr
-from zarr.storage import LocalStore
 
 # the same curvilinear dataset, built with real xarray: assign_coords makes
 # lat/lon auxiliary coordinates, so xarray itself writes the CF
@@ -317,7 +317,6 @@ def metadata_documents(root: Path) -> dict[str, object]:
 
 with tempfile.TemporaryDirectory() as tmp:
     reference_path = Path(tmp) / "reference.zarr"
-    model_path = Path(tmp) / "model.zarr"
     # consolidated=False: pydantic-zarr does not model the consolidated
     # metadata block xarray writes by default
     ds.to_zarr(
@@ -331,10 +330,10 @@ with tempfile.TemporaryDirectory() as tmp:
             "temperature": {"_FillValue": np.float32(-9999.0)},
         },
     )
-    dataset.to_zarr(LocalStore(model_path), path="")
 
     reference_documents = metadata_documents(reference_path)
-    model_documents = metadata_documents(model_path)
+    # the model's documents, as JSON holds them (tuples become arrays), to compare
+    model_documents = json.loads(json.dumps(dataset.to_stored_metadata_json()))
     assert reference_documents.keys() == model_documents.keys()
     for key in reference_documents:
         assert model_documents[key] == reference_documents[key], key

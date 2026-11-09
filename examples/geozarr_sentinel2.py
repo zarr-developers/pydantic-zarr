@@ -28,6 +28,7 @@ import zarr
 import zarr.storage
 from pydantic import Field, ValidationError, model_validator
 from typing_extensions import TypedDict
+from zarr_io import read_documents, write_hierarchy
 
 from pydantic_zarr.core import MISSING, AttributesBase, get_attribute
 from pydantic_zarr.v3 import ArraySpec, CodecLike, GroupSpec, is_array_spec
@@ -128,11 +129,12 @@ def band(grid_mapping: str = "spatial_ref") -> BandArray:
 
 
 def coord(axis: str) -> ArraySpec:
-    # plain-dict attributes work too; tuples match what a store read returns
+    # plain-dict attributes work too; a list is what JSON holds, so it is what
+    # a read of the stored document gives back
     return ArraySpec.from_shape_and_data_type(
         (180,),
         "float64",
-        attributes={"_ARRAY_DIMENSIONS": (axis,)},
+        attributes={"_ARRAY_DIMENSIONS": [axis]},
         dimension_names=(axis,),
     )
 
@@ -156,17 +158,18 @@ b02 = r10m["b02"]
 assert is_array_spec(b02)
 assert b02.dimension_names == ("y", "x")
 
-# Round trip: write the dataset to a store and read it back. `from_zarr` on
-# the typed subclass re-validates everything it reads.
+# Round trip: write the dataset's documents to a store with zarr-python and
+# read them back (`zarr_io.py` holds the two helpers). `from_stored_metadata_json`
+# on the typed subclass re-validates everything it reads.
 store = zarr.storage.MemoryStore()
-r10m.to_zarr(store, path="measurements/r10m")
-read_back = R10mDataset.from_zarr(zarr.open_group(store, path="measurements/r10m", mode="r"))
+write_hierarchy(r10m, store, "measurements/r10m")
+stored = zarr.open_group(store, path="measurements/r10m", mode="r")
+read_back = R10mDataset.from_stored_metadata_json(read_documents(stored))
 assert read_back.like(r10m)
 assert read_back == r10m
 print("round trip through a MemoryStore preserved the dataset")
 
 # the stored attribute documents use the alias spellings
-stored = zarr.open_group(store, path="measurements/r10m", mode="r")
 assert dict(stored["b02"].attrs)["_ARRAY_DIMENSIONS"] == ["y", "x"]
 # --8<-- [end:dataset]
 
@@ -270,8 +273,6 @@ model = R10mDataset(
         ),
     }
 )
-model_store = zarr.storage.MemoryStore()
-model.to_zarr(model_store, path="")
 
 
 def metadata_documents(store: zarr.storage.MemoryStore) -> dict[str, dict[str, object]]:
@@ -292,7 +293,9 @@ def metadata_documents(store: zarr.storage.MemoryStore) -> dict[str, dict[str, o
 
 
 ref_docs = metadata_documents(ref_store)
-model_docs = metadata_documents(model_store)
+# the documents the model holds, keyed as a store keys them and as JSON holds
+# them (tuples become arrays): no store needed
+model_docs = json.loads(json.dumps(model.to_stored_metadata_json()))
 assert ref_docs.keys() == model_docs.keys()
 for key in ref_docs:
     assert ref_docs[key].keys() == model_docs[key].keys(), key
