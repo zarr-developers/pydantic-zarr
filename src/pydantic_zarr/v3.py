@@ -732,9 +732,14 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         with the other, and to what `from_zarr` reads back. Two rules: an
         empty `configuration` mapping is dropped from any codec, and the
         `bytes` codec's `endian` configuration, a no-op for a single-byte
-        data type, is dropped for those data types. Both reach inside a
-        sharding codec's inner pipeline (same data type); its index codecs,
-        which encode the uint64 index, keep their endianness.
+        data type, is dropped when the chunk it receives is of one. That
+        chunk's data type is the array's as changed by the array->array
+        codecs before `bytes` in its pipeline (`cast_value` sets it to its
+        configured `data_type`; every other codec keeps it), so a cast to a
+        multi-byte type keeps the endian the cast chunk needs. Both rules
+        reach inside a sharding codec's inner pipeline, which continues the
+        data type its position in the outer pipeline hands it; its index
+        codecs, which encode the uint64 index, keep their endianness.
         (`zarr-metadata`'s canonical document model already equates the
         empty-configuration spellings, but not the endian ones; `==` on
         specs compares fields literally, hence the normalization here.)
@@ -745,45 +750,55 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         if isinstance(codecs, (str, Mapping)) or not isinstance(codecs, Sequence):
             # a lone codec is refused by the field validator; leave it alone
             return data
-        try:
-            parsed = parse_dtype_v3(data["data_type"]) if "data_type" in data else None
-        except (ValueError, TypeError):
-            parsed = None
-        drop_endian = parsed in _SINGLE_BYTE_DATA_TYPES
 
-        def normalize(codec: object, *, drop_endian: bool) -> object:
+        def parse_data_type(declaration: object) -> object:
+            try:
+                return parse_dtype_v3(declaration)
+            except (ValueError, TypeError):
+                return None
+
+        def normalize(codec: object, data_type: object) -> tuple[object, object]:
+            """
+            Normalize one codec, given the data type of the chunk it receives;
+            return it with the data type of the chunk it passes on.
+            """
             if not isinstance(codec, Mapping):
-                return codec
+                return codec, data_type
             name = codec.get("name")
             config = codec.get("configuration")
+            if name == "cast_value" and isinstance(config, Mapping) and "data_type" in config:
+                data_type = parse_data_type(config["data_type"])
             if isinstance(config, Mapping) and not config:
-                return {key: value for key, value in codec.items() if key != "configuration"}
+                return {
+                    key: value for key, value in codec.items() if key != "configuration"
+                }, data_type
             if (
-                drop_endian
-                and name == "bytes"
+                name == "bytes"
+                and data_type in _SINGLE_BYTE_DATA_TYPES
                 and isinstance(config, Mapping)
                 and set(config) == {"endian"}
             ):
-                return {"name": "bytes"}
+                return {"name": "bytes"}, data_type
             if name == "sharding_indexed" and isinstance(config, Mapping):
                 new_config = dict(config)
                 inner = config.get("codecs")
                 if isinstance(inner, Sequence) and not isinstance(inner, str):
-                    new_config["codecs"] = tuple(
-                        normalize(inner_codec, drop_endian=drop_endian) for inner_codec in inner
-                    )
+                    new_config["codecs"] = normalize_pipeline(inner, data_type)
                 index = config.get("index_codecs")
                 if isinstance(index, Sequence) and not isinstance(index, str):
-                    new_config["index_codecs"] = tuple(
-                        normalize(index_codec, drop_endian=False) for index_codec in index
-                    )
-                return {**codec, "configuration": new_config}
-            return codec
+                    new_config["index_codecs"] = normalize_pipeline(index, "uint64")
+                return {**codec, "configuration": new_config}, data_type
+            return codec, data_type
 
-        return {
-            **data,
-            "codecs": tuple(normalize(codec, drop_endian=drop_endian) for codec in codecs),
-        }
+        def normalize_pipeline(pipeline: Sequence[object], data_type: object) -> tuple[object, ...]:
+            normalized: list[object] = []
+            for codec in pipeline:
+                codec, data_type = normalize(codec, data_type)
+                normalized.append(codec)
+            return tuple(normalized)
+
+        data_type = parse_data_type(data["data_type"]) if "data_type" in data else None
+        return {**data, "codecs": normalize_pipeline(codecs, data_type)}
 
     @model_validator(mode="after")
     def validate_dimension_names(self) -> Self:
