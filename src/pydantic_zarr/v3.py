@@ -64,7 +64,6 @@ from zarr_metadata.v3.chunk_key_encoding.v2 import (
     V2ChunkKeyEncodingObject,
 )
 from zarr_metadata.v3.definition import (
-    CORE_AND_EXTENSIONS,
     ArrayExtraFieldDefinition,
     ChunkGridDefinition,
     ChunkKeyEncodingDefinition,
@@ -75,7 +74,12 @@ from zarr_metadata.v3.definition import (
 )
 
 from pydantic_zarr._metadata import CONTEXT_KEY as CONTEXT_KEY
-from pydantic_zarr._metadata import format_lines, format_problems, scope_from_context
+from pydantic_zarr._metadata import (
+    CORE_AND_EXTENSIONS_CONTEXT,
+    format_lines,
+    format_problems,
+    scope_from_context,
+)
 from pydantic_zarr.core import (
     ExtraFieldsBase,
     IncEx,
@@ -235,7 +239,7 @@ class NodeSpec(ExtraFieldsBase):
         operation (``update``, ``from_shape_and_data_type``, ``like``, ...),
         which re-validate as the class. An explicit validation context
         still wins, and ``None`` (the default) means ``zarr-metadata``'s
-        ``CORE_AND_EXTENSIONS``. A group's members are validated as their
+        ``CORE_AND_EXTENSIONS_CONTEXT``. A group's members are validated as their
         own classes, so a scoped tree narrows its member types to
         scope-bearing classes (an explicit context, which pydantic carries
         into nested validation, reaches the members either way).
@@ -245,7 +249,7 @@ class NodeSpec(ExtraFieldsBase):
         codec's inner and index pipelines included) and storage transformer
         — that nothing in the operative scope claims, where the default is
         to leave such names unjudged. Together with `zarr_scope` this makes
-        a class a conformance contract: ``zarr_scope = CORE`` plus strict
+        a class a conformance contract: ``zarr_scope = CORE_CONTEXT`` plus strict
         accepts exactly the documents built from names the core spec
         defines. The variable-length data types and their codecs are
         extensions (and zarr-python's legacy spellings are claimed by no
@@ -261,7 +265,7 @@ class NodeSpec(ExtraFieldsBase):
     (its "additional fields"), and a spec accepts the ones the spec permits,
     judged in the same scope as the rest of the document. An extra field
     whose key a definition in the scope claims is judged by that definition
-    (``CORE`` claims a group's ``consolidated_metadata``). Any other extra
+    (``CORE_CONTEXT`` claims a group's ``consolidated_metadata``). Any other extra
     field is one the reader does not recognize, which the spec admits only
     as an extension object, ``{"name": ..., "configuration": ...}``, that
     sets ``"must_understand": false``; every other unknown key is refused,
@@ -281,7 +285,7 @@ class NodeSpec(ExtraFieldsBase):
         """
         The scope a validation of this class reads metadata in: the validation
         context's scope when it carries one, else this class's `zarr_scope`.
-        `None` means the readers' default (``CORE_AND_EXTENSIONS``).
+        `None` means the readers' default (``CORE_AND_EXTENSIONS_CONTEXT``).
         """
         scope = scope_from_context(context)
         return cls.zarr_scope if scope is None else scope
@@ -293,7 +297,7 @@ class NodeSpec(ExtraFieldsBase):
         unclaimed_extension_points: Sequence[str] = (),
     ) -> None:
         """
-        Refuse what a whole-document read in `scope` (``CORE_AND_EXTENSIONS``
+        Refuse what a whole-document read in `scope` (``CORE_AND_EXTENSIONS_CONTEXT``
         when `None`) leaves unjudged and the spec or this class does not
         allow: the extra fields the spec's rule for fields a reader does not
         recognize refuses, and, on a class with `zarr_scope_strict` set, every
@@ -303,7 +307,7 @@ class NodeSpec(ExtraFieldsBase):
         here.
         """
         extra = self.extra_fields
-        scope_actual = CORE_AND_EXTENSIONS if scope is None else scope
+        scope_actual = CORE_AND_EXTENSIONS_CONTEXT if scope is None else scope
         node_type = "array" if kind is ArrayExtraFieldDefinition else "group"
         refused = _refused_extra_fields(extra, kind, scope_actual)
         if refused:
@@ -335,7 +339,7 @@ def parse_dtype_v3(
     already in Zarr V3 form — a data type name or a named configuration
     mapping — needs no parsing and passes through unchanged: like every other
     field, it is judged against the definitions in `scope` (``zarr-metadata``'s
-    ``CORE_AND_EXTENSIONS`` when `scope` is `None`) when the whole metadata
+    ``CORE_AND_EXTENSIONS_CONTEXT`` when `scope` is `None`) when the whole metadata
     document is validated. One guard runs here instead of there: a string
     that names no data type in the scope but that numpy reads as a data type
     (``"i8"``, ``"float"``, ``">f4"``) is ambiguous — far more likely a numpy
@@ -350,7 +354,7 @@ def parse_dtype_v3(
     if isinstance(dtype, str):
         if dtype in _VARIABLE_LENGTH_DATA_TYPES:
             return dtype
-        scope_actual = CORE_AND_EXTENSIONS if scope is None else scope
+        scope_actual = CORE_AND_EXTENSIONS_CONTEXT if scope is None else scope
         if scope_actual.claimant(DataTypeDefinition, dtype) is not None:
             return dtype
         try:
@@ -805,7 +809,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         invalid configuration is refused. The scope comes from the pydantic
         validation context (a `zarr_metadata` `ZarrV3Context`, directly or
         under the key `pydantic_zarr.v3.CONTEXT_KEY`), falling back to this
-        class's `zarr_scope`, then to `zarr_metadata`'s `CORE_AND_EXTENSIONS`.
+        class's `zarr_scope`, then to `zarr_metadata`'s `CORE_AND_EXTENSIONS_CONTEXT`.
 
         Extra fields (members the spec does not define) are judged in the
         same scope: one whose key a definition in the scope claims, by that
@@ -824,7 +828,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         unclaimed: list[str] = []
         if type(self).zarr_scope_strict:
             unclaimed = _unclaimed_extension_point_names(
-                self.model_dump(), CORE_AND_EXTENSIONS if scope is None else scope
+                self.model_dump(), CORE_AND_EXTENSIONS_CONTEXT if scope is None else scope
             )
         self._refuse_unjudged(ArrayExtraFieldDefinition, scope, unclaimed)
         return self
@@ -1435,7 +1439,7 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         are its extra fields, so only a spec holding some has anything to
         read. The scope is resolved as for `ArraySpec`: an extra field whose
         key a definition in the scope claims is judged by that definition
-        (``CORE`` claims ``consolidated_metadata``, whose contents are kept as
+        (``CORE_CONTEXT`` claims ``consolidated_metadata``, whose contents are kept as
         written and not read as members); any other must be an extension
         object with ``"must_understand": false``. On a class with
         `zarr_scope_strict` set, an extra field nothing in the scope claims is

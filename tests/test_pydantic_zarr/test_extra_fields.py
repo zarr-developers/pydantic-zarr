@@ -2,7 +2,7 @@
 Extra fields: metadata document members the Zarr spec does not define.
 
 Zarr V3 admits an extra field a reader recognizes (one a definition in the
-scope claims, such as a group's `consolidated_metadata` in `CORE`), and one
+scope claims, such as a group's `consolidated_metadata` in `CORE_CONTEXT`), and one
 it does not recognize only as an extension object that sets
 `"must_understand": false`. Zarr V2 admits any other key in array metadata
 (it "SHOULD be ignored") and none in group metadata.
@@ -17,14 +17,10 @@ import pytest
 from packaging.version import Version
 from pydantic import ValidationError
 from typing_extensions import TypedDict
-from zarr_metadata.v3.definition import (
-    CORE,
-    CORE_AND_EXTENSIONS,
-    ArrayExtraFieldDefinition,
-    ZarrV3Context,
-)
+from zarr_metadata.v3.definition import ArrayExtraFieldDefinition, ZarrV3Context
 
 from pydantic_zarr import v2, v3
+from pydantic_zarr._metadata import CORE_AND_EXTENSIONS_CONTEXT, CORE_CONTEXT
 from pydantic_zarr.core import tuplify_json
 
 from .conftest import ZARR_PYTHON_VERSION
@@ -50,8 +46,12 @@ class _AcmeConfiguration(TypedDict, closed=True):
     must_understand: NotRequired[bool]
 
 
-ACME_SCOPE = CORE.update(
-    array_extra_fields=[ArrayExtraFieldDefinition(name="acme", configuration=_AcmeConfiguration)]
+ACME_SCOPE = CORE_CONTEXT.union(
+    ZarrV3Context(
+        array_extra_fields=[
+            ArrayExtraFieldDefinition(name="acme", configuration=_AcmeConfiguration)
+        ]
+    )
 )
 """The core scope, plus a definition claiming an array extra field `acme`."""
 
@@ -65,7 +65,7 @@ def _group_document(**extra: object) -> dict[str, Any]:
 
 
 class _StrictCoreGroupSpec(v3.GroupSpec):
-    zarr_scope = CORE
+    zarr_scope = CORE_CONTEXT
     zarr_scope_strict = True
 
 
@@ -78,12 +78,12 @@ class _AcmeArraySpec(v3.ArraySpec):
     [
         # zarr-python's consolidated metadata, claimed by the core scope
         (v3.GroupSpec, _group_document(consolidated_metadata=CONSOLIDATED), None),
-        (v3.BaseGroupSpec, _group_document(consolidated_metadata=CONSOLIDATED), CORE),
+        (v3.BaseGroupSpec, _group_document(consolidated_metadata=CONSOLIDATED), CORE_CONTEXT),
         # a strict class accepts it too, since its scope claims the key
         (_StrictCoreGroupSpec, _group_document(consolidated_metadata=CONSOLIDATED), None),
         # an unrecognized extension object that waives understanding
         (v3.GroupSpec, _group_document(notes=WAIVED), None),
-        (v3.ArraySpec, _array_document(notes=WAIVED), CORE_AND_EXTENSIONS),
+        (v3.ArraySpec, _array_document(notes=WAIVED), CORE_AND_EXTENSIONS_CONTEXT),
         (v3.ArraySpec, _array_document(notes={"name": "acme", "must_understand": False}), None),
         # an extra field the scope claims, which then need not waive understanding
         (_AcmeArraySpec, _array_document(acme={"level": 1, "must_understand": True}), None),

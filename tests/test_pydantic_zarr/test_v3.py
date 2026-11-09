@@ -12,9 +12,9 @@ import pytest
 from packaging.version import Version
 from pydantic import BaseModel, Field, ValidationError
 from zarr_metadata.model import ZarrV3ArrayMetadata, ZarrV3GroupMetadata
-from zarr_metadata.v3.definition import CORE
 
 from pydantic_zarr.core import tuplify_json
+from pydantic_zarr._metadata import CORE_AND_EXTENSIONS_CONTEXT, CORE_CONTEXT
 from pydantic_zarr.v3 import (
     _SINGLE_BYTE_DATA_TYPES,
     AnyArraySpec,
@@ -741,7 +741,6 @@ def test_metadata_document_validation_scope_from_context() -> None:
     that claims a codec name, an invalid configuration is refused; in one that
     does not, the same codec is left unjudged and the spec is accepted.
     """
-    from zarr_metadata.v3.definition import CORE, CORE_AND_EXTENSIONS
 
     from pydantic_zarr._metadata import CONTEXT_KEY
 
@@ -756,14 +755,14 @@ def test_metadata_document_validation_scope_from_context() -> None:
             )
         ),
     }
-    # CORE does not claim scale_offset, so the field is unjudged and the spec valid
-    spec: AnyArraySpec = ArraySpec.model_validate(document, context=CORE)
+    # CORE_CONTEXT does not claim scale_offset, so the field is unjudged and the spec valid
+    spec: AnyArraySpec = ArraySpec.model_validate(document, context=CORE_CONTEXT)
     assert spec.codecs[-1]["name"] == "scale_offset"  # type: ignore[index]
     # the same scope travels under CONTEXT_KEY in a mapping context
-    assert ArraySpec.model_validate(document, context={CONTEXT_KEY: CORE}) == spec
-    # CORE_AND_EXTENSIONS claims it and refuses the configuration
+    assert ArraySpec.model_validate(document, context={CONTEXT_KEY: CORE_CONTEXT}) == spec
+    # CORE_AND_EXTENSIONS_CONTEXT claims it and refuses the configuration
     with pytest.raises(ValidationError, match="scale_offset|bogus"):
-        ArraySpec.model_validate(document, context={CONTEXT_KEY: CORE_AND_EXTENSIONS})
+        ArraySpec.model_validate(document, context={CONTEXT_KEY: CORE_AND_EXTENSIONS_CONTEXT})
 
 
 def test_metadata_document_validation_context_key_type_error() -> None:
@@ -779,7 +778,7 @@ def _scale_offset_kwargs() -> dict[str, Any]:
     """
     Kwargs whose validity depends on the scope: the `scale_offset` codec is
     claimed by the zarr-extensions scope, where its unknown configuration key
-    is refused; a scope that does not claim it (`CORE`) leaves it unjudged.
+    is refused; a scope that does not claim it (`CORE_CONTEXT`) leaves it unjudged.
     """
     return _v3_array_kwargs(
         codecs=(
@@ -799,10 +798,8 @@ def test_zarr_scope_class_default() -> None:
     """
     from collections.abc import Mapping
 
-    from zarr_metadata.v3.definition import CORE
-
     class CoreArraySpec(ArraySpec):
-        zarr_scope = CORE
+        zarr_scope = CORE_CONTEXT
 
     spec = CoreArraySpec(**_scale_offset_kwargs())
     assert spec.codecs[-1]["name"] == "scale_offset"  # type: ignore[index]
@@ -822,14 +819,13 @@ def test_zarr_scope_class_default() -> None:
 
 def test_zarr_scope_context_overrides_classvar() -> None:
     """An explicit validation context wins over the class's `zarr_scope`."""
-    from zarr_metadata.v3.definition import CORE, CORE_AND_EXTENSIONS
 
     class CoreArraySpec(ArraySpec):
-        zarr_scope = CORE
+        zarr_scope = CORE_CONTEXT
 
     document = {"zarr_format": 3, "node_type": "array", **_scale_offset_kwargs()}
     with pytest.raises(ValidationError, match="scale_offset|bogus"):
-        CoreArraySpec.model_validate(document, context=CORE_AND_EXTENSIONS)
+        CoreArraySpec.model_validate(document, context=CORE_AND_EXTENSIONS_CONTEXT)
 
 
 def test_zarr_scope_absent_falls_back_to_default_scope() -> None:
@@ -856,7 +852,7 @@ def test_zarr_scope_reaches_dtype_guard() -> None:
 class _StrictCoreArraySpec(ArraySpec):
     """Accepts exactly the documents built from names the core scope claims."""
 
-    zarr_scope = CORE
+    zarr_scope = CORE_CONTEXT
     zarr_scope_strict = True
 
 
@@ -871,13 +867,12 @@ _ZSTD_KWARGS = _v3_array_kwargs(
 
 def test_zarr_scope_strict_core_conformance() -> None:
     """
-    `zarr_scope = CORE` plus `zarr_scope_strict` is a core-conformance
+    `zarr_scope = CORE_CONTEXT` plus `zarr_scope_strict` is a core-conformance
     contract: a document of core names passes, through derived operations
     (sharding, whose inner and index pipelines the strict check walks) too,
     and an explicit validation context re-scopes the conformance check, so
     the same class judges strictly against the context's scope instead.
     """
-    from zarr_metadata.v3.definition import CORE_AND_EXTENSIONS
 
     spec = _StrictCoreArraySpec(**_v3_array_kwargs())
     sharded = spec.with_sharding_codec((2, 2))
@@ -885,7 +880,7 @@ def test_zarr_scope_strict_core_conformance() -> None:
     # zstd is claimed by the extensions scope, so under that context the
     # strict check passes where the class's own scope refuses (test below)
     document = {"zarr_format": 3, "node_type": "array", **_ZSTD_KWARGS}
-    accepted = _StrictCoreArraySpec.model_validate(document, context=CORE_AND_EXTENSIONS)
+    accepted = _StrictCoreArraySpec.model_validate(document, context=CORE_AND_EXTENSIONS_CONTEXT)
     assert accepted.codecs[-1]["name"] == "zstd"  # type: ignore[index]
 
 
