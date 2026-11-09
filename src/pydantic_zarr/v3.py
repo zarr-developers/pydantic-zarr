@@ -41,16 +41,13 @@ from zarr_metadata import (
     ZARR_V3_ARRAY_METADATA_STORE_KEY,
     ZARR_V3_CONSOLIDATED_METADATA_KEY,
     ZARR_V3_GROUP_METADATA_STORE_KEY,
-    DefaultChunkKeyEncodingMetadata,
     JSONValue,
     MetadataValidationError,
     RegularChunkGridMetadata,
-    V2ChunkKeyEncodingMetadata,
     ZarrV3ArrayMetadataJSON,
     ZarrV3ExtensionField,
     ZarrV3GroupMetadataJSON,
 )
-from zarr_metadata.definition._envelope import envelope_problems
 from zarr_metadata.model import ZarrV3ArrayMetadata as ZarrV3ArrayMetadataModel
 from zarr_metadata.model import ZarrV3GroupMetadata as ZarrV3GroupMetadataModel
 from zarr_metadata.model import validate_node_name_v3
@@ -267,9 +264,9 @@ class NodeSpec(ExtraFieldsBase):
     whose key a definition in the scope claims is judged by that definition
     (``CORE_CONTEXT`` claims a group's ``consolidated_metadata``). Any other extra
     field is one the reader does not recognize, which the spec admits only
-    as an extension object, ``{"name": ..., "configuration": ...}``, that
-    sets ``"must_understand": false``; every other unknown key is refused,
-    which also catches a misspelled field name. Accepted extra fields are
+    as an object that says ``"must_understand": false``, kept as written;
+    every other unknown key is refused, which also catches a misspelled
+    field name. Accepted extra fields are
     kept in the `extra_fields` mapping (see `ExtraFieldsBase`) and written
     back as top-level members wherever the document is written:
     ``model_dump``, ``model_dump_json``, ``update``, ``like``, ``to_zarr``
@@ -559,14 +556,13 @@ def _refused_extra_fields(
     An extra field whose key a definition in `scope` claims is one the reader
     recognizes: that definition judges it when the whole document is read, so
     it is skipped here. Every other extra field is one the reader does not
-    recognize, which the spec admits only as an extension object (a ``name``
-    that is an extension name, an optional ``configuration`` object, and no
-    other members) that explicitly sets ``"must_understand": false``: "An
-    implementation MUST fail to open Zarr groups or arrays if any metadata
-    fields are present which (a) the implementation does not recognize and (b)
-    are not explicitly set to ``"must_understand": false``." The envelope is
-    checked by the same rule `zarr-metadata` applies to every other extension
-    object.
+    recognize, which the spec admits only when it explicitly waives
+    understanding: "An implementation MUST fail to open Zarr groups or arrays
+    if any metadata fields are present which (a) the implementation does not
+    recognize and (b) are not explicitly set to ``"must_understand": false``."
+    A waived field is an object that says ``"must_understand": false``, kept
+    as written, whatever else it holds: the reading `zarr-metadata` gives the
+    rule, and the one its strategies draw.
     """
     problems: list[str] = []
     for key, value in extra_fields.items():
@@ -575,7 +571,7 @@ def _refused_extra_fields(
         if not isinstance(value, Mapping):
             problems.append(
                 f"{key}: not a field of this spec, and not an extra field the spec permits: "
-                'an extra field is an extension object with "must_understand": false, '
+                'an extra field is an object that says "must_understand": false, '
                 f"got {value!r}"
             )
             continue
@@ -584,10 +580,6 @@ def _refused_extra_fields(
                 f"{key}: no {kind.label} in the scope recognizes this field, and it does not "
                 'set "must_understand": false, so the spec requires a reader to refuse it'
             )
-            continue
-        for problem in envelope_problems(value, allow_must_understand_false=True):
-            loc = ".".join(str(part) for part in (key, *problem.loc))
-            problems.append(f"{loc}: {problem.message} (an extra field is an extension object)")
     return problems
 
 
@@ -605,6 +597,33 @@ def _unclaimed_extra_fields(
         for key in extra_fields
         if scope.claimant(kind, key) is None
     ]
+
+
+def canonical_envelope(declaration: object, *, bare_name: bool = False) -> object:
+    """
+    A declaration in the canonical envelope spelling, as `zarr-metadata`
+    writes it: a bare name becomes ``{"name": ...}``, an explicit
+    ``"must_understand": true`` is dropped (leaving it out means true), an
+    empty ``configuration`` is dropped, and the JSON arrays of a
+    configuration are tuples (`tuplify_json`), as a spec holds every other
+    sequence, so a document read from JSON compares equal to one built in
+    Python. With `bare_name`, for data types, an object left with nothing but
+    a name becomes that bare name, as core data types have been written since
+    Zarr v3.0. Anything else passes through for validation to refuse.
+    """
+    if isinstance(declaration, str):
+        return declaration if bare_name else {"name": declaration}
+    if not isinstance(declaration, Mapping):
+        return declaration
+    result = {
+        key: tuplify_json(value) if key == "configuration" else value
+        for key, value in declaration.items()
+        if not (key == "must_understand" and value is True)
+        and not (key == "configuration" and isinstance(value, Mapping) and not value)
+    }
+    if bare_name and set(result) == {"name"} and isinstance(result["name"], str):
+        return result["name"]
+    return result
 
 
 def reject_bare_codec(data: object) -> object:
@@ -631,8 +650,8 @@ class ArraySpecOverrides(TypedDict, total=False):
     """
 
     attributes: TBaseAttr
-    chunk_grid: RegularChunking
-    chunk_key_encoding: DefaultChunkKeyEncodingMetadata | V2ChunkKeyEncodingMetadata
+    chunk_grid: AnyNamedConfig
+    chunk_key_encoding: AnyNamedConfig
     fill_value: FillValue
     codecs: Sequence[CodecLike]
     storage_transformers: Sequence[AnyNamedConfig]
@@ -681,9 +700,12 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     data_type: str
         The data type of this array.
     chunk_grid: NamedConfig
-        A `NamedConfig` object defining the chunk shape of this array.
+        The chunk grid declaration: any chunk grid the scope claims, judged by
+        its definition when the document is validated (the core spec defines
+        the regular grid; `zarr-metadata` also defines the rectilinear one).
     chunk_key_encoding: NamedConfig
-        A `NamedConfig` object defining the chunk_key_encoding for the array.
+        The chunk key encoding declaration: any chunk key encoding the scope
+        claims, judged the same way.
     fill_value: FillValue
         The fill value for this array.
     codecs: Sequence[NamedConfig]
@@ -699,8 +721,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     attributes: TAttr = Field(default={}, validate_default=True)
     shape: tuple[int, ...]
     data_type: DTypeLike
-    chunk_grid: RegularChunkGridMetadata
-    chunk_key_encoding: DefaultChunkKeyEncodingMetadata | V2ChunkKeyEncodingMetadata
+    chunk_grid: AnyNamedConfig
+    chunk_key_encoding: AnyNamedConfig
     fill_value: Annotated[FillValue, BeforeValidator(canonicalize_fill_value)]
     codecs: CodecTuple
     storage_transformers: tuple[AnyNamedConfig, ...] = ()
@@ -708,56 +730,66 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
     @model_validator(mode="before")
     @classmethod
-    def _parse_data_type(cls, data: object, info: ValidationInfo) -> object:
+    def canonicalize_declarations(cls, data: object, info: ValidationInfo) -> object:
         """
-        Convert a numpy `data_type` declaration to its Zarr V3 form via
-        `parse_dtype_v3`, in the scope this validation reads in. A model
-        validator rather than field metadata so the class's `zarr_scope`
-        can serve as the scope when the validation context carries none
-        (a field validator cannot see the class).
-        """
-        if not isinstance(data, Mapping) or "data_type" not in data:
-            return data
-        return {
-            **data,
-            "data_type": parse_dtype_v3(data["data_type"], scope=cls._scope(info.context)),
-        }
+        Read the document's declarations in every envelope spelling the spec
+        allows, and normalize them to the canonical one, so a spec constructed
+        from any spelling compares equal to one constructed from another and
+        to what a store read gives back.
 
-    @model_validator(mode="before")
-    @classmethod
-    def canonicalize_codecs(cls, data: object) -> object:
+        The envelope rules follow `zarr-metadata`'s canonical form: a bare
+        name string is the object ``{"name": ...}``, except that a data type
+        with nothing to configure is written as its bare name; an explicit
+        ``"must_understand": true`` is dropped, since leaving it out means
+        true; an empty ``configuration`` mapping is dropped. A numpy
+        `data_type` is converted to its Zarr V3 form via `parse_dtype_v3`, in
+        the scope this validation reads in (a model validator rather than
+        field metadata so the class's `zarr_scope` can serve as the scope
+        when the validation context carries none). One rule of zarr-python's
+        is kept as well: the `bytes` codec's `endian` configuration, a no-op
+        for a single-byte data type, is dropped for those data types, inside
+        a sharding codec's inner pipeline too (same data type); a shard's
+        index codecs, which encode the uint64 index, keep their endianness.
+        (`zarr-metadata`'s canonical document model does not equate the
+        endian spellings; `==` on specs compares fields literally.)
         """
-        Normalize codec spellings the way zarr-python stores them, so a spec
-        constructed with either spelling compares equal — to one constructed
-        with the other, and to what `from_zarr` reads back. Two rules: an
-        empty `configuration` mapping is dropped from any codec, and the
-        `bytes` codec's `endian` configuration, a no-op for a single-byte
-        data type, is dropped for those data types. Both reach inside a
-        sharding codec's inner pipeline (same data type); its index codecs,
-        which encode the uint64 index, keep their endianness.
-        (`zarr-metadata`'s canonical document model already equates the
-        empty-configuration spellings, but not the endian ones; `==` on
-        specs compares fields literally, hence the normalization here.)
-        """
-        if not isinstance(data, Mapping) or "codecs" not in data:
+        if not isinstance(data, Mapping):
             return data
-        codecs = data["codecs"]
+        document = dict(data)
+        for field in ("chunk_grid", "chunk_key_encoding"):
+            if field in document:
+                document[field] = canonical_envelope(document[field])
+        transformers = document.get("storage_transformers")
+        if isinstance(transformers, Sequence) and not isinstance(transformers, str):
+            document["storage_transformers"] = tuple(
+                canonical_envelope(transformer) for transformer in transformers
+            )
+        if "data_type" in document:
+            document["data_type"] = parse_dtype_v3(
+                cast(
+                    "npt.DTypeLike | Mapping[str, object]",
+                    canonical_envelope(document["data_type"], bare_name=True),
+                ),
+                scope=cls._scope(info.context),
+            )
+        if "codecs" not in document:
+            return document
+        codecs = document["codecs"]
         if isinstance(codecs, (str, Mapping)) or not isinstance(codecs, Sequence):
             # a lone codec is refused by the field validator; leave it alone
-            return data
+            return document
         try:
-            parsed = parse_dtype_v3(data["data_type"]) if "data_type" in data else None
+            parsed = parse_dtype_v3(document["data_type"]) if "data_type" in document else None
         except (ValueError, TypeError):
             parsed = None
         drop_endian = parsed in _SINGLE_BYTE_DATA_TYPES
 
         def normalize(codec: object, *, drop_endian: bool) -> object:
+            codec = canonical_envelope(codec)
             if not isinstance(codec, Mapping):
                 return codec
             name = codec.get("name")
             config = codec.get("configuration")
-            if isinstance(config, Mapping) and not config:
-                return {key: value for key, value in codec.items() if key != "configuration"}
             if (
                 drop_endian
                 and name == "bytes"
@@ -780,10 +812,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
                 return {**codec, "configuration": new_config}
             return codec
 
-        return {
-            **data,
-            "codecs": tuple(normalize(codec, drop_endian=drop_endian) for codec in codecs),
-        }
+        document["codecs"] = tuple(normalize(codec, drop_endian=drop_endian) for codec in codecs)
+        return document
 
     @model_validator(mode="after")
     def validate_dimension_names(self) -> Self:

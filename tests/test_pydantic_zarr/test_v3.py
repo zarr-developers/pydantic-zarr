@@ -1459,7 +1459,7 @@ def test_from_shape_and_data_type_guessed_chunks() -> None:
     range, while a small array keeps its whole shape.
     """
     big: AnyArraySpec = ArraySpec.from_shape_and_data_type((10980, 10980), "uint16")
-    chunk_shape = big.chunk_grid["configuration"]["chunk_shape"]
+    chunk_shape = cast("tuple[int, ...]", big.chunk_grid["configuration"]["chunk_shape"])
     assert all(c <= s for c, s in zip(chunk_shape, big.shape, strict=True))
     nbytes = 2 * chunk_shape[0] * chunk_shape[1]
     assert 128 * 1024 <= nbytes <= 64 * 1024 * 1024
@@ -2021,3 +2021,100 @@ def test_from_stored_metadata_json_parent_not_group(parent: str) -> None:
         member = "x/z"
     with pytest.raises(ValueError, match=f"documents at '{member}', but no group's"):
         GroupSpec.from_stored_metadata_json(stored)
+
+
+_CANONICAL_DOCUMENT: dict[str, Any] = {
+    "shape": (5,),
+    "data_type": "uint8",
+    "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (5,)}},
+    "chunk_key_encoding": {"name": "default"},
+    "fill_value": 0,
+    "codecs": ({"name": "bytes"},),
+}
+"""An array document in the canonical envelope spelling of every declaration."""
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        {"chunk_key_encoding": "default"},
+        {"codecs": ("bytes",)},
+        {"data_type": {"name": "uint8"}},
+        {"data_type": {"name": "uint8", "must_understand": True}},
+        {"chunk_grid": {"name": "regular", "configuration": {"chunk_shape": [5]}}},
+        {
+            "chunk_grid": {
+                "name": "regular",
+                "configuration": {"chunk_shape": (5,)},
+                "must_understand": True,
+            }
+        },
+        {"codecs": ({"name": "bytes", "configuration": {}, "must_understand": True},)},
+        {"storage_transformers": ()},
+    ],
+    ids=str,
+)
+def test_envelope_spellings_read_as_canonical(spelling: dict[str, Any]) -> None:
+    """
+    A declaration in any envelope spelling the spec allows (a bare name, an
+    explicit `"must_understand": true`, an empty `configuration`, a data type
+    object with nothing to configure, JSON arrays as lists) reads as the spec
+    its canonical spelling reads as.
+    """
+    canonical: AnyArraySpec = ArraySpec.model_validate(_CANONICAL_DOCUMENT)
+    assert ArraySpec.model_validate({**_CANONICAL_DOCUMENT, **spelling}) == canonical
+
+
+def test_declaration_must_understand_false_refused() -> None:
+    """
+    A declaration that says `"must_understand": false` is refused, as
+    zarr-metadata refuses it: a reader may not ignore a codec, a chunk grid, a
+    chunk key encoding or a data type.
+    """
+    with pytest.raises(ValidationError, match="must_understand"):
+        ArraySpec.model_validate(
+            {**_CANONICAL_DOCUMENT, "codecs": ({"name": "bytes", "must_understand": False},)}
+        )
+
+
+_RECTILINEAR: dict[str, Any] = {
+    "name": "rectilinear",
+    "configuration": {"kind": "inline", "chunk_shapes": [[2, 3]]},
+}
+
+
+def test_chunk_grid_any_the_scope_claims() -> None:
+    """
+    `chunk_grid` takes any chunk grid declaration, judged by its definition in
+    the scope: the rectilinear grid zarr-metadata defines reads in the default
+    scope, with its configuration kept, as JSON arrays become tuples.
+    """
+    spec: AnyArraySpec = ArraySpec.model_validate(
+        {**_CANONICAL_DOCUMENT, "chunk_grid": _RECTILINEAR}
+    )
+    assert spec.chunk_grid == {
+        "name": "rectilinear",
+        "configuration": {"kind": "inline", "chunk_shapes": ((2, 3),)},
+    }
+    assert ArraySpec.model_validate(spec.to_metadata_json()) == spec
+
+
+def test_chunk_grid_unclaimed_refused_by_strict_class() -> None:
+    """
+    A chunk grid nothing in the scope claims is left unjudged, which a class
+    with `zarr_scope_strict` set refuses: the core scope defines the regular
+    grid alone.
+    """
+    with pytest.raises(ValidationError, match="'rectilinear' names no chunk grid in the scope"):
+        _StrictCoreArraySpec.model_validate({**_CANONICAL_DOCUMENT, "chunk_grid": _RECTILINEAR})
+
+
+def test_chunk_grid_invalid_configuration_refused() -> None:
+    """A chunk grid whose configuration its definition refuses is refused."""
+    with pytest.raises(ValidationError, match="chunk_grid"):
+        ArraySpec.model_validate(
+            {
+                **_CANONICAL_DOCUMENT,
+                "chunk_grid": {"name": "rectilinear", "configuration": {"kind": "inline"}},
+            }
+        )

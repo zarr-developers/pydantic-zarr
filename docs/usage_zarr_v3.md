@@ -112,6 +112,38 @@ print(group.to_metadata_json())
 #> {'zarr_format': 3, 'node_type': 'group', 'attributes': {'foo': 42}}
 ```
 
+### Envelope spellings
+
+A document's declarations (the data type, chunk grid, chunk key encoding,
+codecs and storage transformers) are read in every envelope spelling the spec
+allows, and held in the canonical one `zarr-metadata` writes: a bare name reads
+as `{"name": ...}`, an explicit `"must_understand": true` and an empty
+`configuration` are dropped, a data type object with nothing to configure reads
+as its bare name, and the JSON arrays of a configuration become tuples. So specs
+built from different spellings of one document compare equal. A declaration
+that says `"must_understand": false` is refused, as `zarr-metadata` refuses it: a
+reader may not ignore a codec or a chunk grid. `chunk_grid` and
+`chunk_key_encoding` take any declaration the scope claims; the core spec
+defines the regular grid, and `zarr-metadata` also defines the rectilinear one.
+
+```python
+from pydantic_zarr.v3 import ArraySpec
+
+canonical = ArraySpec.from_shape_and_data_type((5,), "uint8")
+spelled = ArraySpec.model_validate(
+    {
+        "shape": [5],
+        "data_type": {"name": "uint8", "must_understand": True},
+        "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": [5]}},
+        "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
+        "fill_value": 0,
+        "codecs": ["bytes"],
+    }
+)
+print(spelled == canonical)
+#> True
+```
+
 ## Stored metadata documents
 
 `to_stored_metadata_json` returns a node's metadata the way a Zarr store holds
@@ -317,9 +349,10 @@ the document, to arrays and groups alike:
   and judged by that definition. `CORE` (and so `CORE_AND_EXTENSIONS`) claims
   a group's `consolidated_metadata`, which `zarr-python` writes and which the
   spec allows on groups "for historical reasons".
-- Any other extra field is unrecognized, and accepted only as an extension
-  object — a `name` that is an extension name, an optional `configuration`
-  object, no other members — that sets `"must_understand": false`.
+- Any other extra field is unrecognized, and accepted only when it is an
+  object that says `"must_understand": false`. It is kept as written, whatever
+  else it holds: that is the reading `zarr-metadata` gives the rule, and what
+  its strategies draw.
 
 Every other unknown key is refused, which is also what a misspelled field name
 meets. Accepted extra fields are kept in the `extra_fields` mapping and written
@@ -380,7 +413,7 @@ except ValidationError as e:
     print(e.errors()[0]["msg"])
     """
     Value error, Invalid Zarr V3 array metadata:
-    dimensions_names: not a field of this spec, and not an extra field the spec permits: an extra field is an extension object with "must_understand": false, got ('y', 'x')
+    dimensions_names: not a field of this spec, and not an extra field the spec permits: an extra field is an object that says "must_understand": false, got ('y', 'x')
     """
 ```
 

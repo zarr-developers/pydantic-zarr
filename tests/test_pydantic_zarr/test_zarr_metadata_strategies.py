@@ -8,7 +8,7 @@ is the space the readers in `pydantic_zarr.v3` claim to accept, so the
 property is agreement: what ``zarr-metadata`` draws as valid, a spec reads,
 and what the spec writes back, ``zarr-metadata`` reads without a problem.
 
-Where the two disagree today, a strict expected failure records it, so a
+Where the two still disagree, a strict expected failure records it, so a
 fix on either side turns the test into a failure that says to drop the
 mark. The strategies ship with the ``zarr-metadata`` release after 0.6.0,
 behind its ``testing`` extra; this module is skipped without them.
@@ -68,30 +68,26 @@ def _without(*names: str) -> dict[Any, Any]:
     }
 
 
-def _has_extra_fields(document: Mapping[str, object], fields: frozenset[str]) -> bool:
-    return not set(document) <= fields
-
-
-# the documents the specs read today: the regular chunk grid (the model admits
-# no other), no `cast_value` codec (see `test_cast_value_keeps_bytes_endian`),
-# and no extra fields (see `test_waived_extra_fields_without_name`)
-READABLE_ARRAYS = zs.array_documents(
-    spellings="canonical", strategies=_without("rectilinear", "cast_value")
-).filter(lambda document: not _has_extra_fields(document, ARRAY_FIELDS))
-READABLE_GROUPS = zs.group_documents().filter(
-    lambda document: not _has_extra_fields(document, GROUP_FIELDS)
-)
+# every document the strategies draw, in every envelope spelling the spec
+# allows, except one with a `cast_value` codec (see
+# `test_cast_value_keeps_bytes_endian`)
+READABLE_ARRAYS = zs.array_documents(strategies=_without("cast_value"))
 
 
 @PROPERTY_SETTINGS
 @given(document=READABLE_ARRAYS)
 def test_array_documents_agree(document: Mapping[str, Any]) -> None:
     """
-    Every array document zarr-metadata draws, `ArraySpec` reads; the
-    document it writes back, zarr-metadata reads without a problem, as the
-    same array; and the spec round-trips through its own document.
+    Every array document zarr-metadata draws, in any envelope spelling the
+    spec allows, `ArraySpec` reads, as the same spec it reads from the
+    document's canonical spelling; the document it writes back, zarr-metadata
+    reads without a problem, as the same array; and the spec round-trips
+    through its own document.
     """
     spec: ArraySpec[Any] = ArraySpec.model_validate(document)
+    drawn = read_array_metadata_v3(document)
+    assert drawn.metadata is not None
+    assert ArraySpec.model_validate(drawn.metadata.to_json()) == spec
     written = spec.to_metadata_json()
     reading = read_array_metadata_v3(written)
     assert reading.problems == ()
@@ -99,29 +95,30 @@ def test_array_documents_agree(document: Mapping[str, Any]) -> None:
     assert reading.metadata.shape == tuple(document["shape"])
     assert ArraySpec.model_validate(written) == spec
     assert spec.like(spec)
+    # extra fields the spec does not define are kept as drawn
+    for key in set(document) - ARRAY_FIELDS:
+        assert key in spec.extra_fields
 
 
 @PROPERTY_SETTINGS
-@given(document=READABLE_GROUPS)
+@given(document=zs.group_documents())
 def test_group_documents_agree(document: Mapping[str, Any]) -> None:
     """
     Every group document zarr-metadata draws, `BaseGroupSpec` reads, keeping
-    the attributes as drawn; the document it writes back, zarr-metadata reads
-    without a problem; and the spec round-trips through its own document.
+    the attributes and the extra fields as drawn; the document it writes back,
+    zarr-metadata reads without a problem; and the spec round-trips through
+    its own document.
     """
     spec: BaseGroupSpec[Any] = BaseGroupSpec.model_validate(document)
     assert spec.attributes == document.get("attributes", {})
+    assert set(spec.extra_fields) == set(document) - GROUP_FIELDS
     written = spec.to_metadata_json()
     assert read_group_metadata_v3(written).problems == ()
     assert BaseGroupSpec.model_validate(written) == spec
 
 
 @PROPERTY_SETTINGS
-@given(
-    document=zs.consolidated_group_documents(
-        spellings="canonical", strategies=_without("rectilinear", "cast_value")
-    ).filter(lambda document: not _has_extra_fields(document, GROUP_FIELDS))
-)
+@given(document=zs.consolidated_group_documents(strategies=_without("cast_value")))
 def test_consolidated_group_documents_kept_as_written(document: Mapping[str, Any]) -> None:
     """
     A group document carrying ``consolidated_metadata`` reads as a
@@ -142,70 +139,17 @@ def test_consolidated_group_documents_kept_as_written(document: Mapping[str, Any
 
 @pytest.mark.xfail(
     strict=True,
-    reason="ArraySpec types chunk_grid as the regular grid alone; zarr-metadata also "
-    "defines the rectilinear grid, which the default scope claims",
+    reason="canonicalize_declarations drops the bytes codec's endian for a single-byte array "
+    "data type, though a cast_value codec before it hands bytes a multi-byte chunk",
 )
 @PROPERTY_SETTINGS
 @given(
-    document=zs.array_documents(
-        spellings="canonical",
-        strategies={
-            definition: strategy
-            for definition, strategy in _without("cast_value").items()
-            if definition.name != "regular"
-        },
-    ).filter(lambda document: not _has_extra_fields(document, ARRAY_FIELDS))
-)
-def test_rectilinear_chunk_grid_documents_read(document: Mapping[str, Any]) -> None:
-    """An array document with a rectilinear chunk grid reads as an `ArraySpec`."""
-    ArraySpec.model_validate(document)
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="canonicalize_codecs drops the bytes codec's endian for a single-byte array data "
-    "type, though a cast_value codec before it hands bytes a multi-byte chunk",
-)
-@PROPERTY_SETTINGS
-@given(
-    document=zs.array_documents(spellings="canonical", strategies=_without("rectilinear")).filter(
-        lambda document: not _has_extra_fields(document, ARRAY_FIELDS)
-        and any(codec.get("name") == "cast_value" for codec in document["codecs"])
+    document=zs.array_documents(spellings="canonical").filter(
+        lambda document: any(codec.get("name") == "cast_value" for codec in document["codecs"])
     )
 )
 def test_cast_value_keeps_bytes_endian(document: Mapping[str, Any]) -> None:
     """An array document whose pipeline casts the chunk reads as an `ArraySpec`."""
-    ArraySpec.model_validate(document)
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="the specs require a waived extra field to be an extension object with a name "
-    "and only a configuration beside must_understand; zarr-metadata waives any object "
-    'that says "must_understand": false',
-)
-@PROPERTY_SETTINGS
-@given(
-    document=zs.group_documents().filter(lambda document: _has_extra_fields(document, GROUP_FIELDS))
-)
-def test_waived_extra_fields_without_name(document: Mapping[str, Any]) -> None:
-    """A group document whose extra fields zarr-metadata waives reads as a `BaseGroupSpec`."""
-    BaseGroupSpec.model_validate(document)
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="the specs read declarations in their canonical envelope only: not as a bare name "
-    'string, and not with a "must_understand": true member',
-)
-@PROPERTY_SETTINGS
-@given(
-    document=zs.array_documents(
-        spellings="all", strategies=_without("rectilinear", "cast_value")
-    ).filter(lambda document: not _has_extra_fields(document, ARRAY_FIELDS))
-)
-def test_every_declaration_spelling_reads(document: Mapping[str, Any]) -> None:
-    """An array document in any envelope spelling the spec allows reads as an `ArraySpec`."""
     ArraySpec.model_validate(document)
 
 
