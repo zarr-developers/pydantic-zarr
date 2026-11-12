@@ -41,9 +41,11 @@ from zarr_metadata import (
     ZARR_V3_ARRAY_METADATA_STORE_KEY,
     ZARR_V3_CONSOLIDATED_METADATA_KEY,
     ZARR_V3_GROUP_METADATA_STORE_KEY,
+    DefaultChunkKeyEncodingMetadata,
     JSONValue,
     MetadataValidationError,
     RegularChunkGridMetadata,
+    V2ChunkKeyEncodingMetadata,
     ZarrV3ArrayMetadataJSON,
     ZarrV3ExtensionField,
     ZarrV3GroupMetadataJSON,
@@ -217,6 +219,22 @@ DefaultChunkKeyEncodingConfig = DefaultChunkKeyEncodingConfiguration
 DefaultChunkKeyEncoding = DefaultChunkKeyEncodingObject
 V2ChunkKeyEncodingConfig = V2ChunkKeyEncodingConfiguration
 V2ChunkKeyEncoding = V2ChunkKeyEncodingObject
+
+ChunkGridLike = RegularChunkGridMetadata | AnyNamedConfig
+"""
+A chunk grid declaration: the regular grid the core spec defines, typed
+exactly, or any other grid as a named configuration, judged by its definition
+in the scope when the document is validated. The exact member keeps a typed
+regular-grid object (such as `zarr_metadata`'s `RegularChunkGridObject`)
+assignable here, since TypedDict keys are invariant.
+"""
+
+ChunkKeyEncodingLike = DefaultChunkKeyEncodingMetadata | V2ChunkKeyEncodingMetadata | AnyNamedConfig
+"""
+A chunk key encoding declaration: the two the core spec defines, typed
+exactly (as an object or a bare name), or any other as a named configuration,
+judged by its definition in the scope when the document is validated.
+"""
 
 
 class NodeSpec(ExtraFieldsBase):
@@ -650,8 +668,8 @@ class ArraySpecOverrides(TypedDict, total=False):
     """
 
     attributes: TBaseAttr
-    chunk_grid: AnyNamedConfig
-    chunk_key_encoding: AnyNamedConfig
+    chunk_grid: ChunkGridLike
+    chunk_key_encoding: ChunkKeyEncodingLike
     fill_value: FillValue
     codecs: Sequence[CodecLike]
     storage_transformers: Sequence[AnyNamedConfig]
@@ -721,8 +739,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     attributes: TAttr = Field(default={}, validate_default=True)
     shape: tuple[int, ...]
     data_type: DTypeLike
-    chunk_grid: AnyNamedConfig
-    chunk_key_encoding: AnyNamedConfig
+    chunk_grid: ChunkGridLike
+    chunk_key_encoding: ChunkKeyEncodingLike
     fill_value: Annotated[FillValue, BeforeValidator(canonicalize_fill_value)]
     codecs: CodecTuple
     storage_transformers: tuple[AnyNamedConfig, ...] = ()
