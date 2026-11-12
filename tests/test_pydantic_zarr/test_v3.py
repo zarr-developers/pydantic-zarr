@@ -12,8 +12,8 @@ import pytest
 from packaging.version import Version
 from pydantic import BaseModel, Field, ValidationError
 from zarr_metadata.model import ZarrV3ArrayMetadata, ZarrV3GroupMetadata
-from zarr_metadata.v3.definition import CORE
 
+from pydantic_zarr._metadata import CORE_AND_EXTENSIONS_CONTEXT, CORE_CONTEXT
 from pydantic_zarr.core import tuplify_json
 from pydantic_zarr.v3 import (
     _SINGLE_BYTE_DATA_TYPES,
@@ -741,7 +741,6 @@ def test_metadata_document_validation_scope_from_context() -> None:
     that claims a codec name, an invalid configuration is refused; in one that
     does not, the same codec is left unjudged and the spec is accepted.
     """
-    from zarr_metadata.v3.definition import CORE, CORE_AND_EXTENSIONS
 
     from pydantic_zarr._metadata import CONTEXT_KEY
 
@@ -756,14 +755,14 @@ def test_metadata_document_validation_scope_from_context() -> None:
             )
         ),
     }
-    # CORE does not claim scale_offset, so the field is unjudged and the spec valid
-    spec: AnyArraySpec = ArraySpec.model_validate(document, context=CORE)
+    # CORE_CONTEXT does not claim scale_offset, so the field is unjudged and the spec valid
+    spec: AnyArraySpec = ArraySpec.model_validate(document, context=CORE_CONTEXT)
     assert spec.codecs[-1]["name"] == "scale_offset"  # type: ignore[index]
     # the same scope travels under CONTEXT_KEY in a mapping context
-    assert ArraySpec.model_validate(document, context={CONTEXT_KEY: CORE}) == spec
-    # CORE_AND_EXTENSIONS claims it and refuses the configuration
+    assert ArraySpec.model_validate(document, context={CONTEXT_KEY: CORE_CONTEXT}) == spec
+    # CORE_AND_EXTENSIONS_CONTEXT claims it and refuses the configuration
     with pytest.raises(ValidationError, match="scale_offset|bogus"):
-        ArraySpec.model_validate(document, context={CONTEXT_KEY: CORE_AND_EXTENSIONS})
+        ArraySpec.model_validate(document, context={CONTEXT_KEY: CORE_AND_EXTENSIONS_CONTEXT})
 
 
 def test_metadata_document_validation_context_key_type_error() -> None:
@@ -779,7 +778,7 @@ def _scale_offset_kwargs() -> dict[str, Any]:
     """
     Kwargs whose validity depends on the scope: the `scale_offset` codec is
     claimed by the zarr-extensions scope, where its unknown configuration key
-    is refused; a scope that does not claim it (`CORE`) leaves it unjudged.
+    is refused; a scope that does not claim it (`CORE_CONTEXT`) leaves it unjudged.
     """
     return _v3_array_kwargs(
         codecs=(
@@ -799,10 +798,8 @@ def test_zarr_scope_class_default() -> None:
     """
     from collections.abc import Mapping
 
-    from zarr_metadata.v3.definition import CORE
-
     class CoreArraySpec(ArraySpec):
-        zarr_scope = CORE
+        zarr_scope = CORE_CONTEXT
 
     spec = CoreArraySpec(**_scale_offset_kwargs())
     assert spec.codecs[-1]["name"] == "scale_offset"  # type: ignore[index]
@@ -822,14 +819,13 @@ def test_zarr_scope_class_default() -> None:
 
 def test_zarr_scope_context_overrides_classvar() -> None:
     """An explicit validation context wins over the class's `zarr_scope`."""
-    from zarr_metadata.v3.definition import CORE, CORE_AND_EXTENSIONS
 
     class CoreArraySpec(ArraySpec):
-        zarr_scope = CORE
+        zarr_scope = CORE_CONTEXT
 
     document = {"zarr_format": 3, "node_type": "array", **_scale_offset_kwargs()}
     with pytest.raises(ValidationError, match="scale_offset|bogus"):
-        CoreArraySpec.model_validate(document, context=CORE_AND_EXTENSIONS)
+        CoreArraySpec.model_validate(document, context=CORE_AND_EXTENSIONS_CONTEXT)
 
 
 def test_zarr_scope_absent_falls_back_to_default_scope() -> None:
@@ -856,7 +852,7 @@ def test_zarr_scope_reaches_dtype_guard() -> None:
 class _StrictCoreArraySpec(ArraySpec):
     """Accepts exactly the documents built from names the core scope claims."""
 
-    zarr_scope = CORE
+    zarr_scope = CORE_CONTEXT
     zarr_scope_strict = True
 
 
@@ -871,13 +867,12 @@ _ZSTD_KWARGS = _v3_array_kwargs(
 
 def test_zarr_scope_strict_core_conformance() -> None:
     """
-    `zarr_scope = CORE` plus `zarr_scope_strict` is a core-conformance
+    `zarr_scope = CORE_CONTEXT` plus `zarr_scope_strict` is a core-conformance
     contract: a document of core names passes, through derived operations
     (sharding, whose inner and index pipelines the strict check walks) too,
     and an explicit validation context re-scopes the conformance check, so
     the same class judges strictly against the context's scope instead.
     """
-    from zarr_metadata.v3.definition import CORE_AND_EXTENSIONS
 
     spec = _StrictCoreArraySpec(**_v3_array_kwargs())
     sharded = spec.with_sharding_codec((2, 2))
@@ -885,7 +880,7 @@ def test_zarr_scope_strict_core_conformance() -> None:
     # zstd is claimed by the extensions scope, so under that context the
     # strict check passes where the class's own scope refuses (test below)
     document = {"zarr_format": 3, "node_type": "array", **_ZSTD_KWARGS}
-    accepted = _StrictCoreArraySpec.model_validate(document, context=CORE_AND_EXTENSIONS)
+    accepted = _StrictCoreArraySpec.model_validate(document, context=CORE_AND_EXTENSIONS_CONTEXT)
     assert accepted.codecs[-1]["name"] == "zstd"  # type: ignore[index]
 
 
@@ -1396,6 +1391,74 @@ def test_bytes_codec_canonicalized_for_single_byte_dtypes() -> None:
     )
 
 
+_ENDIAN_BYTES: CodecLike = {"name": "bytes", "configuration": {"endian": "little"}}
+_BARE_BYTES: CodecLike = {"name": "bytes"}
+_CAST_FLOAT16: CodecLike = {"name": "cast_value", "configuration": {"data_type": "float16"}}
+_CAST_UINT8: CodecLike = {"name": "cast_value", "configuration": {"data_type": "uint8"}}
+
+
+def _shard(*codecs: CodecLike) -> CodecLike:
+    return {
+        "name": "sharding_indexed",
+        "configuration": {
+            "chunk_shape": (2,),
+            "codecs": codecs,
+            "index_codecs": (_ENDIAN_BYTES, {"name": "crc32c"}),
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("data_type", "codecs", "expected"),
+    [
+        pytest.param("int8", (_ENDIAN_BYTES,), (_BARE_BYTES,), id="no-cast"),
+        pytest.param(
+            "int8", (_CAST_FLOAT16, _ENDIAN_BYTES), (_CAST_FLOAT16, _ENDIAN_BYTES), id="cast-wider"
+        ),
+        pytest.param(
+            "int16", (_CAST_UINT8, _ENDIAN_BYTES), (_CAST_UINT8, _BARE_BYTES), id="cast-narrower"
+        ),
+        pytest.param(
+            "int8",
+            (_CAST_UINT8, {"name": "transpose", "configuration": {"order": (0,)}}, _ENDIAN_BYTES),
+            (_CAST_UINT8, {"name": "transpose", "configuration": {"order": (0,)}}, _BARE_BYTES),
+            id="cast-then-other",
+        ),
+        pytest.param("int8", (_shard(_ENDIAN_BYTES),), (_shard(_BARE_BYTES),), id="shard-no-cast"),
+        pytest.param(
+            "int8",
+            (_CAST_FLOAT16, _shard(_ENDIAN_BYTES)),
+            (_CAST_FLOAT16, _shard(_ENDIAN_BYTES)),
+            id="cast-before-shard",
+        ),
+        pytest.param(
+            "int8",
+            (_shard(_CAST_FLOAT16, _ENDIAN_BYTES),),
+            (_shard(_CAST_FLOAT16, _ENDIAN_BYTES),),
+            id="cast-inside-shard",
+        ),
+        pytest.param(
+            "int16",
+            (_shard(_CAST_UINT8, _ENDIAN_BYTES),),
+            (_shard(_CAST_UINT8, _BARE_BYTES),),
+            id="cast-narrower-inside-shard",
+        ),
+    ],
+)
+def test_bytes_codec_endian_follows_cast_value(
+    data_type: str, codecs: tuple[CodecLike, ...], expected: tuple[CodecLike, ...]
+) -> None:
+    """
+    The `bytes` codec's `endian` is dropped only when the chunk it receives
+    is single-byte: a `cast_value` codec before it, in the outer pipeline or
+    inside a shard, changes that chunk's data type from the array's. The
+    index codecs of a shard, which encode uint64, always keep theirs.
+    """
+    spec: AnyArraySpec = ArraySpec.from_shape_and_data_type((4,), data_type, codecs=codecs)
+    assert spec.codecs == expected
+    assert ArraySpec.model_validate(spec.model_dump()).codecs == expected
+
+
 def test_resolve_path() -> None:
     """
     `resolve_path` (and `group[path]`) returns the node at a `/`-separated
@@ -1464,7 +1527,7 @@ def test_from_shape_and_data_type_guessed_chunks() -> None:
     range, while a small array keeps its whole shape.
     """
     big: AnyArraySpec = ArraySpec.from_shape_and_data_type((10980, 10980), "uint16")
-    chunk_shape = big.chunk_grid["configuration"]["chunk_shape"]
+    chunk_shape = cast("tuple[int, ...]", big.chunk_grid["configuration"]["chunk_shape"])
     assert all(c <= s for c, s in zip(chunk_shape, big.shape, strict=True))
     nbytes = 2 * chunk_shape[0] * chunk_shape[1]
     assert 128 * 1024 <= nbytes <= 64 * 1024 * 1024
@@ -2026,3 +2089,100 @@ def test_from_stored_metadata_json_parent_not_group(parent: str) -> None:
         member = "x/z"
     with pytest.raises(ValueError, match=f"documents at '{member}', but no group's"):
         GroupSpec.from_stored_metadata_json(stored)
+
+
+_CANONICAL_DOCUMENT: dict[str, Any] = {
+    "shape": (5,),
+    "data_type": "uint8",
+    "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (5,)}},
+    "chunk_key_encoding": {"name": "default"},
+    "fill_value": 0,
+    "codecs": ({"name": "bytes"},),
+}
+"""An array document in the canonical envelope spelling of every declaration."""
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        {"chunk_key_encoding": "default"},
+        {"codecs": ("bytes",)},
+        {"data_type": {"name": "uint8"}},
+        {"data_type": {"name": "uint8", "must_understand": True}},
+        {"chunk_grid": {"name": "regular", "configuration": {"chunk_shape": [5]}}},
+        {
+            "chunk_grid": {
+                "name": "regular",
+                "configuration": {"chunk_shape": (5,)},
+                "must_understand": True,
+            }
+        },
+        {"codecs": ({"name": "bytes", "configuration": {}, "must_understand": True},)},
+        {"storage_transformers": ()},
+    ],
+    ids=str,
+)
+def test_envelope_spellings_read_as_canonical(spelling: dict[str, Any]) -> None:
+    """
+    A declaration in any envelope spelling the spec allows (a bare name, an
+    explicit `"must_understand": true`, an empty `configuration`, a data type
+    object with nothing to configure, JSON arrays as lists) reads as the spec
+    its canonical spelling reads as.
+    """
+    canonical: AnyArraySpec = ArraySpec.model_validate(_CANONICAL_DOCUMENT)
+    assert ArraySpec.model_validate({**_CANONICAL_DOCUMENT, **spelling}) == canonical
+
+
+def test_declaration_must_understand_false_refused() -> None:
+    """
+    A declaration that says `"must_understand": false` is refused, as
+    zarr-metadata refuses it: a reader may not ignore a codec, a chunk grid, a
+    chunk key encoding or a data type.
+    """
+    with pytest.raises(ValidationError, match="must_understand"):
+        ArraySpec.model_validate(
+            {**_CANONICAL_DOCUMENT, "codecs": ({"name": "bytes", "must_understand": False},)}
+        )
+
+
+_RECTILINEAR: dict[str, Any] = {
+    "name": "rectilinear",
+    "configuration": {"kind": "inline", "chunk_shapes": [[2, 3]]},
+}
+
+
+def test_chunk_grid_any_the_scope_claims() -> None:
+    """
+    `chunk_grid` takes any chunk grid declaration, judged by its definition in
+    the scope: the rectilinear grid zarr-metadata defines reads in the default
+    scope, with its configuration kept, as JSON arrays become tuples.
+    """
+    spec: AnyArraySpec = ArraySpec.model_validate(
+        {**_CANONICAL_DOCUMENT, "chunk_grid": _RECTILINEAR}
+    )
+    assert spec.chunk_grid == {
+        "name": "rectilinear",
+        "configuration": {"kind": "inline", "chunk_shapes": ((2, 3),)},
+    }
+    assert ArraySpec.model_validate(spec.to_metadata_json()) == spec
+
+
+def test_chunk_grid_unclaimed_refused_by_strict_class() -> None:
+    """
+    A chunk grid nothing in the scope claims is left unjudged, which a class
+    with `zarr_scope_strict` set refuses: the core scope defines the regular
+    grid alone.
+    """
+    with pytest.raises(ValidationError, match="'rectilinear' names no chunk grid in the scope"):
+        _StrictCoreArraySpec.model_validate({**_CANONICAL_DOCUMENT, "chunk_grid": _RECTILINEAR})
+
+
+def test_chunk_grid_invalid_configuration_refused() -> None:
+    """A chunk grid whose configuration its definition refuses is refused."""
+    with pytest.raises(ValidationError, match="chunk_grid"):
+        ArraySpec.model_validate(
+            {
+                **_CANONICAL_DOCUMENT,
+                "chunk_grid": {"name": "rectilinear", "configuration": {"kind": "inline"}},
+            }
+        )

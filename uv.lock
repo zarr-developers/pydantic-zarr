@@ -2101,6 +2101,7 @@ dev = [
     { name = "pytest-cov" },
     { name = "pytest-examples" },
     { name = "xarray" },
+    { name = "zarr-metadata", extra = ["testing"] },
 ]
 docs = [
     { name = "coverage" },
@@ -2117,6 +2118,7 @@ docs = [
     { name = "towncrier" },
     { name = "xarray" },
     { name = "zarr" },
+    { name = "zarr-metadata", extra = ["testing"] },
 ]
 test = [
     { name = "coverage" },
@@ -2127,6 +2129,7 @@ test = [
     { name = "pytest-cov" },
     { name = "pytest-examples" },
     { name = "xarray" },
+    { name = "zarr-metadata", extra = ["testing"] },
 ]
 test-base = [
     { name = "coverage" },
@@ -2136,6 +2139,7 @@ test-base = [
     { name = "pytest-cov" },
     { name = "pytest-examples" },
     { name = "xarray" },
+    { name = "zarr-metadata", extra = ["testing"] },
 ]
 
 [package.metadata]
@@ -2159,6 +2163,7 @@ dev = [
     { name = "pytest-cov" },
     { name = "pytest-examples" },
     { name = "xarray", specifier = ">=2025.10.0" },
+    { name = "zarr-metadata", extras = ["testing"], specifier = ">=0.7" },
 ]
 docs = [
     { name = "coverage" },
@@ -2175,6 +2180,7 @@ docs = [
     { name = "towncrier" },
     { name = "xarray", specifier = ">=2025.10.0" },
     { name = "zarr", specifier = ">=3.1.0" },
+    { name = "zarr-metadata", extras = ["testing"], specifier = ">=0.7" },
 ]
 test = [
     { name = "coverage" },
@@ -2185,6 +2191,7 @@ test = [
     { name = "pytest-cov" },
     { name = "pytest-examples" },
     { name = "xarray", specifier = ">=2025.10.0" },
+    { name = "zarr-metadata", extras = ["testing"], specifier = ">=0.7" },
 ]
 test-base = [
     { name = "coverage" },
@@ -2194,6 +2201,7 @@ test-base = [
     { name = "pytest-cov" },
     { name = "pytest-examples" },
     { name = "xarray", specifier = ">=2025.10.0" },
+    { name = "zarr-metadata", extras = ["testing"], specifier = ">=0.7" },
 ]
 
 [[package]]
@@ -2952,15 +2960,20 @@ wheels = [
 
 [[package]]
 name = "zarr-metadata"
-version = "0.6.0"
+version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-types" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5f/a3/4526430215c09ed45d47886a7c8b439218622a4f05e6ce1198147961ca64/zarr_metadata-0.6.0.tar.gz", hash = "sha256:4462dc91cdb8c19c370bcd548096125591359579586f42de789dc495a33119d0", size = 519797, upload-time = "2026-10-26T13:55:27.086Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ba/62/641fb60dab0fb301ddca303dc2ec2ef12e3c0dbd5323f52d4ffa4b39b928/zarr_metadata-0.7.0.tar.gz", hash = "sha256:26966fce40d8562569d21eeb0f18cf4db28932be94b1772eafc8c4f0b7e110f1", size = 591476, upload-time = "2026-11-12T08:29:13.588Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/20/b2/c70c528d438bbf656873e8da51949c50efff866b85c6ee3335ba81bf1142/zarr_metadata-0.6.0-py3-none-any.whl", hash = "sha256:ab1f9f33d18094ffac020c2c975aa32f8737f36a0dfa8543b6c6d717a3469d1e", size = 274628, upload-time = "2026-10-26T13:55:25.798Z" },
+    { url = "https://files.pythonhosted.org/packages/78/c5/18ac4c94bf10d737cedfb2703983b06801dca12a73e2c5f5894fdc0873a6/zarr_metadata-0.7.0-py3-none-any.whl", hash = "sha256:5034d0c40e35e7cf56f585e73096ecd86a62853e1be56e96278739049c3f9b8e", size = 330557, upload-time = "2026-11-12T08:29:12.09Z" },
+]
+
+[package.optional-dependencies]
+testing = [
+    { name = "hypothesis" },
 ]
 
 [[package]]

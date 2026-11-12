@@ -20,6 +20,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
+import zarr_metadata.v3.definition as _definition
 from zarr_metadata.v3.definition import ZarrV3Context
 
 if TYPE_CHECKING:
@@ -33,13 +34,43 @@ context serves models holding field types from either library.
 """
 
 
+def _scope(name: str, legacy_name: str) -> ZarrV3Context:
+    """
+    The scope ``zarr_metadata.v3.definition`` exports as `name`, or as
+    `legacy_name` in a ``zarr-metadata`` that predates the rename.
+
+    ``zarr-metadata`` 0.7 renames its scopes to say they are contexts
+    (``CORE`` -> ``CORE_CONTEXT``) and keeps the old names as deprecated
+    aliases; 0.6 has only the old names. Reading the new name first, through
+    ``getattr``, takes neither the deprecation warning on 0.7 nor an import
+    error on 0.6.
+
+    TODO: import the scopes by name and drop this once the floor is
+    ``zarr-metadata>=0.7``.
+    """
+    scope = getattr(_definition, name, None)
+    if scope is None:
+        scope = getattr(_definition, legacy_name)
+    if not isinstance(scope, ZarrV3Context):
+        msg = f"zarr_metadata.v3.definition.{name} is not a ZarrV3Context: {scope!r}"
+        raise TypeError(msg)
+    return scope
+
+
+CORE_CONTEXT = _scope("CORE_CONTEXT", "CORE")
+"""The scope of what the Zarr V3 core specification defines."""
+
+CORE_AND_EXTENSIONS_CONTEXT = _scope("CORE_AND_EXTENSIONS_CONTEXT", "CORE_AND_EXTENSIONS")
+"""The core scope plus what ``zarr-extensions`` registers: the readers' default scope."""
+
+
 def scope_from_context(context: object) -> ZarrV3Context | None:
     """
     Resolve the Zarr V3 scope a pydantic validation context carries.
 
     The context may be a ``ZarrV3Context`` itself, or a mapping holding one
     under ``CONTEXT_KEY``. Returns ``None`` when the context carries no scope,
-    which readers take as their default scope (``CORE_AND_EXTENSIONS``).
+    which readers take as their default scope (``CORE_AND_EXTENSIONS_CONTEXT``).
 
     Raises
     ------

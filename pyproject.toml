@@ -47,6 +47,11 @@ zarr = ["zarr>=3.0.0"]
 test-base = [
     "coverage",
     "hypothesis>=6.100",
+    # zarr-metadata's own strategies draw the documents the property tests
+    # check the readers against (tests/test_pydantic_zarr/test_zarr_metadata_strategies.py);
+    # 0.7 is the first release with them. The docs build, which includes
+    # this group, also uses the scope names 0.7 introduced.
+    "zarr-metadata[testing]>=0.7",
     "pytest==9.1.0",
     "pytest-cov",
     "pytest-examples",

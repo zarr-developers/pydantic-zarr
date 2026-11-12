@@ -2,9 +2,9 @@
 Extra fields: metadata document members the Zarr spec does not define.
 
 Zarr V3 admits an extra field a reader recognizes (one a definition in the
-scope claims, such as a group's `consolidated_metadata` in `CORE`), and one
-it does not recognize only as an extension object that sets
-`"must_understand": false`. Zarr V2 admits any other key in array metadata
+scope claims, such as a group's `consolidated_metadata` in `CORE_CONTEXT`), and one
+it does not recognize only when it is an object that says
+`"must_understand": false`, kept as written. Zarr V2 admits any other key in array metadata
 (it "SHOULD be ignored") and none in group metadata.
 """
 
@@ -17,14 +17,10 @@ import pytest
 from packaging.version import Version
 from pydantic import ValidationError
 from typing_extensions import TypedDict
-from zarr_metadata.v3.definition import (
-    CORE,
-    CORE_AND_EXTENSIONS,
-    ArrayExtraFieldDefinition,
-    ZarrV3Context,
-)
+from zarr_metadata.v3.definition import ArrayExtraFieldDefinition, ZarrV3Context
 
 from pydantic_zarr import v2, v3
+from pydantic_zarr._metadata import CORE_AND_EXTENSIONS_CONTEXT, CORE_CONTEXT
 from pydantic_zarr.core import tuplify_json
 
 from .conftest import ZARR_PYTHON_VERSION
@@ -50,8 +46,12 @@ class _AcmeConfiguration(TypedDict, closed=True):
     must_understand: NotRequired[bool]
 
 
-ACME_SCOPE = CORE.update(
-    array_extra_fields=[ArrayExtraFieldDefinition(name="acme", configuration=_AcmeConfiguration)]
+ACME_SCOPE = CORE_CONTEXT.union(
+    ZarrV3Context(
+        array_extra_fields=[
+            ArrayExtraFieldDefinition(name="acme", configuration=_AcmeConfiguration)
+        ]
+    )
 )
 """The core scope, plus a definition claiming an array extra field `acme`."""
 
@@ -65,7 +65,7 @@ def _group_document(**extra: object) -> dict[str, Any]:
 
 
 class _StrictCoreGroupSpec(v3.GroupSpec):
-    zarr_scope = CORE
+    zarr_scope = CORE_CONTEXT
     zarr_scope_strict = True
 
 
@@ -78,12 +78,12 @@ class _AcmeArraySpec(v3.ArraySpec):
     [
         # zarr-python's consolidated metadata, claimed by the core scope
         (v3.GroupSpec, _group_document(consolidated_metadata=CONSOLIDATED), None),
-        (v3.BaseGroupSpec, _group_document(consolidated_metadata=CONSOLIDATED), CORE),
+        (v3.BaseGroupSpec, _group_document(consolidated_metadata=CONSOLIDATED), CORE_CONTEXT),
         # a strict class accepts it too, since its scope claims the key
         (_StrictCoreGroupSpec, _group_document(consolidated_metadata=CONSOLIDATED), None),
         # an unrecognized extension object that waives understanding
         (v3.GroupSpec, _group_document(notes=WAIVED), None),
-        (v3.ArraySpec, _array_document(notes=WAIVED), CORE_AND_EXTENSIONS),
+        (v3.ArraySpec, _array_document(notes=WAIVED), CORE_AND_EXTENSIONS_CONTEXT),
         (v3.ArraySpec, _array_document(notes={"name": "acme", "must_understand": False}), None),
         # an extra field the scope claims, which then need not waive understanding
         (_AcmeArraySpec, _array_document(acme={"level": 1, "must_understand": True}), None),
@@ -199,32 +199,39 @@ def test_extra_field_not_an_object(value: object) -> None:
 
 
 @pytest.mark.parametrize(
-    ("value", "problem"),
+    "value",
     [
-        ({"must_understand": False}, r"notes\.name: missing required key"),
-        ({"name": "Not/A/Name", "must_understand": False}, r"notes\.name: expected an extension"),
-        ({"name": "acme", "configuration": 1, "must_understand": False}, r"notes\.configuration"),
-        ({"name": "acme", "kind": "x", "must_understand": False}, r"notes\.kind: unexpected key"),
+        {"must_understand": False},
+        {"name": "Not/A/Name", "must_understand": False},
+        {"name": "acme", "configuration": 1, "must_understand": False},
+        {"name": "acme", "kind": "x", "must_understand": False},
+        {"must_understand": False, "": [None, 1]},
     ],
     ids=str,
 )
-def test_extra_field_not_an_extension_object(value: dict[str, Any], problem: str) -> None:
+def test_waived_extra_field_kept_as_written(value: dict[str, Any]) -> None:
     """
-    An unrecognized extra field that waives understanding is still refused
-    unless it is an extension object: a `name` that is an extension name, an
-    optional `configuration` object, and no other members.
+    An unrecognized extra field that waives understanding is accepted whatever
+    else it holds, and kept as written: it need not be an extension object
+    with a name, as zarr-metadata reads the rule and as its strategies draw.
     """
-    with pytest.raises(ValidationError, match=problem):
-        v3.GroupSpec.model_validate(_group_document(notes=value))
+    for cls in (v3.GroupSpec, v3.ArraySpec):
+        document = (
+            _group_document(notes=value) if cls is v3.GroupSpec else _array_document(notes=value)
+        )
+        spec = cls.model_validate(document)
+        assert spec.extra_fields == {"notes": tuplify_json(value)}
+        assert spec.model_dump()["notes"] == tuplify_json(value)
 
 
 def test_consolidated_metadata_on_array() -> None:
     """
-    `consolidated_metadata` is exempt from the extension-object rules on a
-    group only: on an array no definition claims it, and it has no `name`.
+    On an array no definition claims `consolidated_metadata`, so it is an
+    unrecognized extra field: waived, since it says `"must_understand": false`,
+    and kept as written rather than judged as a record of the hierarchy.
     """
-    with pytest.raises(ValidationError, match=r"consolidated_metadata\.name: missing"):
-        v3.ArraySpec.model_validate(_array_document(consolidated_metadata=CONSOLIDATED))
+    spec = v3.ArraySpec.model_validate(_array_document(consolidated_metadata=CONSOLIDATED))
+    assert spec.extra_fields == {"consolidated_metadata": CONSOLIDATED}
 
 
 @pytest.mark.parametrize(
@@ -248,15 +255,16 @@ def test_strict_refuses_unclaimed_extra_field() -> None:
         _StrictCoreGroupSpec.model_validate(_group_document(notes=WAIVED))
 
 
-def test_empty_scope_refuses_consolidated_metadata() -> None:
+def test_empty_scope_waives_consolidated_metadata() -> None:
     """
     In a scope that does not claim `consolidated_metadata`, it is an
-    unrecognized extra field, and without a `name` not an extension object.
+    unrecognized extra field that waives understanding: kept as written, not
+    judged as a record of the hierarchy.
     """
-    with pytest.raises(ValidationError, match=r"consolidated_metadata\.name"):
-        v3.GroupSpec.model_validate(
-            _group_document(consolidated_metadata=CONSOLIDATED), context=ZarrV3Context()
-        )
+    spec = v3.GroupSpec.model_validate(
+        _group_document(consolidated_metadata=CONSOLIDATED), context=ZarrV3Context()
+    )
+    assert spec.extra_fields == {"consolidated_metadata": CONSOLIDATED}
 
 
 def test_extra_field_given_twice() -> None:
