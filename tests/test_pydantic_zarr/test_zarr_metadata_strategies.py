@@ -8,10 +8,8 @@ is the space the readers in `pydantic_zarr.v3` claim to accept, so the
 property is agreement: what ``zarr-metadata`` draws as valid, a spec reads,
 and what the spec writes back, ``zarr-metadata`` reads without a problem.
 
-Where the two still disagree, a strict expected failure records it, so a
-fix on either side turns the test into a failure that says to drop the
-mark. The strategies ship with the ``zarr-metadata`` release after 0.6.0,
-behind its ``testing`` extra; this module is skipped without them.
+The strategies ship with ``zarr-metadata`` 0.7.0 and later, behind its
+``testing`` extra; this module is skipped without them.
 """
 
 from __future__ import annotations
@@ -26,7 +24,7 @@ from pydantic_zarr.v3 import ArraySpec, BaseGroupSpec
 
 zs = pytest.importorskip(
     "zarr_metadata.testing.strategies",
-    reason="zarr-metadata's testing extra (its next release) provides the strategies",
+    reason="zarr-metadata's testing extra (0.7.0 and later) provides the strategies",
 )
 
 from zarr_metadata.model import read_array_metadata_v3, read_group_metadata_v3  # noqa: E402
@@ -59,19 +57,9 @@ ARRAY_FIELDS = frozenset(
 GROUP_FIELDS = frozenset({"zarr_format", "node_type", "attributes", "consolidated_metadata"})
 
 
-def _without(*names: str) -> dict[Any, Any]:
-    """`DEFAULT_STRATEGIES` without the definitions called `names` (a `Strategies` mapping)."""
-    return {
-        definition: strategy
-        for definition, strategy in zs.DEFAULT_STRATEGIES.items()
-        if definition.name not in names
-    }
-
-
-# every document the strategies draw, in every envelope spelling the spec
-# allows, except one with a `cast_value` codec (see
-# `test_cast_value_keeps_bytes_endian`)
-READABLE_ARRAYS = zs.array_documents(strategies=_without("cast_value"))
+# every document the strategies draw, from every definition they hold, in
+# every envelope spelling the spec allows
+READABLE_ARRAYS = zs.array_documents()
 
 
 @PROPERTY_SETTINGS
@@ -118,7 +106,7 @@ def test_group_documents_agree(document: Mapping[str, Any]) -> None:
 
 
 @PROPERTY_SETTINGS
-@given(document=zs.consolidated_group_documents(strategies=_without("cast_value")))
+@given(document=zs.consolidated_group_documents())
 def test_consolidated_group_documents_kept_as_written(document: Mapping[str, Any]) -> None:
     """
     A group document carrying ``consolidated_metadata`` reads as a
@@ -132,49 +120,26 @@ def test_consolidated_group_documents_kept_as_written(document: Mapping[str, Any
     assert written["consolidated_metadata"] == document["consolidated_metadata"]
 
 
-# ---------------------------------------------------------------------------
-# Disagreements between zarr-metadata's strategies and the specs, each kept as
-# a strict expected failure until one side changes.
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="canonicalize_declarations drops the bytes codec's endian for a single-byte array "
-    "data type, though a cast_value codec before it hands bytes a multi-byte chunk",
-)
-@PROPERTY_SETTINGS
-@given(
-    document=zs.array_documents(spellings="canonical").filter(
-        lambda document: any(codec.get("name") == "cast_value" for codec in document["codecs"])
-    )
-)
-def test_cast_value_keeps_bytes_endian(document: Mapping[str, Any]) -> None:
-    """An array document whose pipeline casts the chunk reads as an `ArraySpec`."""
-    ArraySpec.model_validate(document)
-
-
-_TIME_TYPES = frozenset({"numpy.datetime64", "numpy.timedelta64"})
-
-
 @PROPERTY_SETTINGS
 @given(data=st.data())
 def test_fill_value_spellings_alike(data: st.DataObject) -> None:
     """
     Two spellings zarr-metadata draws for one data type's fill value, placed
     in the same array document, give specs that are alike exactly when
-    zarr-metadata reads them as the same value.
+    zarr-metadata reads the two documents as equal models. Model equality is
+    zarr-metadata's judgment of sameness: a fill value's spellings (a float
+    and its hex bits, `"NaN"` and its canonical bits, `"NaT"` and the int64
+    minimum) compare equal, where the values as written do not.
     """
     from zarr_metadata.definition._definition import kind_of
     from zarr_metadata.v3.definition import DataTypeDefinition
 
-    # structs and the variable-length types have no fill value of their own to
-    # respell; the numpy time types disagree, see `test_numpy_time_nat_alike`
+    # structs and the variable-length types have no fill value of their own to respell
     definitions = [
         definition
         for definition in zs.DEFAULT_STRATEGIES
         if (kind := kind_of(definition)) is not None
         and issubclass(kind, DataTypeDefinition)
-        and definition.name not in _TIME_TYPES
         and definition.name not in {"struct", "variable_length_utf8", "variable_length_bytes"}
     ]
     definition = data.draw(st.sampled_from(definitions))
@@ -184,48 +149,62 @@ def test_fill_value_spellings_alike(data: st.DataObject) -> None:
     data_type: object = (
         definition.name
         if configuration == {}
-        else {
-            "name": definition.name,
-            "configuration": configuration,
-        }
+        else {"name": definition.name, "configuration": configuration}
     )
     base = data.draw(READABLE_ARRAYS)
     documents = [{**base, "data_type": data_type, "fill_value": fill} for fill in (first, second)]
-    readings = [read_array_metadata_v3(document) for document in documents]
-    first, second = readings[0].metadata, readings[1].metadata
-    if first is None or second is None:
+    models = [read_array_metadata_v3(document).metadata for document in documents]
+    if models[0] is None or models[1] is None:
         # the base document's codecs were drawn for another data type
         return
     specs = [ArraySpec.model_validate(document) for document in documents]
-    same_value = first.fill_value == second.fill_value
-    assert specs[0].like(specs[1]) == same_value
+    assert specs[0].like(specs[1]) == (models[0] == models[1])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason='zarr-metadata reads a numpy time type\'s "NaT" and the int64 minimum as two fill '
-    "values; ArraySpec.like equates them, as numpy stores NaT as that integer",
+@pytest.mark.parametrize(
+    ("data_type", "fills", "alike"),
+    [
+        ("float16", (0.0, "0x0000"), True),
+        ("float16", (0.0, -0.0), False),
+        ("float16", ("NaN", "0x7e00"), True),
+        ("float16", ("NaN", "0x7e01"), False),
+        ("float32", ("Infinity", "0x7f800000"), True),
+        ("complex64", ((0.0, "NaN"), (0.0, "0x7fc00000")), True),
+        (
+            {"name": "numpy.datetime64", "configuration": {"unit": "s", "scale_factor": 1}},
+            ("NaT", -(2**63)),
+            True,
+        ),
+        (
+            {"name": "numpy.timedelta64", "configuration": {"unit": "s", "scale_factor": 1}},
+            ("NaT", -(2**63)),
+            True,
+        ),
+    ],
+    ids=str,
 )
-@pytest.mark.parametrize("name", sorted(_TIME_TYPES))
-def test_numpy_time_nat_alike(name: str) -> None:
+def test_fill_value_spellings_alike_examples(
+    data_type: object, fills: tuple[object, object], *, alike: bool
+) -> None:
     """
-    Specs whose fill values are `"NaT"` and the int64 minimum are alike exactly
-    when zarr-metadata reads them as the same value.
+    The spellings `test_fill_value_spellings_alike` may not draw together:
+    signed zeros and NaN payloads differ, a value and its hex bits agree, and
+    a numpy time type's `"NaT"` is the int64 minimum, as numpy stores it. Each
+    pair is alike exactly when zarr-metadata reads the documents as equal models.
     """
     base = {
         "zarr_format": 3,
         "node_type": "array",
         "shape": (),
-        "data_type": {"name": name, "configuration": {"unit": "s", "scale_factor": 1}},
+        "data_type": data_type,
         "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": ()}},
         "chunk_key_encoding": {"name": "default"},
         "codecs": ({"name": "bytes", "configuration": {"endian": "little"}},),
     }
-    documents = [{**base, "fill_value": fill} for fill in ("NaT", -(2**63))]
-    readings = [read_array_metadata_v3(document) for document in documents]
-    first, second = readings[0].metadata, readings[1].metadata
-    assert first is not None
-    assert second is not None
+    documents = [{**base, "fill_value": fill} for fill in fills]
+    models = [read_array_metadata_v3(document).metadata for document in documents]
+    assert models[0] is not None
+    assert models[1] is not None
+    assert (models[0] == models[1]) is alike
     specs = [ArraySpec.model_validate(document) for document in documents]
-    same_value = first.fill_value == second.fill_value
-    assert specs[0].like(specs[1]) == same_value
+    assert specs[0].like(specs[1]) is alike
