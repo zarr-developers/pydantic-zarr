@@ -249,8 +249,8 @@ class NodeSpec(ExtraFieldsBase):
         a class a conformance contract: ``zarr_scope = CORE_CONTEXT`` plus strict
         accepts exactly the documents built from names the core spec
         defines. The variable-length data types and their codecs are
-        extensions (and zarr-python's legacy spellings are claimed by no
-        scope), so a strict core class refuses them. Enforced by
+        registered extensions, not core, so a strict core class refuses
+        them. Enforced by
         `ArraySpec`'s document validation; a group document has no
         extension points, and its members are validated as their own
         classes. Strict validation also refuses every extra field whose key

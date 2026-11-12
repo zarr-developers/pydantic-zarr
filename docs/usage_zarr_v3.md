@@ -224,7 +224,7 @@ definition that claims its name in a *scope* (a `zarr_metadata`
 `ZarrV3Context`). A scope is a vocabulary, not a whitelist: a name nothing in
 the scope claims is left unjudged, so unknown extensions pass, while a claimed
 name with an invalid configuration is refused. The default scope is
-`zarr-metadata`'s `CORE_AND_EXTENSIONS`.
+`zarr-metadata`'s `CORE_AND_EXTENSIONS_CONTEXT`.
 
 ### Choosing the scope per call
 
@@ -232,12 +232,12 @@ The scope travels through pydantic's validation context: pass a
 `ZarrV3Context` as `context` to `model_validate` (or a mapping holding one
 under `pydantic_zarr.v3.CONTEXT_KEY`, when the context dict is shared with
 other keys). The `scale_offset` codec below is claimed by the default scope,
-which refuses its unknown configuration key; the `CORE` scope does not claim
+which refuses its unknown configuration key; the `CORE_CONTEXT` scope does not claim
 it, so there the same document passes with the codec unjudged:
 
 ```python
 from pydantic import ValidationError
-from zarr_metadata.v3.definition import CORE
+from zarr_metadata.v3.definition import CORE_CONTEXT
 
 from pydantic_zarr.v3 import ArraySpec
 
@@ -258,7 +258,7 @@ except ValidationError as e:
     print(e.error_count())
     #> 1
 
-spec = ArraySpec.model_validate(document, context=CORE)
+spec = ArraySpec.model_validate(document, context=CORE_CONTEXT)
 print(spec.codecs[-1]["name"])
 #> scale_offset
 ```
@@ -283,12 +283,12 @@ more. A class that also sets `zarr_scope_strict` flips that: every
 extension-point name in the document — a sharding codec's inner and index
 pipelines included — and every [extra field](#extra-fields) key must be
 claimed in the operative scope, so
-`zarr_scope = CORE` plus strict accepts exactly the documents built from
+`zarr_scope = CORE_CONTEXT` plus strict accepts exactly the documents built from
 names the core spec defines:
 
 ```python
 from pydantic import ValidationError
-from zarr_metadata.v3.definition import CORE
+from zarr_metadata.v3.definition import CORE_CONTEXT
 
 from pydantic_zarr.v3 import ArraySpec
 
@@ -296,7 +296,7 @@ from pydantic_zarr.v3 import ArraySpec
 class CoreArraySpec(ArraySpec):
     """Validates in the core scope, and refuses names it does not claim."""
 
-    zarr_scope = CORE
+    zarr_scope = CORE_CONTEXT
     zarr_scope_strict = True
 
 
@@ -330,9 +330,11 @@ print(sharded.codecs[0]["name"])
 ```
 
 The variable-length data types and their codecs (`string`, `bytes`,
-`vlen-utf8`, `vlen-bytes`) are extensions that no current scope claims, as are
-the legacy spellings `zarr-python` has stored (`"str"`,
-`"variable_length_bytes"`), so a strict class refuses variable-length arrays.
+`vlen-utf8`, `vlen-bytes`) are registered extensions, not part of the core spec,
+so a strict core class refuses variable-length arrays. `CORE_AND_EXTENSIONS_CONTEXT`
+claims them, and `ZARR_PYTHON_CONTEXT` also claims the `"variable_length_bytes"`
+spelling `zarr-python` has stored. No scope claims `"str"`, the spelling
+`zarr-python` 3.0 stored for the string data type.
 
 ## Extra fields
 
@@ -346,7 +348,7 @@ implementation does not recognize and (b) are not explicitly set to
 the document, to arrays and groups alike:
 
 - An extra field whose key a definition in the scope claims is recognized,
-  and judged by that definition. `CORE` (and so `CORE_AND_EXTENSIONS`) claims
+  and judged by that definition. `CORE_CONTEXT` (and so `CORE_AND_EXTENSIONS_CONTEXT`) claims
   a group's `consolidated_metadata`, which `zarr-python` writes and which the
   spec allows on groups "for historical reasons".
 - Any other extra field is unrecognized, and accepted only when it is an
