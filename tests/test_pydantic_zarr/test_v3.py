@@ -1391,6 +1391,74 @@ def test_bytes_codec_canonicalized_for_single_byte_dtypes() -> None:
     )
 
 
+_ENDIAN_BYTES: CodecLike = {"name": "bytes", "configuration": {"endian": "little"}}
+_BARE_BYTES: CodecLike = {"name": "bytes"}
+_CAST_FLOAT16: CodecLike = {"name": "cast_value", "configuration": {"data_type": "float16"}}
+_CAST_UINT8: CodecLike = {"name": "cast_value", "configuration": {"data_type": "uint8"}}
+
+
+def _shard(*codecs: CodecLike) -> CodecLike:
+    return {
+        "name": "sharding_indexed",
+        "configuration": {
+            "chunk_shape": (2,),
+            "codecs": codecs,
+            "index_codecs": (_ENDIAN_BYTES, {"name": "crc32c"}),
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("data_type", "codecs", "expected"),
+    [
+        pytest.param("int8", (_ENDIAN_BYTES,), (_BARE_BYTES,), id="no-cast"),
+        pytest.param(
+            "int8", (_CAST_FLOAT16, _ENDIAN_BYTES), (_CAST_FLOAT16, _ENDIAN_BYTES), id="cast-wider"
+        ),
+        pytest.param(
+            "int16", (_CAST_UINT8, _ENDIAN_BYTES), (_CAST_UINT8, _BARE_BYTES), id="cast-narrower"
+        ),
+        pytest.param(
+            "int8",
+            (_CAST_UINT8, {"name": "transpose", "configuration": {"order": (0,)}}, _ENDIAN_BYTES),
+            (_CAST_UINT8, {"name": "transpose", "configuration": {"order": (0,)}}, _BARE_BYTES),
+            id="cast-then-other",
+        ),
+        pytest.param("int8", (_shard(_ENDIAN_BYTES),), (_shard(_BARE_BYTES),), id="shard-no-cast"),
+        pytest.param(
+            "int8",
+            (_CAST_FLOAT16, _shard(_ENDIAN_BYTES)),
+            (_CAST_FLOAT16, _shard(_ENDIAN_BYTES)),
+            id="cast-before-shard",
+        ),
+        pytest.param(
+            "int8",
+            (_shard(_CAST_FLOAT16, _ENDIAN_BYTES),),
+            (_shard(_CAST_FLOAT16, _ENDIAN_BYTES),),
+            id="cast-inside-shard",
+        ),
+        pytest.param(
+            "int16",
+            (_shard(_CAST_UINT8, _ENDIAN_BYTES),),
+            (_shard(_CAST_UINT8, _BARE_BYTES),),
+            id="cast-narrower-inside-shard",
+        ),
+    ],
+)
+def test_bytes_codec_endian_follows_cast_value(
+    data_type: str, codecs: tuple[CodecLike, ...], expected: tuple[CodecLike, ...]
+) -> None:
+    """
+    The `bytes` codec's `endian` is dropped only when the chunk it receives
+    is single-byte: a `cast_value` codec before it, in the outer pipeline or
+    inside a shard, changes that chunk's data type from the array's. The
+    index codecs of a shard, which encode uint64, always keep theirs.
+    """
+    spec: AnyArraySpec = ArraySpec.from_shape_and_data_type((4,), data_type, codecs=codecs)
+    assert spec.codecs == expected
+    assert ArraySpec.model_validate(spec.model_dump()).codecs == expected
+
+
 def test_resolve_path() -> None:
     """
     `resolve_path` (and `group[path]`) returns the node at a `/`-separated
