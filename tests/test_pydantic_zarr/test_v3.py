@@ -2028,6 +2028,18 @@ def test_create_default_factory_shape_grid_missing() -> None:
     assert missing == {"chunk_grid"}
 
 
+def test_create_default_factory_fill_extension_codecs_missing() -> None:
+    """
+    A fill value left to its default factory does not feed the derivation, so
+    for a data type the scope derives no fill value for, the codecs are
+    reported missing.
+    """
+    with pytest.raises(ValidationError) as excinfo:
+        _FactoryFillArraySpec.create_default(shape=(4,), data_type="some_extension_dtype")
+    missing = {err["loc"][0] for err in excinfo.value.errors() if err["type"] == "missing"}
+    assert missing == {"codecs"}
+
+
 @pytest.mark.parametrize(
     ("cls", "fields", "unguessable"),
     [
