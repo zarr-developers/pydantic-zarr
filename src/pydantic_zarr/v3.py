@@ -1159,7 +1159,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         not given are derived from it. Fields a subclass adds take their own
         defaults, and so does a field whose default factory reads other fields;
         nothing is derived from such a field, so when it is the shape or the
-        data type, the fields that depend on it have to be given.
+        data type, the fields that depend on it have to be given, and
+        `chunk_grid="auto"`, which guesses from both, is refused.
         A field the class requires and the
         data cannot provide (an attributes model with required keys, say) has
         to be passed, as it does to the constructor. A subclass whose
@@ -1209,6 +1210,14 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         if "chunk_key_encoding" not in factory_fields:
             document.setdefault("chunk_key_encoding", _DEFAULT_CHUNK_KEY_ENCODING)
         if chunk_grid == "auto":
+            unguessable = sorted(factory_fields & {"shape", "data_type"})
+            if unguessable:
+                msg = (
+                    'chunk_grid="auto" guesses a chunk shape from the shape and the data '
+                    f"type, but {' and '.join(unguessable)} is left to {cls.__name__}'s "
+                    "default factory and has no value yet: give it, or give chunk_grid."
+                )
+                raise ValueError(msg)
             document["chunk_grid"] = _guessed_chunk_grid(
                 tuple(cast("Sequence[int]", document.get("shape", ()))),
                 document.get("data_type", "uint8"),

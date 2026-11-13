@@ -1827,6 +1827,20 @@ class _FactoryFillArraySpec(ArraySpec):
     )
 
 
+class _FactoryDataTypeArraySpec(ArraySpec):
+    """A data type default whose factory reads the validated shape."""
+
+    data_type: str = Field(
+        default_factory=lambda data: "float64" if len(data["shape"]) > 1 else "uint8"
+    )
+
+
+class _FactoryShapeArraySpec(ArraySpec):
+    """A shape default whose factory reads the validated attributes."""
+
+    shape: tuple[int, ...] = Field(default_factory=lambda data: (data["attributes"]["size"],))
+
+
 @pytest.mark.parametrize(
     ("cls", "fields", "expected"),
     [
@@ -1891,6 +1905,31 @@ class _FactoryFillArraySpec(ArraySpec):
             {"shape": (4, 4), "data_type": "uint8"},
             {"chunk_key_encoding": {"name": "v2"}},
         ),
+        (
+            _FactoryDataTypeArraySpec,
+            {
+                "shape": (2, 2),
+                "fill_value": "NaN",
+                "codecs": ({"name": "bytes", "configuration": {"endian": "big"}},),
+            },
+            {
+                "data_type": "float64",
+                "fill_value": "NaN",
+                "codecs": ({"name": "bytes", "configuration": {"endian": "big"}},),
+            },
+        ),
+        (
+            _FactoryShapeArraySpec,
+            {
+                "attributes": {"size": 6},
+                "data_type": "uint8",
+                "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (3,)}},
+            },
+            {
+                "shape": (6,),
+                "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (3,)}},
+            },
+        ),
     ],
     ids=[
         "pinned-fill",
@@ -1904,6 +1943,8 @@ class _FactoryFillArraySpec(ArraySpec):
         "factory-float",
         "factory-int",
         "factory-encoding",
+        "factory-data-type",
+        "factory-shape",
     ],
 )
 def test_create_default_starts_from_class_defaults(
@@ -1949,6 +1990,46 @@ def test_create_default_invalid_shape_named() -> None:
     """An invalid shape is reported as itself, though nothing can be derived from it."""
     with pytest.raises(ValidationError, match="shape: expected non-negative integers"):
         ArraySpec.create_default(shape=(-1,), data_type="uint16")
+
+
+def test_create_default_factory_data_type_dependents_missing() -> None:
+    """
+    Nothing is derived from a data type left to its default factory, so its
+    fill value and codecs are reported missing rather than taken from `uint8`.
+    """
+    with pytest.raises(ValidationError) as excinfo:
+        _FactoryDataTypeArraySpec.create_default(shape=(2, 2))
+    missing = {err["loc"][0] for err in excinfo.value.errors() if err["type"] == "missing"}
+    assert missing == {"fill_value", "codecs"}
+
+
+def test_create_default_factory_shape_grid_missing() -> None:
+    """
+    Nothing is derived from a shape left to its default factory, so its chunk
+    grid is reported missing rather than built for a scalar.
+    """
+    with pytest.raises(ValidationError) as excinfo:
+        _FactoryShapeArraySpec.create_default(attributes={"size": 6}, data_type="uint8")
+    missing = {err["loc"][0] for err in excinfo.value.errors() if err["type"] == "missing"}
+    assert missing == {"chunk_grid"}
+
+
+@pytest.mark.parametrize(
+    ("cls", "fields", "unguessable"),
+    [
+        (_FactoryDataTypeArraySpec, {"shape": (2, 2)}, "data_type"),
+        (_FactoryShapeArraySpec, {"attributes": {"size": 6}, "data_type": "uint8"}, "shape"),
+    ],
+)
+def test_create_default_auto_grid_from_factory_rejected(
+    cls: type[AnyArraySpec], fields: dict[str, Any], unguessable: str
+) -> None:
+    """
+    `chunk_grid="auto"` guesses from the shape and the data type, so it is
+    refused when either is left to a default factory.
+    """
+    with pytest.raises(ValueError, match=f"{unguessable} is left to {cls.__name__}"):
+        cls.create_default(chunk_grid="auto", **fields)
 
 
 def test_create_default_required_field_missing() -> None:
