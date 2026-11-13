@@ -67,8 +67,9 @@ GeoZarr has no single canonical writer to compare against, so the script
 checks the model against the nearest reference for this layer: xarray writing
 the equivalent CF dataset (one resolution dataset with `grid_mapping` /
 `spatial_ref` and 1-D `x`/`y` coordinates — the CF layer, not the full
-Sentinel-2 product tree). The reference dataset and the model go to two
-separate stores, and every `zarr.json` is compared as parsed JSON: same
+Sentinel-2 product tree). xarray writes the reference dataset to a store,
+and every `zarr.json` it wrote is compared, as parsed JSON, with the documents
+the model holds (`to_stored_metadata_json`), with no second store: same
 documents, same keys, same values. The model is told two things the reference
 writer chose: its codecs, and the `NaN` fill value xarray writes for the float
 coordinates, where the default `create_default` derives for float64 is `0.0`.
