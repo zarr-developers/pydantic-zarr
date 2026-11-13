@@ -1175,8 +1175,9 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         fit together, what each derives alone is still derived. A data type
         nothing in the scope derives a fill value for (an extension data type,
         or a spelling only another scope claims) needs `fill_value` given; its
-        codecs are then derived. A fill value left to a default factory is not
-        given in this sense, so such a data type then needs `codecs` given too.
+        codecs are then derived. A fill value left to a default factory that
+        reads other fields is not given in this sense, so for such a data type
+        pass `fill_value` or give `codecs`.
         A data type name that is not a Zarr V3 name but that numpy reads
         as some other type (`"i8"`, `"float"`) is refused as a likely mistake,
         with the V3 spelling suggested.
