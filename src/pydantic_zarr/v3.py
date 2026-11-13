@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import functools
 import json
 import sys
 from collections.abc import Mapping, Sequence
@@ -71,6 +72,7 @@ from zarr_metadata.v3.definition import (
     DataTypeDefinition,
     GroupExtraFieldDefinition,
     StorageTransformerDefinition,
+    storage_of,
 )
 
 from pydantic_zarr._metadata import CONTEXT_KEY as CONTEXT_KEY
@@ -420,7 +422,7 @@ def parse_dtype_v3(
             # name, passed through for document validation to judge in scope
             return dtype
         try:
-            suggestion = parse_dtype_v3(as_numpy)
+            suggestion = parse_dtype_v3(as_numpy, scope=scope)
         except ValueError:
             msg = (
                 f"Data type {dtype!r} names no data type in the scope, and numpy reads it "
@@ -440,13 +442,20 @@ def parse_dtype_v3(
         # raise ValueError so pydantic reports this as a validation error
         # instead of letting numpy's TypeError escape the validator
         raise ValueError(f"Unsupported dtype: {dtype!r}") from e
-    if isinstance(parsed, np.dtypes.StrDType):
+    # a zero-length string or bytes type (numpy's bare `str`, `"U"`, `"S"`) has
+    # no Zarr V3 form, and neither has a structured or subarray void type
+    if isinstance(parsed, np.dtypes.StrDType) and parsed.itemsize > 0:
         return {"name": "fixed_length_utf32", "configuration": {"length_bytes": parsed.itemsize}}
-    if isinstance(parsed, np.dtypes.BytesDType):
+    if isinstance(parsed, np.dtypes.BytesDType) and parsed.itemsize > 0:
         return {"name": "null_terminated_bytes", "configuration": {"length_bytes": parsed.itemsize}}
     if isinstance(parsed, np.dtypes.StringDType):
         return "string"
-    if isinstance(parsed, np.dtypes.VoidDType) and parsed.fields is None and parsed.itemsize > 0:
+    if (
+        isinstance(parsed, np.dtypes.VoidDType)
+        and parsed.fields is None
+        and parsed.subdtype is None
+        and parsed.itemsize > 0
+    ):
         scope_actual = CORE_AND_EXTENSIONS_CONTEXT if scope is None else scope
         if scope_actual.claimant(DataTypeDefinition, "raw_bytes") is not None:
             return {"name": "raw_bytes", "configuration": {"length_bytes": parsed.itemsize}}
@@ -511,8 +520,9 @@ def _numpy_dtype_from_v3(data_type: str | Mapping[str, object]) -> np.dtype[Any]
     """
     if isinstance(data_type, str):
         # the core spec's raw types (`r8`, `r16`, ...) are numpy's void types
-        if data_type[:1] == "r" and data_type[1:].isdigit():
-            bits = int(data_type[1:])
+        digits = data_type[1:]
+        if data_type[:1] == "r" and digits.isascii() and digits.isdigit():
+            bits = int(digits)
             return np.dtype(f"V{bits // 8}") if bits > 0 and bits % 8 == 0 else None
         try:
             candidate = np.dtype(data_type)
@@ -529,7 +539,7 @@ def _numpy_dtype_from_v3(data_type: str | Mapping[str, object]) -> np.dtype[Any]
         return candidate
     name = data_type.get("name")
     config = data_type.get("configuration")
-    if name in _FIXED_LENGTH_NUMPY_CODES and isinstance(config, Mapping):
+    if isinstance(name, str) and name in _FIXED_LENGTH_NUMPY_CODES and isinstance(config, Mapping):
         code, unit_bytes = _FIXED_LENGTH_NUMPY_CODES[name]
         length = config.get("length_bytes")
         if isinstance(length, int) and length > 0 and length % unit_bytes == 0:
@@ -547,6 +557,36 @@ def _numpy_dtype_from_v3(data_type: str | Mapping[str, object]) -> np.dtype[Any]
 
 
 _SINGLE_BYTE_DATA_TYPES = ("bool", "int8", "uint8")
+
+
+def _is_single_byte(data_type: object, scope: ZarrV3Context) -> bool:
+    """
+    Whether the values of `data_type` are stored in single bytes, where the
+    `bytes` codec's endian does not apply, as the data type's definition in
+    `scope` declares it (`zarr-metadata`'s `storage_of`): the single-byte
+    numbers, `null_terminated_bytes`, `raw_bytes` and `r8`, among others. A
+    data type the scope does not know, or derives no default document for, is
+    not known to be single-byte.
+    """
+    if data_type in _SINGLE_BYTE_DATA_TYPES:
+        return True
+    try:
+        key = json.dumps(data_type, sort_keys=True)
+    except (TypeError, ValueError):
+        return False
+    return _is_single_byte_cached(scope, key)
+
+
+@functools.lru_cache(maxsize=256)
+def _is_single_byte_cached(scope: ZarrV3Context, data_type_json: str) -> bool:
+    try:
+        model = ZarrV3ArrayMetadataModel.create_default(
+            context=scope, data_type=json.loads(data_type_json)
+        )
+    except (ValueError, TypeError):
+        return False
+    return storage_of(model.data_type) == "single_byte"
+
 
 # The spellings of the variable-length data types. "string" and "bytes" are the
 # names zarr-extensions registers; "variable_length_bytes" is the name
@@ -855,7 +895,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
         One rule of zarr-python's is kept as well: the `bytes` codec's
         `endian` configuration, a no-op for a single-byte data type, is
-        dropped when the chunk it receives is of one. That chunk's data type
+        dropped when the chunk it receives is of one, as the data type's
+        definition in the scope declares its storage. That chunk's data type
         is the array's as changed by the array->array codecs before `bytes`
         in its pipeline (`cast_value` sets it to its configured `data_type`,
         `transpose` and `scale_offset` keep it, and after any other codec it is
@@ -878,13 +919,14 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             document["storage_transformers"] = tuple(
                 canonical_envelope(transformer) for transformer in transformers
             )
+        scope = cls._scope(info.context)
         if "data_type" in document:
             document["data_type"] = parse_dtype_v3(
                 cast(
                     "npt.DTypeLike | Mapping[str, object]",
                     canonical_envelope(document["data_type"], bare_name=True),
                 ),
-                scope=cls._scope(info.context),
+                scope=scope,
             )
         if "codecs" not in document:
             return document
@@ -919,9 +961,10 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
                 return codec, None if cast_to is None else parse_data_type(cast_to)
             if (
                 name == "bytes"
-                and data_type in _SINGLE_BYTE_DATA_TYPES
                 and isinstance(config, Mapping)
                 and set(config) == {"endian"}
+                and data_type is not None
+                and _is_single_byte(data_type, scope_actual)
             ):
                 return {"name": "bytes"}, data_type
             if name == "sharding_indexed" and isinstance(config, Mapping):
@@ -946,6 +989,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             return tuple(normalized)
 
         data_type = parse_data_type(document["data_type"]) if "data_type" in document else None
+        scope_actual = CORE_AND_EXTENSIONS_CONTEXT if scope is None else scope
         document["codecs"] = normalize_pipeline(codecs, data_type)
         return document
 
@@ -2733,11 +2777,23 @@ def _guessed_chunk_grid(shape: tuple[int, ...], data_type: object) -> RegularChu
 
 def auto_codecs(data: object) -> tuple[CodecLike, ...]:
     """
-    Automatically create a tuple of codecs from an arbitrary python object.
+    The codecs of `data`, when it has them, or else the codecs `zarr-metadata`
+    derives for its `dtype` in its default scope (those `from_array` gives a
+    numpy array): a `bytes` codec, with an explicit endian for a multi-byte
+    type, or `vlen-utf8` for numpy's variable-length strings.
     """
     if hasattr(data, "codecs"):
         # todo: type check
         return tuple(data.codecs)
+    if hasattr(data, "dtype"):
+        # the codecs a spec of this data type holds once validated (which drops
+        # the no-op endian of a single-byte type)
+        try:
+            spec = ArraySpec.create_default(data_type=parse_dtype_v3(np.dtype(data.dtype)))
+        except ValueError:
+            pass
+        else:
+            return tuple(spec.codecs)
     if hasattr(data, "dtype") and np.dtype(data.dtype).itemsize > 1:
         # the zarr v3 spec requires the ``endian`` configuration for multi-byte data types
         return ({"name": "bytes", "configuration": {"endian": "little"}},)

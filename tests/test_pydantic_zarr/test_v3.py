@@ -103,8 +103,8 @@ def test_from_array() -> None:
     array = np.arange(10)
     array_spec: AnyArraySpec = ArraySpec.from_array(array)
 
-    # the exact core TypedDicts and `auto_codecs`'s result are input types, so
-    # the expected spec is built through `model_validate`, the untyped input path
+    # the exact core TypedDicts are input types, so the expected spec is built
+    # through `model_validate`, the untyped input path
     assert array_spec == ArraySpec.model_validate(
         {
             "zarr_format": 3,
@@ -119,7 +119,7 @@ def test_from_array() -> None:
                 name="default", configuration=DefaultChunkKeyEncodingConfig(separator="/")
             ),
             "fill_value": 0,
-            "codecs": auto_codecs(array),
+            "codecs": ({"name": "bytes", "configuration": {"endian": "little"}},),
             "storage_transformers": (),
             "dimension_names": None,
         }
@@ -618,10 +618,29 @@ def test_parse_dtype_v3_suggests_fixed_length_form() -> None:
         parse_dtype_v3("U5")
 
 
-def test_parse_dtype_v3_structured_unsupported() -> None:
-    """A structured numpy dtype has no Zarr V3 form here and is refused."""
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        np.dtype([("a", "i4"), ("b", "f8")]),
+        np.dtype(("i4", (2,))),
+        np.dtype("U"),
+        np.dtype("S"),
+    ],
+    ids=["structured", "subarray", "zero-length-unicode", "zero-length-bytes"],
+)
+def test_parse_dtype_v3_without_v3_form_unsupported(dtype: np.dtype[Any]) -> None:
+    """
+    A structured or subarray void type, and a zero-length string or bytes
+    type, have no Zarr V3 form here and are refused.
+    """
     with pytest.raises(ValueError, match="Unsupported dtype"):
-        parse_dtype_v3(np.dtype([("a", "i4"), ("b", "f8")]))
+        parse_dtype_v3(dtype)
+
+
+def test_parse_dtype_v3_suggestion_in_scope() -> None:
+    """The suggestion for a numpy spelling is the form the scope gives it."""
+    with pytest.raises(ValueError, match="raw_bytes"):
+        parse_dtype_v3("V4", scope=ZARR_PYTHON_CONTEXT)
 
 
 @pytest.mark.parametrize(
@@ -1001,40 +1020,72 @@ def test_parse_dtype_v3_void_in_zarr_python_scope() -> None:
     }
 
 
+_BYTES_LITTLE_ENDIAN = ({"name": "bytes", "configuration": {"endian": "little"}},)
+
+
 @pytest.mark.parametrize(
-    ("array", "scope", "expected"),
+    ("array", "scope", "expected_data_type", "expected_codecs"),
     [
         (
             np.array(["ab", "cde"]),
             None,
             {"name": "fixed_length_utf32", "configuration": {"length_bytes": 12}},
+            _BYTES_LITTLE_ENDIAN,
         ),
         (
             np.array([b"ab", b"cde"]),
             ZARR_PYTHON_CONTEXT,
             {"name": "null_terminated_bytes", "configuration": {"length_bytes": 3}},
+            ({"name": "bytes"},),
         ),
-        (np.zeros(2, dtype="V4"), None, "r32"),
+        # the core spec does not yet say how wider raw types are stored, so
+        # their endian stays
+        (np.zeros(2, dtype="V4"), None, "r32", _BYTES_LITTLE_ENDIAN),
         (
             np.zeros(2, dtype="V4"),
             ZARR_PYTHON_CONTEXT,
             {"name": "raw_bytes", "configuration": {"length_bytes": 4}},
+            ({"name": "bytes"},),
         ),
-        (np.array(["ab", "cde"], dtype=np.dtypes.StringDType()), None, "string"),
+        (
+            np.array(["ab", "cde"], dtype=np.dtypes.StringDType()),
+            None,
+            "string",
+            ({"name": "vlen-utf8"},),
+        ),
+        (np.zeros(2, dtype="uint8"), None, "uint8", ({"name": "bytes"},)),
+        (np.zeros(2, dtype="float32"), None, "float32", _BYTES_LITTLE_ENDIAN),
     ],
-    ids=["unicode", "bytes", "void-core", "void-zarr-python", "string"],
+    ids=["unicode", "bytes", "void-core", "void-zarr-python", "string", "uint8", "float32"],
 )
-def test_from_array_fixed_length_and_string_dtypes(
-    array: np.ndarray[Any, Any], scope: Any, expected: object
+def test_from_array_derives_in_scope(
+    array: np.ndarray[Any, Any],
+    scope: Any,
+    expected_data_type: object,
+    expected_codecs: tuple[dict[str, object], ...],
 ) -> None:
     """
-    `from_array` reads numpy string, bytes and void arrays, in the class's
-    scope, and the spec validates with the defaults zarr-metadata derives.
+    `from_array` reads numpy string, bytes, void and numeric arrays in the
+    class's scope, with the codecs zarr-metadata derives for the data type
+    (`auto_codecs` gives the same), and the spec validates.
     """
     cls: type[AnyArraySpec] = ArraySpec if scope is None else _ZarrPythonArraySpec
     spec = cls.from_array(array)
-    assert spec.data_type == expected
+    assert spec.data_type == expected_data_type
+    assert spec.codecs == expected_codecs
+    if scope is None:
+        assert auto_codecs(array) == expected_codecs
     assert type(spec).model_validate(spec.model_dump()) == spec
+
+
+def test_from_array_bytes_outside_zarr_python_scope_rejected() -> None:
+    """
+    The default scope derives no fill value for `null_terminated_bytes`, which
+    only zarr-python's scope claims, so a bytes array is refused there with
+    the fill value named, as `create_default` refuses an underivable type.
+    """
+    with pytest.raises(ValidationError, match="fill_value"):
+        ArraySpec.from_array(np.array([b"ab", b"cde"]))
 
 
 def test_from_array_time_dtype() -> None:
@@ -1570,6 +1621,28 @@ def test_bytes_codec_canonicalized_for_single_byte_dtypes() -> None:
         ArraySpec.create_default(shape=(4,), data_type="uint16", codecs=endian_codecs).codecs
         == endian_codecs
     )
+    # the scope's definition decides which other data types are single-byte:
+    # zarr-python's fixed-length bytes and raw bytes, and the core spec's `r8`
+    single_byte_in_scope: list[tuple[type[AnyArraySpec], object]] = [
+        (
+            _ZarrPythonArraySpec,
+            {"name": "null_terminated_bytes", "configuration": {"length_bytes": 3}},
+        ),
+        (_ZarrPythonArraySpec, {"name": "raw_bytes", "configuration": {"length_bytes": 4}}),
+        (ArraySpec, "r8"),
+    ]
+    for cls, data_type in single_byte_in_scope:
+        spec = cls.model_validate(
+            {
+                "shape": (4,),
+                "data_type": data_type,
+                "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (4,)}},
+                "chunk_key_encoding": {"name": "default"},
+                "fill_value": "AAAA" if data_type != "r8" else [0],
+                "codecs": endian_codecs,
+            }
+        )
+        assert spec.codecs == ({"name": "bytes"},), data_type
 
 
 _ENDIAN_BYTES: CodecLike = {"name": "bytes", "configuration": {"endian": "little"}}
