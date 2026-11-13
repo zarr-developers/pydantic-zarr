@@ -40,7 +40,7 @@ group's actual members: every `datasets[*].path` resolves (via `get_path`) to
 an array whose dimensionality matches the coordinate systems, every level
 maps into the same intrinsic system, and the scale vector length equals the
 image dimensionality. The resolution-level arrays are metadata-only
-`ArraySpec.from_shape_and_data_type` documents, the hierarchy round-trips
+`ArraySpec.create_default` documents, the hierarchy round-trips
 through an in-memory Zarr v3 store, and invalid layouts are refused at
 construction. The `Scale` and `SequenceTransform` classes from the previous
 section are reused directly — their `input`/`output` are optional there

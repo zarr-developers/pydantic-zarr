@@ -57,7 +57,7 @@ ACME_SCOPE = CORE_CONTEXT.union(
 
 
 def _array_document(**extra: object) -> dict[str, Any]:
-    return {**v3.ArraySpec.from_shape_and_data_type((4,), "uint8").model_dump(), **extra}
+    return {**v3.ArraySpec.create_default(shape=(4,), data_type="uint8").model_dump(), **extra}
 
 
 def _group_document(**extra: object) -> dict[str, Any]:
@@ -353,7 +353,7 @@ def test_to_zarr_refuses_unstorable_member() -> None:
         {
             "attributes": {},
             "members": {
-                "a": v3.ArraySpec.from_shape_and_data_type((2,), "uint8"),
+                "a": v3.ArraySpec.create_default(shape=(2,), data_type="uint8"),
                 "sub": _group_document(consolidated_metadata=CONSOLIDATED),
             },
         }

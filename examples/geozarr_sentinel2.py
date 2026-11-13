@@ -46,9 +46,9 @@ class BandArray(ArraySpec[BandAttrs]):
     """A Sentinel-2 band: uint16 digital numbers on the (y, x) grid."""
 
 
-b02 = BandArray.from_shape_and_data_type(
-    (180, 180),
-    "uint16",
+b02 = BandArray.create_default(
+    shape=(180, 180),
+    data_type="uint16",
     attributes={"_ARRAY_DIMENSIONS": ["y", "x"], "grid_mapping": "spatial_ref"},
     dimension_names=("y", "x"),
 )
@@ -119,9 +119,9 @@ class R10mDataset(GeoZarrDataset):
 
 
 def band(grid_mapping: str = "spatial_ref") -> BandArray:
-    return BandArray.from_shape_and_data_type(
-        (180, 180),
-        "uint16",
+    return BandArray.create_default(
+        shape=(180, 180),
+        data_type="uint16",
         attributes={"_ARRAY_DIMENSIONS": ["y", "x"], "grid_mapping": grid_mapping},
         dimension_names=("y", "x"),
     )
@@ -129,16 +129,16 @@ def band(grid_mapping: str = "spatial_ref") -> BandArray:
 
 def coord(axis: str) -> ArraySpec:
     # plain-dict attributes work too; tuples match what a store read returns
-    return ArraySpec.from_shape_and_data_type(
-        (180,),
-        "float64",
+    return ArraySpec.create_default(
+        shape=(180,),
+        data_type="float64",
         attributes={"_ARRAY_DIMENSIONS": (axis,)},
         dimension_names=(axis,),
     )
 
 
-crs = GridMappingArray.from_shape_and_data_type(
-    (), "int32", attributes={"grid_mapping_name": "transverse_mercator"}
+crs = GridMappingArray.create_default(
+    shape=(), data_type="int32", attributes={"grid_mapping_name": "transverse_mercator"}
 )
 r10m = R10mDataset(
     members={
@@ -242,15 +242,22 @@ reference.to_zarr(  # type: ignore[no-matching-overload]
 
 
 def ref_band() -> BandArray:
-    return BandArray.from_shape_and_data_type(
-        (N, N), "uint16", attributes=dict(BAND_ATTRS), dimension_names=("y", "x"), codecs=REF_CODECS
+    return BandArray.create_default(
+        shape=(N, N),
+        data_type="uint16",
+        attributes=dict(BAND_ATTRS),
+        dimension_names=("y", "x"),
+        codecs=REF_CODECS,
     )
 
 
 def ref_coord(axis: str) -> ArraySpec:
-    return ArraySpec.from_shape_and_data_type(
-        (N,),
-        "float64",
+    # xarray writes NaN as the fill value of a float coordinate; the default
+    # create_default derives for float64 is 0.0
+    return ArraySpec.create_default(
+        shape=(N,),
+        data_type="float64",
+        fill_value="NaN",
         attributes={"_ARRAY_DIMENSIONS": [axis]},
         dimension_names=(axis,),
         codecs=REF_CODECS,
@@ -265,8 +272,11 @@ model = R10mDataset(
         "b08": ref_band(),
         "x": ref_coord("x"),
         "y": ref_coord("y"),
-        "spatial_ref": GridMappingArray.from_shape_and_data_type(
-            (), "int32", attributes={"grid_mapping_name": "transverse_mercator"}, codecs=REF_CODECS
+        "spatial_ref": GridMappingArray.create_default(
+            shape=(),
+            data_type="int32",
+            attributes={"grid_mapping_name": "transverse_mercator"},
+            codecs=REF_CODECS,
         ),
     }
 )

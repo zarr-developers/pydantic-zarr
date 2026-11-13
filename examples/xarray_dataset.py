@@ -157,33 +157,39 @@ CODECS: tuple[CodecLike, ...] = (
 
 # a curvilinear grid: the data dimensions are (time, y, x), and latitude and
 # longitude are 2-D auxiliary coordinates over (y, x)
+# xarray writes NaN as the zarr fill value of a float variable, where the
+# default create_default derives for a float data type is 0.0, so the float
+# arrays state theirs
 dataset = ClimateDataset(
     attributes={"Conventions": "CF-1.8", "title": "Example climate dataset"},
     members={
-        "time": DimensionCoordinateSpec.from_shape_and_data_type(
-            (4,),
-            "int64",
+        "time": DimensionCoordinateSpec.create_default(
+            shape=(4,),
+            data_type="int64",
             dimension_names=("time",),
             codecs=CODECS,
             attributes=CFAttrs(units="days since 2024-01-01", calendar="proleptic_gregorian"),
         ),
-        "lat": VariableSpec.from_shape_and_data_type(
-            (3, 5),
-            "float64",
+        "lat": VariableSpec.create_default(
+            shape=(3, 5),
+            data_type="float64",
+            fill_value="NaN",
             dimension_names=("y", "x"),
             codecs=CODECS,
             attributes=CFAttrs(units="degrees_north", standard_name="latitude"),
         ),
-        "lon": VariableSpec.from_shape_and_data_type(
-            (3, 5),
-            "float64",
+        "lon": VariableSpec.create_default(
+            shape=(3, 5),
+            data_type="float64",
+            fill_value="NaN",
             dimension_names=("y", "x"),
             codecs=CODECS,
             attributes=CFAttrs(units="degrees_east", standard_name="longitude"),
         ),
-        "temperature": VariableSpec.from_shape_and_data_type(
-            (4, 3, 5),
-            "float32",
+        "temperature": VariableSpec.create_default(
+            shape=(4, 3, 5),
+            data_type="float32",
+            fill_value="NaN",
             dimension_names=("time", "y", "x"),
             codecs=CODECS,
             attributes=CFAttrs(
@@ -214,9 +220,9 @@ try:
         attributes=dataset.attributes,
         members=dict(dataset.members)
         | {
-            "temperature": VariableSpec.from_shape_and_data_type(
-                (4, 2, 5),
-                "float32",
+            "temperature": VariableSpec.create_default(
+                shape=(4, 2, 5),
+                data_type="float32",
                 dimension_names=("time", "y", "x"),
                 codecs=CODECS,
             )
@@ -233,9 +239,9 @@ try:
         attributes=dataset.attributes,
         members=dict(dataset.members)
         | {
-            "lat": VariableSpec.from_shape_and_data_type(
-                (3, 5),
-                "float64",
+            "lat": VariableSpec.create_default(
+                shape=(3, 5),
+                data_type="float64",
                 dimension_names=("lat", "x"),
                 codecs=CODECS,
             )
@@ -250,8 +256,8 @@ except ValidationError as exc:
 # coexist, while the named-dimension mismatch above is still refused
 DatasetSpec(
     members={
-        "a": ArraySpec.from_shape_and_data_type((3,), "uint8", dimension_names=(None,)),
-        "b": ArraySpec.from_shape_and_data_type((5,), "uint8", dimension_names=(None,)),
+        "a": ArraySpec.create_default(shape=(3,), data_type="uint8", dimension_names=(None,)),
+        "b": ArraySpec.create_default(shape=(5,), data_type="uint8", dimension_names=(None,)),
     },
 )
 

@@ -5,7 +5,6 @@ import json
 import sys
 from collections.abc import Mapping, Sequence
 from importlib.metadata import version
-from types import SimpleNamespace
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -251,7 +250,7 @@ class NodeSpec(ExtraFieldsBase):
         context carries none, making the scope a property of the model
         rather than of each ``model_validate`` call: a subclass that sets
         it keeps its scope through direct construction and every derived
-        operation (``replace``, ``from_shape_and_data_type``, ``like``, ...),
+        operation (``replace``, ``create_default``, ``like``, ...),
         which re-validate as the class. An explicit validation context
         still wins, and ``None`` (the default) means ``zarr-metadata``'s
         ``CORE_AND_EXTENSIONS_CONTEXT``. A group's members are validated as their
@@ -477,24 +476,33 @@ def _numpy_dtype_from_v3(data_type: str | Mapping[str, object]) -> np.dtype[Any]
 
 _SINGLE_BYTE_DATA_TYPES = ("bool", "int8", "uint8")
 
-# Derived defaults for the variable-length data types, which have no numpy
-# equivalent: fill value and codec pipeline, zarrs-style. zarr-python spells
-# the variable-length bytes data type "variable_length_bytes" (its V3
-# specification is still pending); "bytes" is the name zarrs and the
-# zarr-extensions drafts use. Both derive the same defaults. "str" is the
-# spelling zarr-python 3.0 stored for the variable-length string data type
-# (renamed "string" in 3.1), so documents it wrote still hold it; membership
-# here also exempts a name from the ambiguous-numpy-spelling guard in
-# `parse_dtype_v3` (numpy reads "str" as a zero-length unicode type).
-_VARIABLE_LENGTH_DATA_TYPES: Mapping[str, tuple[str, tuple[CodecLike, ...]]] = {
-    "string": ("", ({"name": "vlen-utf8"},)),
-    "str": ("", ({"name": "vlen-utf8"},)),
-    "bytes": ("", ({"name": "vlen-bytes"},)),
-    "variable_length_bytes": ("", ({"name": "vlen-bytes"},)),
-}
+# The spellings of the variable-length data types. "string" and "bytes" are the
+# names zarr-extensions registers; "variable_length_bytes" is the name
+# zarr-python gives variable-length bytes, and "str" is the spelling
+# zarr-python 3.0 stored for the string data type (renamed "string" in 3.1), so
+# documents it wrote still hold them. Membership exempts a name from the
+# ambiguous-numpy-spelling guard in `parse_dtype_v3` (numpy reads "str" as a
+# zero-length unicode type), and gives `create_default(chunk_grid="auto")` an
+# element size to guess chunks from. Their fill values and codecs are not
+# derived here: `zarr-metadata` derives them for the names a scope claims.
+_VARIABLE_LENGTH_DATA_TYPES: frozenset[str] = frozenset(
+    {"string", "str", "bytes", "variable_length_bytes"}
+)
 # chunk guessing needs an element size; variable-length elements have none,
 # so use the size of a pointer, as numpy object arrays do
 _VARIABLE_LENGTH_NOMINAL_ITEM_SIZE = 8
+
+_DEFAULT_CHUNK_KEY_ENCODING: DefaultChunkKeyEncodingObject = {
+    "name": "default",
+    "configuration": {"separator": "/"},
+}
+"""
+The chunk key encoding `create_default` gives an array: the `default` encoding,
+spelled with its `/` separator as zarr-python writes it, so a spec built here
+compares equal to one read from a store zarr-python wrote (specs compare
+fields literally, and `zarr-metadata` writes the same encoding as
+``{"name": "default"}``).
+"""
 
 
 DTypeLike = str | AnyNamedConfig
@@ -661,14 +669,16 @@ CodecTuple = Annotated[
 ]
 
 
-class ArraySpecOverrides(TypedDict, total=False):
+class ArraySpecCreate(TypedDict, total=False):
     """
-    The fields `ArraySpec.from_shape_and_data_type` may override: every
-    `ArraySpec` field except the two the method takes positionally.
+    The fields `ArraySpec.create_default` takes as keyword arguments: every
+    `ArraySpec` field except `chunk_grid`, which it takes on its own, since it
+    also accepts `"auto"`.
     """
 
+    shape: tuple[int, ...]
+    data_type: npt.DTypeLike | Mapping[str, object]
     attributes: TBaseAttr
-    chunk_grid: ChunkGridLike
     chunk_key_encoding: ChunkKeyEncodingLike
     fill_value: FillValue
     codecs: Sequence[CodecLike]
@@ -677,22 +687,21 @@ class ArraySpecOverrides(TypedDict, total=False):
     extra_fields: Mapping[str, ZarrV3ExtensionField]
 
 
-class ArraySpecUpdate(ArraySpecOverrides, total=False):
-    """The fields an `ArraySpec.update` call may replace."""
+class ArraySpecUpdate(ArraySpecCreate, total=False):
+    """The fields an `ArraySpec.replace` call may replace."""
 
-    shape: tuple[int, ...]
-    data_type: npt.DTypeLike | Mapping[str, object]
+    chunk_grid: ChunkGridLike
 
 
 class BaseGroupSpecUpdate(TypedDict, total=False):
-    """The fields a `BaseGroupSpec.update` call may replace."""
+    """The fields a `BaseGroupSpec.replace` call may replace."""
 
     attributes: TBaseAttr
     extra_fields: Mapping[str, ZarrV3ExtensionField]
 
 
 class GroupSpecUpdate(TypedDict, total=False):
-    """The fields a `GroupSpec.update` call may replace."""
+    """The fields a `GroupSpec.replace` call may replace."""
 
     attributes: TBaseAttr
     members: Mapping[str, TBaseItem]
@@ -1077,89 +1086,84 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         )
 
     @classmethod
-    def from_shape_and_data_type(
+    def create_default(
         cls,
-        shape: Sequence[int],
-        data_type: npt.DTypeLike | Mapping[str, object],
-        **overrides: Unpack[ArraySpecOverrides],
+        *,
+        chunk_grid: ChunkGridLike | Literal["auto"] | None = None,
+        **fields: Unpack[ArraySpecCreate],
     ) -> Self:
         """
-        Create an `ArraySpec` from a shape and a data type alone: the
-        metadata-only counterpart to `from_array`, for when there is no array
-        object to describe.
+        Create an `ArraySpec` with `fields` set and every other field set to a
+        default, the counterpart of `zarr-metadata`'s
+        `ZarrV3ArrayMetadata.create_default`, which derives the defaults.
 
-        `overrides` takes the fields a `replace` call takes, minus the two
-        this method takes positionally. Every field absent from it gets a
-        spec default or one derived from the data type: a size-guessed regular chunk grid (the same heuristic
-        zarr-python applies when no chunks are given), the `default` chunk key
-        encoding with the `/` separator, and the fill value and codecs
-        `from_array` derives (`"NaN"` / `0` / `False` / NaT fills; a `bytes`
-        codec, carrying explicit endianness for multi-byte data types, or the
-        matching variable-length codec and empty fill for the `string` and
-        `bytes` data types; compression is not assumed). Everything lands in
-        one validation pass,
-        so a subclass that narrows a field (required attributes, say) takes
-        the narrowed values through `overrides`. A data type name that is not
-        a Zarr V3 name but that numpy reads as some other type (`"i8"`,
-        `"float"`) is refused as a likely mistake, with the V3 spelling
-        suggested. For a data type with no
-        numpy equivalent (an unknown extension data type) no fill value,
-        codecs or chunk guess can be derived: pass `fill_value` and `codecs`
-        there, and the chunk grid defaults to one whole-array chunk.
+        Each field not given takes `zarr-metadata`'s default, derived from the
+        fields given where it depends on them: a data type brings its default
+        fill value (zero, `False`, the empty string, `"NaT"`) and its
+        array -> bytes codec (`vlen-utf8` for `string`, `vlen-bytes` for
+        `bytes`, `bytes` otherwise), and a shape brings one regular chunk
+        covering the array. With nothing given, the array is a scalar `uint8`.
+        Two choices are pydantic-zarr's: the chunk key encoding is the
+        `default` one spelled as zarr-python writes it (with its `/`
+        separator), and `chunk_grid="auto"` guesses a chunk shape from the
+        array's size in bytes, the heuristic zarr-python applies when no chunks
+        are given. A numpy data type is converted to its Zarr V3 form first.
+
+        Everything is validated in one pass, in this class's scope, so a
+        subclass that narrows a field (required attributes, say) takes the
+        narrowed values through `fields`. A data type nothing in the scope
+        derives a fill value for (an extension data type, or a spelling only
+        another scope claims) needs `fill_value` given, and the refusal says
+        so. A data type name that is not a Zarr V3 name but that numpy reads
+        as some other type (`"i8"`, `"float"`) is refused as a likely mistake,
+        with the V3 spelling suggested.
 
         Examples
         --------
         >>> from pydantic_zarr.v3 import ArraySpec
-        >>> ArraySpec.from_shape_and_data_type((10, 10), "uint16", dimension_names=("y", "x"))
+        >>> ArraySpec.create_default(shape=(10, 10), data_type="uint16", dimension_names=("y", "x"))
         ArraySpec(zarr_format=3, node_type='array', attributes={}, shape=(10, 10), data_type='uint16', chunk_grid={'name': 'regular', 'configuration': {'chunk_shape': (10, 10)}}, chunk_key_encoding={'name': 'default', 'configuration': {'separator': '/'}}, fill_value=0, codecs=({'name': 'bytes', 'configuration': {'endian': 'little'}},), storage_transformers=(), dimension_names=('y', 'x'))
         """
-        parsed_data_type = parse_dtype_v3(data_type, scope=cls.zarr_scope)
-        np_dtype = _numpy_dtype_from_v3(parsed_data_type)
-        variable_length = (
-            _VARIABLE_LENGTH_DATA_TYPES.get(parsed_data_type)
-            if np_dtype is None and isinstance(parsed_data_type, str)
-            else None
-        )
-        document: dict[str, object] = {
-            "shape": tuple(shape),
-            "data_type": parsed_data_type,
-            "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
-        }
-        if "chunk_grid" not in overrides:
-            if np_dtype is not None:
-                item_size = np_dtype.itemsize
-            elif variable_length is not None:
-                item_size = _VARIABLE_LENGTH_NOMINAL_ITEM_SIZE
-            else:
-                item_size = None
-            chunk_shape = (
-                guess_chunks(tuple(shape), item_size) if item_size is not None else tuple(shape)
+        document: dict[str, object] = dict(fields)
+        if "data_type" in document:
+            document["data_type"] = parse_dtype_v3(
+                cast("npt.DTypeLike | Mapping[str, object]", document["data_type"]),
+                scope=cls.zarr_scope,
             )
-            document["chunk_grid"] = {
-                "name": "regular",
-                "configuration": {"chunk_shape": chunk_shape},
-            }
-        underived = tuple(name for name in ("fill_value", "codecs") if name not in overrides)
-        if underived:
-            if variable_length is not None:
-                fill_default, codecs_default = variable_length
-                if "fill_value" in underived:
-                    document["fill_value"] = fill_default
-                if "codecs" in underived:
-                    document["codecs"] = codecs_default
-            elif np_dtype is None:
-                msg = (
-                    f"Data type {parsed_data_type!r} has no numpy equivalent, so no default "
-                    f"can be derived for it: pass {' and '.join(underived)} explicitly."
-                )
-                raise ValueError(msg)
-            else:
-                stand_in = SimpleNamespace(dtype=np_dtype)
-                if "fill_value" in underived:
-                    document["fill_value"] = auto_fill_value(stand_in)
-                if "codecs" in underived:
-                    document["codecs"] = auto_codecs(stand_in)
-        return cls.model_validate({**document, **overrides})
+        document.setdefault("chunk_key_encoding", _DEFAULT_CHUNK_KEY_ENCODING)
+        if chunk_grid == "auto":
+            document["chunk_grid"] = _guessed_chunk_grid(
+                tuple(cast("Sequence[int]", document.get("shape", ()))),
+                document.get("data_type", "uint8"),
+            )
+        elif chunk_grid is not None:
+            document["chunk_grid"] = chunk_grid
+        # `zarr-metadata` derives the members not given from the JSON ones
+        # given; attributes and extra fields are not its to read here.
+        derive_from = {
+            key: canonicalize_fill_value(value) if key == "fill_value" else value
+            for key, value in document.items()
+            if key not in ("attributes", "extra_fields")
+            and not (key == "dimension_names" and value is None)
+        }
+        scope = CORE_AND_EXTENSIONS_CONTEXT if cls.zarr_scope is None else cls.zarr_scope
+        try:
+            derived: Mapping[str, object] = ZarrV3ArrayMetadataModel.create_default(
+                context=scope, **cast("Any", derive_from)
+            ).to_json()
+        except (ValueError, TypeError):
+            # Nothing is derived from a document `zarr-metadata` refuses (a data
+            # type with no default fill value in the scope, say). Validating
+            # what was given reports what to pass, as any construction does;
+            # the chunk grid, which needs only the shape, is still derived.
+            derived = {}
+            if "chunk_grid" not in document and "shape" in document:
+                shape = tuple(cast("Sequence[int]", document["shape"]))
+                document["chunk_grid"] = {
+                    "name": "regular",
+                    "configuration": {"chunk_shape": tuple(max(n, 1) for n in shape)},
+                }
+        return cls.model_validate({**derived, **document})
 
     @classmethod
     def from_zarr(cls, array: zarr.Array) -> Self:
@@ -2465,25 +2469,68 @@ def auto_chunk_key_encoding(data: object) -> AnyNamedConfig:
     return {"name": "default", "configuration": {"separator": "/"}}
 
 
+def dtype_default_fill_value(
+    dtype: npt.DTypeLike | Mapping[str, object], *, scope: ZarrV3Context | None = None
+) -> FillValue:
+    """
+    The fill value an array of data type `dtype` gets when none is given: the
+    default `zarr-metadata` derives for it in `scope` (its default scope when
+    `None`), the value zarr-python uses: zero, `False`, the empty string, null
+    bytes, or `"NaT"` for a time data type. A numpy data type is converted to
+    its Zarr V3 form first.
+
+    Raises
+    ------
+    ValueError
+        If nothing in the scope derives a fill value for the data type (an
+        extension data type, say).
+    """
+    parsed = parse_dtype_v3(dtype, scope=scope)
+    context = CORE_AND_EXTENSIONS_CONTEXT if scope is None else scope
+    try:
+        document = ZarrV3ArrayMetadataModel.create_default(
+            context=context, data_type=cast("Any", parsed)
+        ).to_json()
+    except (ValueError, TypeError) as e:
+        msg = f"Cannot determine a default fill value for data type {parsed!r}: pass one."
+        raise ValueError(msg) from e
+    return cast("FillValue", document["fill_value"])
+
+
 def auto_fill_value(data: object) -> FillValue:
+    """
+    The fill value of `data`, when it has one, or else the default
+    `zarr-metadata` derives for its `dtype` (see `dtype_default_fill_value`).
+    """
     if hasattr(data, "fill_value"):
-        return data.fill_value
-    elif hasattr(data, "dtype"):
-        kind = np.dtype(data.dtype).kind
-        if kind == "b":
-            return False
-        elif kind in ["i", "u"]:
-            return 0
-        elif kind == "f":
-            return "NaN"
-        elif kind == "c":
-            return ("NaN", "NaN")
-        elif kind in ["M", "m"]:
-            # NaT, as the Zarr V3 spec writes it: the minimum int64 value.
-            return int(np.iinfo(np.int64).min)
-        else:
-            raise ValueError(f"Cannot determine default fill value for data type {kind}")
-    raise ValueError("Cannot determine default data type for object without shape attribute.")
+        return cast("FillValue", data.fill_value)
+    if hasattr(data, "dtype"):
+        return dtype_default_fill_value(np.dtype(data.dtype))
+    raise ValueError("Cannot determine a default fill value for an object without a dtype.")
+
+
+def _guessed_chunk_grid(shape: tuple[int, ...], data_type: object) -> RegularChunkGridMetadata:
+    """
+    A regular chunk grid for an array of `shape` and `data_type`, its chunk
+    shape guessed from the array's size in bytes as zarr-python guesses it.
+    A data type with no knowable element size (an extension data type) gets
+    one chunk covering the array.
+    """
+    np_dtype = (
+        _numpy_dtype_from_v3(cast("str | Mapping[str, object]", data_type))
+        if isinstance(data_type, (str, Mapping))
+        else None
+    )
+    if np_dtype is not None:
+        item_size: int | None = np_dtype.itemsize
+    elif isinstance(data_type, str) and data_type in _VARIABLE_LENGTH_DATA_TYPES:
+        item_size = _VARIABLE_LENGTH_NOMINAL_ITEM_SIZE
+    else:
+        item_size = None
+    chunk_shape = (
+        guess_chunks(shape, item_size) if item_size is not None else tuple(max(n, 1) for n in shape)
+    )
+    return {"name": "regular", "configuration": {"chunk_shape": chunk_shape}}
 
 
 def auto_codecs(data: object) -> tuple[CodecLike, ...]:

@@ -16,7 +16,7 @@ uv run --no-project --with-editable . --with ome-zarr --with 'zarr>=3.1' \
 # dependencies = ["pydantic-zarr", "zarr", "ome-zarr"]
 # ///
 # NOTE: needs the pydantic-zarr release carrying PR #183
-# (AttributesBase, ArraySpec.from_shape_and_data_type, GroupSpec.get_path).
+# (AttributesBase, ArraySpec.create_default, GroupSpec.get_path).
 
 import copy
 from typing import Annotated, Literal, NotRequired, Self, Union
@@ -191,11 +191,11 @@ multiscale = Multiscale(
 image = MultiscaleImage(
     attributes=ImageAttributes(ome=OmeImageBlock(version="0.5", multiscales=(multiscale,))),
     members={
-        "0": ArraySpec.from_shape_and_data_type(
-            (2, 32, 32), "uint16", dimension_names=("c", "y", "x")
+        "0": ArraySpec.create_default(
+            shape=(2, 32, 32), data_type="uint16", dimension_names=("c", "y", "x")
         ),
-        "1": ArraySpec.from_shape_and_data_type(
-            (2, 16, 16), "uint16", dimension_names=("c", "y", "x")
+        "1": ArraySpec.create_default(
+            shape=(2, 16, 16), data_type="uint16", dimension_names=("c", "y", "x")
         ),
         "labels": GroupSpec(attributes={"ome": {"version": "0.5", "labels": []}}),
     },
@@ -270,9 +270,9 @@ reference_codecs: tuple[CodecLike, ...] = (
 
 
 def reference_level(shape: tuple[int, ...]) -> ArraySpec:
-    return ArraySpec.from_shape_and_data_type(
-        shape,
-        "uint16",
+    return ArraySpec.create_default(
+        shape=shape,
+        data_type="uint16",
         chunk_grid={"name": "regular", "configuration": {"chunk_shape": shape}},
         codecs=reference_codecs,
         dimension_names=("c", "y", "x"),
