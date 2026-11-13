@@ -89,7 +89,9 @@ print(spec.model_dump_json(indent=2))
 
 For a single-byte data type like `uint8`, the `bytes` codec needs no `endian`
 configuration; a no-op `{"endian": ...}` configuration passed anyway is dropped
-at validation, matching the spelling `zarr-python` stores.
+at validation, matching the spelling `zarr-python` stores. Which data types are
+single-byte is what their definitions in the spec's scope declare, so in
+`zarr-python`'s scope this covers its fixed-length and raw bytes types too.
 
 ## Creating array specs
 
