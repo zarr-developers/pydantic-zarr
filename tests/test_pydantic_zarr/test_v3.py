@@ -1849,6 +1849,12 @@ class _FactoryShapeArraySpec(ArraySpec):
     shape: tuple[int, ...] = Field(default_factory=lambda data: (data["attributes"]["size"],))
 
 
+class _FactoryShapeDataTypeArraySpec(_FactoryShapeArraySpec):
+    """Both a shape and a data type left to default factories."""
+
+    data_type: str = Field(default_factory=lambda data: "uint8")
+
+
 @pytest.mark.parametrize(
     ("cls", "fields", "expected"),
     [
@@ -2027,7 +2033,9 @@ def test_create_default_factory_shape_grid_missing() -> None:
     [
         (_FactoryDataTypeArraySpec, {"shape": (2, 2)}, "data_type"),
         (_FactoryShapeArraySpec, {"attributes": {"size": 6}, "data_type": "uint8"}, "shape"),
+        (_FactoryShapeDataTypeArraySpec, {"attributes": {"size": 6}}, "data_type, shape"),
     ],
+    ids=["data-type", "shape", "both"],
 )
 def test_create_default_auto_grid_from_factory_rejected(
     cls: type[AnyArraySpec], fields: dict[str, Any], unguessable: str
@@ -2036,7 +2044,7 @@ def test_create_default_auto_grid_from_factory_rejected(
     `chunk_grid="auto"` guesses from the shape and the data type, so it is
     refused when either is left to a default factory.
     """
-    with pytest.raises(ValueError, match=f"{unguessable} is left to {cls.__name__}"):
+    with pytest.raises(ValueError, match=f"{cls.__name__} leaves these .*: {unguessable}\\."):
         cls.create_default(chunk_grid="auto", **fields)
 
 

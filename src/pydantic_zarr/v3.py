@@ -1225,8 +1225,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             if unguessable:
                 msg = (
                     'chunk_grid="auto" guesses a chunk shape from the shape and the data '
-                    f"type, but {' and '.join(unguessable)} is left to {cls.__name__}'s "
-                    "default factory and has no value yet: give it, or give chunk_grid."
+                    f"type, but {cls.__name__} leaves these to a default factory, with no "
+                    f"value yet: {', '.join(unguessable)}. Give each, or give chunk_grid."
                 )
                 raise ValueError(msg)
             document["chunk_grid"] = _guessed_chunk_grid(
