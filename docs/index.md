@@ -9,7 +9,10 @@ Type-safety for Zarr data.
 `pydantic-zarr` expresses data stored in the [Zarr](https://zarr.readthedocs.io/en/stable/) format with [Pydantic](https://docs.pydantic.dev/1.10/). Specifically, `pydantic-zarr` encodes Zarr groups and arrays as [Pydantic models](https://docs.pydantic.dev/1.10/usage/models/). These models are useful for formalizing the structure of Zarr hierarchies, type-checking Zarr hierarchies, and runtime validation for Zarr-based data.
 
 ```python
+import json
+
 import zarr
+from zarr.core.buffer import default_buffer_prototype
 
 from pydantic_zarr.v2 import GroupSpec
 
@@ -21,8 +24,16 @@ array = zarr.create_array(
 )
 array.attrs.put({'metadata': 'hello'})
 
-# create a pydantic model to model the Zarr group
-spec = GroupSpec.from_zarr(group)
+# collect the metadata documents zarr-python stored, keyed as the store keys them
+prototype = default_buffer_prototype()
+documents = {
+    f"{path}/{name}" if path else name: json.loads(buffer.to_bytes())
+    for path, node in [("", group), *group.members(max_depth=None)]
+    for name, buffer in node.metadata.to_buffer_dict(prototype).items()
+}
+
+# create a pydantic model of the Zarr group from its documents
+spec = GroupSpec.from_stored_metadata_json(documents)
 print(spec.model_dump())
 """
 {
@@ -57,6 +68,10 @@ More examples can be found in the [usage guide](usage_zarr_v2.md).
 #### No array data operations
 
 This library only provides tools to represent the _layout_ of Zarr groups and arrays, and the structure of their attributes. `pydantic-zarr` performs no type checking or runtime validation of the multidimensional array data contained _inside_ Zarr arrays, and `pydantic-zarr` does not contain any tools for efficiently reading or writing Zarr arrays.
+
+#### No IO
+
+`pydantic-zarr` models metadata documents. A spec gives the documents a store holds (`to_stored_metadata_json`) and reads them back (`from_stored_metadata_json`); moving documents in and out of a store is the job of a Zarr implementation such as `zarr-python`, as the [usage guide](usage_zarr_v3.md#reading-and-writing-with-zarr-python) shows. The `to_zarr` and `from_zarr` methods that did this inside `pydantic-zarr` are deprecated and will be removed in 0.12.
 
 #### Supported Zarr versions
 
@@ -96,8 +111,8 @@ When a Zarr group has no members, a `GroupSpec` model of that Zarr group will ha
 
 A `GroupSpec` is always a complete hierarchy: every group in it has known members, so an empty `members` mapping always means "no members", never "not read". `pydantic-zarr` models a group whose members are unknown with `BaseGroupSpec`, a group's own metadata without a `members` field, and keeps it out of `GroupSpec` hierarchies. In each scenario above:
 
-- `BaseGroupSpec.from_zarr(group)` reads a group without its members.
-- `from_zarr_flat(group, depth=n)` reads `n` levels of a hierarchy into a flat mapping from paths to `ArraySpec` and `BaseGroupSpec` values. A flat mapping makes no claim that it lists every node, so it can stop at any depth.
+- `BaseGroupSpec.from_stored_metadata_json(documents)` reads a group's own documents, without its members.
+- `to_flat(GroupSpec.from_stored_metadata_json(documents))` turns however many levels of documents were read into a flat mapping from paths to `ArraySpec` and `BaseGroupSpec` values. A flat mapping makes no claim that it lists every node, so it can stop at any depth.
 - `to_flat` emits a `BaseGroupSpec` for every group, and `from_flat` builds a `GroupSpec` from a flat mapping, reading it as the complete hierarchy.
 
 ## Standardization

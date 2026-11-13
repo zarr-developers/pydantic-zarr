@@ -5,6 +5,7 @@ import importlib
 import importlib.util
 import json
 import re
+import warnings
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -17,7 +18,7 @@ from zarr_metadata.model import ZarrV3ArrayMetadata, ZarrV3GroupMetadata
 from zarr_metadata.v3.definition import ZARR_PYTHON_CONTEXT
 
 from pydantic_zarr._metadata import CORE_AND_EXTENSIONS_CONTEXT, CORE_CONTEXT
-from pydantic_zarr.core import AttributesBase, tuplify_json
+from pydantic_zarr.core import AttributesBase, tuplify_json, walk_zarr_hierarchy
 from pydantic_zarr.v3 import (
     _SINGLE_BYTE_DATA_TYPES,
     AnyArraySpec,
@@ -40,6 +41,7 @@ from pydantic_zarr.v3 import (
     is_array_spec,
     is_group_spec,
     parse_dtype_v3,
+    to_zarr,
 )
 
 from .conftest import DTYPE_EXAMPLES_V3, ZARR_PYTHON_VERSION, DTypeExample
@@ -53,6 +55,12 @@ if TYPE_CHECKING:
     from zarr.core.array_spec import ArrayConfigParams
 
 ZARR_AVAILABLE = importlib.util.find_spec("zarr") is not None
+
+pytestmark = pytest.mark.filterwarnings(
+    # the zarr-python IO entry points still work, warning, until pydantic-zarr 0.12;
+    # `test_zarr_io_deprecated` checks the warnings themselves
+    "ignore:`[^`]+` is deprecated and will be removed in pydantic-zarr:DeprecationWarning"
+)
 
 
 @pytest.mark.parametrize("invalid_dimension_names", [[], "hi", ["1", 2, None]], ids=str)
@@ -2615,3 +2623,88 @@ def test_chunk_grid_invalid_configuration_refused() -> None:
                 "chunk_grid": {"name": "rectilinear", "configuration": {"kind": "inline"}},
             }
         )
+
+
+_DEPRECATED_IO_V3: list[
+    tuple[str, Callable[[AnyGroupSpec, zarr.Group, zarr.Array, Any], object]]
+] = [
+    ("GroupSpec.to_zarr", lambda spec, group, array, store: spec.to_zarr(store, path="w")),
+    (
+        "BaseGroupSpec.to_zarr",
+        lambda spec, group, array, store: BaseGroupSpec().to_zarr(store, path="w"),
+    ),
+    (
+        "ArraySpec.to_zarr",
+        lambda spec, group, array, store: cast("AnyArraySpec", spec.members["x"]).to_zarr(
+            store, path="w"
+        ),
+    ),
+    ("to_zarr", lambda spec, group, array, store: to_zarr(spec, store, "w")),
+    # over an existing node, `to_zarr` compares with it: still one warning
+    (
+        "GroupSpec.to_zarr",
+        lambda spec, group, array, store: spec.to_zarr(store, path="g", overwrite=True),
+    ),
+    (
+        "BaseGroupSpec.to_zarr",
+        lambda spec, group, array, store: BaseGroupSpec().to_zarr(store, path="g", overwrite=True),
+    ),
+    (
+        "ArraySpec.to_zarr",
+        lambda spec, group, array, store: cast("AnyArraySpec", spec.members["x"]).to_zarr(
+            store, path="g/x", overwrite=True
+        ),
+    ),
+    ("GroupSpec.from_zarr", lambda spec, group, array, store: GroupSpec.from_zarr(group)),
+    ("BaseGroupSpec.from_zarr", lambda spec, group, array, store: BaseGroupSpec.from_zarr(group)),
+    ("ArraySpec.from_zarr", lambda spec, group, array, store: ArraySpec.from_zarr(array)),
+    ("from_zarr", lambda spec, group, array, store: from_zarr(group)),
+    ("from_zarr_flat", lambda spec, group, array, store: from_zarr_flat(group)),
+    ("GroupSpec.like with a zarr.Group", lambda spec, group, array, store: spec.like(group)),
+    (
+        "BaseGroupSpec.like with a zarr.Group",
+        lambda spec, group, array, store: BaseGroupSpec().like(group),
+    ),
+    (
+        "ArraySpec.like with a zarr.Array",
+        lambda spec, group, array, store: cast("AnyArraySpec", spec.members["x"]).like(array),
+    ),
+    (
+        "ArraySpec.from_array with a zarr.Array",
+        lambda spec, group, array, store: ArraySpec.from_array(array),
+    ),
+    ("walk_zarr_hierarchy", lambda spec, group, array, store: list(walk_zarr_hierarchy(group))),
+]
+
+
+@pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr is required for this test")
+@pytest.mark.parametrize(
+    ("name", "entry_point"), _DEPRECATED_IO_V3, ids=[n for n, _ in _DEPRECATED_IO_V3]
+)
+def test_zarr_io_deprecated(
+    name: str, entry_point: Callable[[AnyGroupSpec, zarr.Group, zarr.Array, Any], object]
+) -> None:
+    """
+    Every entry point that reads or writes zarr-python nodes warns that it is
+    deprecated, exactly once, naming itself: a group's hierarchy is handled
+    through private paths, so its members add no warnings of their own.
+    """
+    import zarr
+
+    store = zarr.storage.MemoryStore()
+    group = zarr.create_group(store, path="g", zarr_format=3)
+    array_node = group.create_array("x", shape=(2,), dtype="uint8")
+    group.create_group("sub").create_array("y", shape=(2,), dtype="uint8")
+    array = ArraySpec.create_default(shape=(2,), data_type="uint8")
+    spec = GroupSpec(members={"x": array, "sub": GroupSpec(members={"y": array})})
+
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        entry_point(spec, group, array_node, store)
+    deprecations = [
+        str(w.message)
+        for w in record
+        if issubclass(w.category, DeprecationWarning) and "pydantic-zarr 0.12" in str(w.message)
+    ]
+    assert [message.split("`")[1] for message in deprecations] == [name]
+    assert "from_stored_metadata_json" in deprecations[0] or "create_hierarchy" in deprecations[0]

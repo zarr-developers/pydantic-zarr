@@ -7,6 +7,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import warnings
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, cast
 
@@ -69,6 +70,12 @@ except ImportError:
 
 with suppress(ImportError):
     from zarr.errors import ContainsArrayError, ContainsGroupError
+
+pytestmark = pytest.mark.filterwarnings(
+    # the zarr-python IO entry points still work, warning, until pydantic-zarr 0.12;
+    # `test_zarr_io_deprecated` checks the warnings themselves
+    "ignore:`[^`]+` is deprecated and will be removed in pydantic-zarr:DeprecationWarning"
+)
 
 ArrayMemoryOrder = Literal["C", "F"]
 DimensionSeparator = Literal[".", "/"]
@@ -1378,3 +1385,81 @@ def test_from_stored_metadata_json_v2_parent_not_group(parent: str) -> None:
         member = "x/z"
     with pytest.raises(ValueError, match=f"documents at '{member}', but no group's"):
         GroupSpec.from_stored_metadata_json(stored)
+
+
+_DEPRECATED_IO_V2: list[
+    tuple[str, Callable[[AnyGroupSpec, zarr_mod.Group, zarr_mod.Array, Any], object]]
+] = [
+    ("GroupSpec.to_zarr", lambda spec, group, array, store: spec.to_zarr(store, path="w")),
+    (
+        "BaseGroupSpec.to_zarr",
+        lambda spec, group, array, store: BaseGroupSpec().to_zarr(store, path="w"),
+    ),
+    (
+        "ArraySpec.to_zarr",
+        lambda spec, group, array, store: cast("AnyArraySpec", spec.members["x"]).to_zarr(
+            store, path="w"
+        ),
+    ),
+    ("to_zarr", lambda spec, group, array, store: to_zarr(spec, store, "w")),
+    # over an existing node, `to_zarr` compares with it: still one warning
+    (
+        "GroupSpec.to_zarr",
+        lambda spec, group, array, store: spec.to_zarr(store, path="g", overwrite=True),
+    ),
+    (
+        "BaseGroupSpec.to_zarr",
+        lambda spec, group, array, store: BaseGroupSpec().to_zarr(store, path="g", overwrite=True),
+    ),
+    (
+        "ArraySpec.to_zarr",
+        lambda spec, group, array, store: cast("AnyArraySpec", spec.members["x"]).to_zarr(
+            store, path="g/x", overwrite=True
+        ),
+    ),
+    ("GroupSpec.from_zarr", lambda spec, group, array, store: GroupSpec.from_zarr(group)),
+    ("BaseGroupSpec.from_zarr", lambda spec, group, array, store: BaseGroupSpec.from_zarr(group)),
+    ("ArraySpec.from_zarr", lambda spec, group, array, store: ArraySpec.from_zarr(array)),
+    ("from_zarr", lambda spec, group, array, store: from_zarr(group)),
+    ("from_zarr_flat", lambda spec, group, array, store: from_zarr_flat(group)),
+    ("GroupSpec.like with a zarr.Group", lambda spec, group, array, store: spec.like(group)),
+    (
+        "BaseGroupSpec.like with a zarr.Group",
+        lambda spec, group, array, store: BaseGroupSpec().like(group),
+    ),
+    (
+        "ArraySpec.like with a zarr.Array",
+        lambda spec, group, array, store: cast("AnyArraySpec", spec.members["x"]).like(array),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("name", "entry_point"), _DEPRECATED_IO_V2, ids=[n for n, _ in _DEPRECATED_IO_V2]
+)
+def test_zarr_io_deprecated(
+    name: str, entry_point: Callable[[AnyGroupSpec, zarr_mod.Group, zarr_mod.Array, Any], object]
+) -> None:
+    """
+    Every entry point that reads or writes zarr-python nodes warns that it is
+    deprecated, exactly once, naming itself: a group's hierarchy is handled
+    through private paths, so its members add no warnings of their own.
+    """
+    zarr = pytest.importorskip("zarr")
+    store = zarr.storage.MemoryStore()
+    group = zarr.create_group(store, path="g", zarr_format=2)
+    array_node = group.create_array("x", shape=(2,), dtype="uint8")
+    group.create_group("sub").create_array("y", shape=(2,), dtype="uint8")
+    array = ArraySpec(shape=(2,), chunks=(2,), dtype="uint8")
+    spec = GroupSpec(members={"x": array, "sub": GroupSpec(members={"y": array})})
+
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        entry_point(spec, group, array_node, store)
+    deprecations = [
+        str(w.message)
+        for w in record
+        if issubclass(w.category, DeprecationWarning) and "pydantic-zarr 0.12" in str(w.message)
+    ]
+    assert [message.split("`")[1] for message in deprecations] == [name]
+    assert "from_stored_metadata_json" in deprecations[0] or "create_hierarchy" in deprecations[0]

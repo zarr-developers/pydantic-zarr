@@ -5,9 +5,9 @@ attribute models with non-identifier keys (``_ARRAY_DIMENSIONS``) on
 ``AttributesBase``, closed-``TypedDict`` members for a hierarchy whose member
 names are fixed by a spec (the four native 10 m Sentinel-2 bands), a
 cross-member validator (every CF ``grid_mapping`` reference resolves), a store
-round trip, the invalid layouts the model refuses, and a check that the model
-writes the same metadata documents as xarray writing the equivalent CF
-dataset. GeoZarr: https://github.com/zarr-developers/geozarr-spec
+round trip, the invalid layouts the model refuses, and a check that the
+metadata documents the model holds equal those xarray writes for the
+equivalent CF dataset. GeoZarr: https://github.com/zarr-developers/geozarr-spec
 
 Run standalone with:
 uv run --no-project --with-editable <path to pydantic-zarr checkout> \
@@ -22,12 +22,13 @@ uv run --no-project --with-editable <path to pydantic-zarr checkout> \
 # (zarr-metadata-backed v3 document validation and the APIs used below).
 
 # --8<-- [start:attrs]
-from typing import Self
+from typing import Self, cast
 
 import zarr
 import zarr.storage
 from pydantic import Field, ValidationError, model_validator
 from typing_extensions import TypedDict
+from zarr_io import read_documents, repaired, write_hierarchy
 
 from pydantic_zarr.core import MISSING, AttributesBase, get_attribute
 from pydantic_zarr.v3 import ArraySpec, CodecLike, GroupSpec, is_array_spec
@@ -128,11 +129,12 @@ def band(grid_mapping: str = "spatial_ref") -> BandArray:
 
 
 def coord(axis: str) -> ArraySpec:
-    # plain-dict attributes work too; tuples match what a store read returns
+    # plain-dict attributes work too; a list is what JSON holds, so it is what
+    # a read of the stored document gives back
     return ArraySpec.create_default(
         shape=(180,),
         data_type="float64",
-        attributes={"_ARRAY_DIMENSIONS": (axis,)},
+        attributes={"_ARRAY_DIMENSIONS": [axis]},
         dimension_names=(axis,),
     )
 
@@ -156,17 +158,18 @@ b02 = r10m["b02"]
 assert is_array_spec(b02)
 assert b02.dimension_names == ("y", "x")
 
-# Round trip: write the dataset to a store and read it back. `from_zarr` on
-# the typed subclass re-validates everything it reads.
+# Round trip: write the dataset's documents to a store with zarr-python and
+# read them back (`zarr_io.py` holds the two helpers). `from_stored_metadata_json`
+# on the typed subclass re-validates everything it reads.
 store = zarr.storage.MemoryStore()
-r10m.to_zarr(store, path="measurements/r10m")
-read_back = R10mDataset.from_zarr(zarr.open_group(store, path="measurements/r10m", mode="r"))
+write_hierarchy(r10m, store, "measurements/r10m")
+stored = zarr.open_group(store, path="measurements/r10m", mode="r")
+read_back = R10mDataset.from_stored_metadata_json(read_documents(stored))
 assert read_back.like(r10m)
 assert read_back == r10m
 print("round trip through a MemoryStore preserved the dataset")
 
 # the stored attribute documents use the alias spellings
-stored = zarr.open_group(store, path="measurements/r10m", mode="r")
 assert dict(stored["b02"].attrs)["_ARRAY_DIMENSIONS"] == ["y", "x"]
 # --8<-- [end:dataset]
 
@@ -197,8 +200,8 @@ else:
 # reference implementation for this layer (one resolution dataset with
 # grid_mapping/spatial_ref and 1-D x/y coords — the CF layer, not the full
 # Sentinel-2 product tree). The model, told the reference's codecs and the NaN
-# fill value of its float coordinates, must write byte-for-byte the same
-# metadata documents.
+# fill value of its float coordinates, must hold the same metadata documents
+# xarray wrote, each equal once parsed; the model writes no store.
 import asyncio
 import json
 
@@ -281,12 +284,10 @@ model = R10mDataset(
         ),
     }
 )
-model_store = zarr.storage.MemoryStore()
-model.to_zarr(model_store, path="")
 
 
 def metadata_documents(store: zarr.storage.MemoryStore) -> dict[str, dict[str, object]]:
-    """Every zarr.json in the store, parsed (chunk payloads ignored)."""
+    """Every zarr.json in the store, parsed (chunk payloads ignored), as a reader takes it."""
 
     async def keys(s: zarr.storage.MemoryStore) -> list[str]:
         return [k async for k in s.list()]
@@ -298,12 +299,14 @@ def metadata_documents(store: zarr.storage.MemoryStore) -> dict[str, dict[str, o
             continue
         buffer = asyncio.run(store.get(key, prototype=proto))
         assert buffer is not None
-        documents[key] = json.loads(buffer.to_bytes())
+        documents[key] = cast("dict[str, object]", repaired(json.loads(buffer.to_bytes())))
     return documents
 
 
 ref_docs = metadata_documents(ref_store)
-model_docs = metadata_documents(model_store)
+# the documents the model holds, keyed as a store keys them and as JSON holds
+# them (tuples become arrays): no store needed
+model_docs = json.loads(json.dumps(model.to_stored_metadata_json()))
 assert ref_docs.keys() == model_docs.keys()
 for key in ref_docs:
     assert ref_docs[key].keys() == model_docs[key].keys(), key
