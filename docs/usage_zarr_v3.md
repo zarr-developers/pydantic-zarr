@@ -285,7 +285,7 @@ A stored document that breaks the spec is refused, as it should be, so
 `from_stored_metadata_json`. That routine takes a JSON value and gives one
 back, and each repair it knows is asked for by a keyword:
 `normalize_null_consolidated_metadata` (on by default) drops the
-`"consolidated_metadata": null` that zarr-python 3.0 through 3.3 writes into
+`"consolidated_metadata": null` that zarr-python 3.0 writes into
 every group, which the spec does not allow. A reader of documents from
 anywhere else can call it the same way.
 

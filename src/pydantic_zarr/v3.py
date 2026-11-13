@@ -2892,7 +2892,7 @@ def normalize_group_metadata(
     asks for it:
 
     normalize_null_consolidated_metadata :
-        zarr-python 3.0 through 3.3 writes ``"consolidated_metadata": null``
+        zarr-python 3.0 writes ``"consolidated_metadata": null``
         into every group's ``zarr.json`` to say the group has none. The
         member, when present, is an object, so the readers refuse the null.
         When `True` (the default), a group document's null

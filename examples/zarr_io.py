@@ -77,7 +77,7 @@ def read_documents(node: zarr.Array | zarr.Group) -> dict[str, object]:
     (`zarr.json`, or `.zarray`/`.zgroup` and `.zattrs`), so this reads what the
     store holds, not zarr-python's in-memory view of it, each document passed
     through `pydantic_zarr.v3.normalize_group_metadata`, which repairs the null
-    `consolidated_metadata` zarr-python before 3.4 writes.
+    `consolidated_metadata` zarr-python 3.0 writes.
     """
     prototype = default_buffer_prototype()
     nodes: list[tuple[str, zarr.Array | zarr.Group]] = [("", node)]

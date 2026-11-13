@@ -2760,9 +2760,9 @@ def test_normalize_group_metadata(document: Any, normalize: bool, expected: Any)
         assert result is document
 
 
-def test_normalize_group_metadata_lets_a_zarr_python_33_group_be_read() -> None:
+def test_normalize_group_metadata_lets_a_zarr_python_30_group_be_read() -> None:
     """
-    A hierarchy zarr-python 3.0 through 3.3 wrote, with a null
+    A hierarchy zarr-python 3.0 wrote, with a null
     `consolidated_metadata` in every group, is refused as stored and read once
     each document is normalized.
     """
