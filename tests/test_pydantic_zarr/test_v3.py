@@ -1464,6 +1464,12 @@ def test_create_default(
     assert explicit.fill_value == 7
     scalar: AnyArraySpec = ArraySpec.create_default()
     assert (scalar.shape, scalar.data_type, scalar.fill_value) == ((), "uint8", 0)
+    # a data type with no default fill value in the scope gets its codecs
+    # derived once the fill value is given
+    extension: AnyArraySpec = ArraySpec.create_default(
+        shape=(2,), data_type="some_extension_dtype", fill_value=0
+    )
+    assert extension.codecs == ({"name": "bytes", "configuration": {"endian": "little"}},)
     assert scalar.chunk_grid == {"name": "regular", "configuration": {"chunk_shape": ()}}
 
 
@@ -1803,6 +1809,16 @@ class _AcmeFieldArraySpec(ArraySpec):
     acme: JSONValue = {"must_understand": False}  # noqa: RUF012
 
 
+class _FactoryEncodingArraySpec(ArraySpec):
+    """A chunk key encoding default whose factory reads the validated shape."""
+
+    chunk_key_encoding: AnyNamedConfig = Field(
+        default_factory=lambda data: {"name": "v2"}
+        if len(data["shape"]) > 1
+        else {"name": "default"}
+    )
+
+
 class _FactoryFillArraySpec(ArraySpec):
     """A fill value default whose factory reads the validated data type."""
 
@@ -1870,6 +1886,11 @@ class _FactoryFillArraySpec(ArraySpec):
         ),
         (_FactoryFillArraySpec, {"shape": (4,), "data_type": "float32"}, {"fill_value": "NaN"}),
         (_FactoryFillArraySpec, {"shape": (4,), "data_type": "int8"}, {"fill_value": 0}),
+        (
+            _FactoryEncodingArraySpec,
+            {"shape": (4, 4), "data_type": "uint8"},
+            {"chunk_key_encoding": {"name": "v2"}},
+        ),
     ],
     ids=[
         "pinned-fill",
@@ -1882,6 +1903,7 @@ class _FactoryFillArraySpec(ArraySpec):
         "added-field",
         "factory-float",
         "factory-int",
+        "factory-encoding",
     ],
 )
 def test_create_default_starts_from_class_defaults(
@@ -1915,6 +1937,12 @@ def test_create_default_pinned_default_conflict_named() -> None:
     """
     with pytest.raises(ValidationError, match='fill_value: expected an integer, got "NaN"'):
         _NaNFillArraySpec.create_default(shape=(4,), data_type="uint8")
+
+
+def test_create_default_mismatched_dimension_names_named() -> None:
+    """Dimension names that do not match the shape's rank are reported as such."""
+    with pytest.raises(ValidationError, match="dimension names"):
+        ArraySpec.create_default(shape=(4,), data_type="uint8", dimension_names=("y", "x"))
 
 
 def test_create_default_invalid_shape_named() -> None:
