@@ -36,6 +36,12 @@ if TYPE_CHECKING:
 
 ZARR_AVAILABLE = importlib.util.find_spec("zarr") is not None
 
+pytestmark = pytest.mark.filterwarnings(
+    # the zarr-python IO entry points still work, warning, until pydantic-zarr 0.12;
+    # `test_zarr_io_deprecated` checks the warnings themselves
+    "ignore:`[^`]+` is deprecated and will be removed in pydantic-zarr:DeprecationWarning"
+)
+
 PROPERTY_SETTINGS = settings(
     max_examples=75,
     deadline=None,

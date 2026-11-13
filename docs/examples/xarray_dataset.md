@@ -18,7 +18,8 @@ even for a `float32` variable). This page builds a typed model of that layout: C
 models with reserved-name aliases, `ArraySpec` subclasses for variables and
 coordinates, a cross-member dimension-consistency validator, and a closed
 member set for one concrete dataset. The same model classes validate real
-xarray-written stores read back with `from_zarr`. (xarray also writes a
+xarray-written stores, read back with the `read_documents` helper from
+[`examples/zarr_io.py`](https://github.com/zarr-developers/pydantic-zarr/blob/main/examples/zarr_io.py) and `from_stored_metadata_json`. (xarray also writes a
 `consolidated_metadata` block into the root `zarr.json` by default;
 pydantic-zarr does not model consolidated metadata yet.)
 
@@ -74,23 +75,23 @@ are each refused with a `ValidationError`:
 --8<-- "examples/xarray_dataset.py:dataset"
 ```
 
-Reading a real xarray-written store back is the same `from_zarr` call on the
-typed class: members are re-validated against the narrowed annotations, so
-`ClimateDataset.from_zarr(zarr.open_group(...))` returns typed attributes
-and members — or raises `ValidationError` if the store does not follow the
-layout this page encodes.
+Reading a real xarray-written store back is the same call on the typed class:
+members are re-validated against the narrowed annotations, so
+`ClimateDataset.from_stored_metadata_json(read_documents(zarr.open_group(...)))`
+returns typed attributes and members — or raises `ValidationError` if the store
+does not follow the layout this page encodes.
 
 ## Fidelity against real xarray
 
-The script ends by proving the model writes exactly what xarray writes: it
+The script ends by checking that the model holds exactly the documents xarray writes: it
 builds the same curvilinear `Dataset` with xarray (`assign_coords` makes
 `lat`/`lon` auxiliary coordinates, so xarray itself emits the
 `coordinates="lat lon"` attribute on the data variable), writes it with
 `ds.to_zarr(..., zarr_format=3, consolidated=False)` — consolidated
 metadata is disabled because pydantic-zarr does not model that block yet —
-writes the model to a second store, and asserts that the two hierarchies
-hold the same set of `zarr.json` documents and that each pair of documents
-is equal once parsed. Chunk payloads are not compared: the specs describe
+and asserts that the documents xarray wrote are the same set, each equal once
+parsed, as the documents the model holds (`to_stored_metadata_json`), with no
+second store. Chunk payloads are not compared: the specs describe
 metadata.
 
 ```python
