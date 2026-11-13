@@ -164,11 +164,19 @@ member at `/a/b`).
 
 FillValue = JSONValue
 """
-The JSON form of a fill value. Which values are valid depends on the array's
+The JSON form of a fill value, as a spec holds it. Which values are valid depends on the array's
 data type, and is judged by that data type's definition when the whole
 metadata document is validated; at the field level any JSON value is a
 fill value. `zarr-metadata` exports per-data-type fill value types
 (``Float32FillValue`` and so on) for callers that want the narrow forms.
+"""
+
+FillValueLike = FillValue | np.generic | complex
+"""
+A fill value as an input takes it (`ArraySpec.create_default`,
+`ArraySpec.replace`, `ArraySpec.from_array`): its JSON form, or a numpy scalar
+or a Python complex number, which validation writes in JSON form (non-finite
+floats as `"NaN"`, `"Infinity"` or `"-Infinity"`, complex numbers as pairs).
 """
 
 TName = TypeVar("TName", bound=str, default=str)
@@ -206,7 +214,11 @@ class AnyNamedConfig(NamedConfig[str, Mapping[str, object]]):
 
 
 CodecLike = str | AnyNamedConfig
-"""A codec declaration: an extension name, or a named configuration object."""
+"""
+A codec declaration as an input takes it: an extension name, or a named
+configuration object. A spec holds every codec as an object (`AnyNamedConfig`),
+since validation writes a bare name as ``{"name": ...}``.
+"""
 
 # The structured Zarr V3 metadata types are defined once, by `zarr-metadata`;
 # the names this module exported before it delegated to that library are kept
@@ -221,18 +233,23 @@ V2ChunkKeyEncoding = V2ChunkKeyEncodingObject
 
 ChunkGridLike = RegularChunkGridMetadata | AnyNamedConfig
 """
-A chunk grid declaration: the regular grid the core spec defines, typed
-exactly, or any other grid as a named configuration, judged by its definition
-in the scope when the document is validated. The exact member keeps a typed
-regular-grid object (such as `zarr_metadata`'s `RegularChunkGridObject`)
-assignable here, since TypedDict keys are invariant.
+A chunk grid declaration as an input takes it (`ArraySpec.create_default`,
+`ArraySpec.replace`, `ArraySpec.from_array`): the regular grid the core spec
+defines, typed exactly, or any other grid as a named configuration, judged by
+its definition in the scope when the document is validated. The exact member
+keeps a typed regular-grid object (such as `zarr_metadata`'s
+`RegularChunkGridObject`) assignable, since TypedDict keys are invariant. A
+spec holds the grid as an `AnyNamedConfig`.
 """
 
-ChunkKeyEncodingLike = DefaultChunkKeyEncodingMetadata | V2ChunkKeyEncodingMetadata | AnyNamedConfig
+ChunkKeyEncodingLike = (
+    DefaultChunkKeyEncodingMetadata | V2ChunkKeyEncodingMetadata | AnyNamedConfig | str
+)
 """
-A chunk key encoding declaration: the two the core spec defines, typed
-exactly (as an object or a bare name), or any other as a named configuration,
-judged by its definition in the scope when the document is validated.
+A chunk key encoding declaration as an input takes it: the two the core spec
+defines, typed exactly (as an object or a bare name), or any other as a named
+configuration or a bare name, judged by its definition in the scope when the
+document is validated. A spec holds the encoding as an `AnyNamedConfig`.
 """
 
 
@@ -665,8 +682,15 @@ def reject_bare_codec(data: object) -> object:
 
 
 CodecTuple = Annotated[
-    tuple[CodecLike, ...], BeforeValidator(ensure_multiple), BeforeValidator(reject_bare_codec)
+    tuple[AnyNamedConfig, ...],
+    BeforeValidator(ensure_multiple),
+    BeforeValidator(reject_bare_codec),
 ]
+"""
+The codec pipeline a spec holds: one or more codec objects. Bare codec names
+are written as objects before the field is validated (see
+`ArraySpec.canonicalize_declarations`).
+"""
 
 
 class ArraySpecCreate(TypedDict, total=False):
@@ -676,13 +700,13 @@ class ArraySpecCreate(TypedDict, total=False):
     also accepts `"auto"`.
     """
 
-    shape: tuple[int, ...]
+    shape: Sequence[int]
     data_type: npt.DTypeLike | Mapping[str, object]
     attributes: TBaseAttr
     chunk_key_encoding: ChunkKeyEncodingLike
-    fill_value: FillValue
+    fill_value: FillValueLike
     codecs: Sequence[CodecLike]
-    storage_transformers: Sequence[AnyNamedConfig]
+    storage_transformers: Sequence[str | AnyNamedConfig]
     dimension_names: Sequence[str | None] | None
     extra_fields: Mapping[str, ZarrV3ExtensionField]
 
@@ -748,8 +772,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     attributes: TAttr = Field(default={}, validate_default=True)
     shape: tuple[int, ...]
     data_type: DTypeLike
-    chunk_grid: ChunkGridLike
-    chunk_key_encoding: ChunkKeyEncodingLike
+    chunk_grid: AnyNamedConfig
+    chunk_key_encoding: AnyNamedConfig
     fill_value: Annotated[FillValue, BeforeValidator(canonicalize_fill_value)]
     codecs: CodecTuple
     storage_transformers: tuple[AnyNamedConfig, ...] = ()
@@ -987,11 +1011,11 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         # TBaseAttr, not TAttr: covariant parameters may not appear in
         # argument positions. Validation enforces the class's attribute type.
         attributes: Literal["auto"] | TBaseAttr = "auto",
-        chunk_grid: Literal["auto"] | AnyNamedConfig = "auto",
-        chunk_key_encoding: Literal["auto"] | AnyNamedConfig = "auto",
-        fill_value: Literal["auto"] | FillValue = "auto",
+        chunk_grid: Literal["auto"] | ChunkGridLike = "auto",
+        chunk_key_encoding: Literal["auto"] | ChunkKeyEncodingLike = "auto",
+        fill_value: Literal["auto"] | FillValueLike = "auto",
         codecs: Literal["auto"] | Sequence[CodecLike] = "auto",
-        storage_transformers: Literal["auto"] | Sequence[AnyNamedConfig] = "auto",
+        storage_transformers: Literal["auto"] | Sequence[str | AnyNamedConfig] = "auto",
         dimension_names: Literal["auto"] | Sequence[str | None] = "auto",
     ) -> Self:
         """
@@ -1045,7 +1069,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         else:
             chunk_grid_actual = chunk_grid
 
-        chunk_key_actual: AnyNamedConfig
+        chunk_key_actual: ChunkKeyEncodingLike
         if chunk_key_encoding == "auto":
             chunk_key_actual = {"name": "default", "configuration": {"separator": "/"}}
         else:
@@ -1061,7 +1085,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             codecs_actual = auto_codecs(array)
         else:
             codecs_actual = tuple(codecs)
-        storage_transformers_actual: Sequence[AnyNamedConfig]
+        storage_transformers_actual: Sequence[str | AnyNamedConfig]
         if storage_transformers == "auto":
             storage_transformers_actual = auto_storage_transformers(array)
         else:
@@ -1073,16 +1097,20 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         else:
             dimension_names_actual = dimension_names
 
-        return cls(
-            shape=array.shape,
-            data_type=parse_dtype_v3(array.dtype),
-            chunk_grid=chunk_grid_actual,
-            attributes=attributes_actual,
-            chunk_key_encoding=chunk_key_actual,
-            fill_value=fill_value_actual,
-            codecs=tuple(codecs_actual),
-            storage_transformers=tuple(storage_transformers_actual),
-            dimension_names=dimension_names_actual,
+        # the inputs above are of the types an input takes, which validation
+        # writes as the types a spec holds; `model_validate` is that door
+        return cls.model_validate(
+            {
+                "shape": array.shape,
+                "data_type": parse_dtype_v3(array.dtype),
+                "chunk_grid": chunk_grid_actual,
+                "attributes": attributes_actual,
+                "chunk_key_encoding": chunk_key_actual,
+                "fill_value": fill_value_actual,
+                "codecs": tuple(codecs_actual),
+                "storage_transformers": tuple(storage_transformers_actual),
+                "dimension_names": dimension_names_actual,
+            }
         )
 
     @classmethod
