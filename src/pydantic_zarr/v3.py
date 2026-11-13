@@ -49,6 +49,7 @@ from zarr_metadata import (
     ZarrV3ArrayMetadataJSON,
     ZarrV3ExtensionField,
     ZarrV3GroupMetadataJSON,
+    ZarrV3NamedConfigJSON,
 )
 from zarr_metadata.model import ZarrV3ArrayMetadata as ZarrV3ArrayMetadataModel
 from zarr_metadata.model import ZarrV3GroupMetadata as ZarrV3GroupMetadataModel
@@ -214,11 +215,14 @@ class AnyNamedConfig(NamedConfig[str, Mapping[str, object]]):
     """
 
 
-CodecLike = str | AnyNamedConfig
+CodecLike = str | AnyNamedConfig | ZarrV3NamedConfigJSON
 """
 A codec declaration as an input takes it: an extension name, or a named
-configuration object. A spec holds every codec as an object (`AnyNamedConfig`),
-since validation writes a bare name as ``{"name": ...}``.
+configuration object. `zarr_metadata`'s `ZarrV3NamedConfigJSON`, whose members
+are read-only, keeps every typed codec object (`BytesCodecObject`,
+`ZstdCodecObject`, ...) assignable, which the mutable `AnyNamedConfig` cannot,
+since TypedDict keys are invariant. A spec holds every codec as an object
+(`AnyNamedConfig`), since validation writes a bare name as ``{"name": ...}``.
 """
 
 # The structured Zarr V3 metadata types are defined once, by `zarr-metadata`;
@@ -232,25 +236,30 @@ DefaultChunkKeyEncoding = DefaultChunkKeyEncodingObject
 V2ChunkKeyEncodingConfig = V2ChunkKeyEncodingConfiguration
 V2ChunkKeyEncoding = V2ChunkKeyEncodingObject
 
-ChunkGridLike = RegularChunkGridMetadata | AnyNamedConfig
+ChunkGridLike = RegularChunkGridMetadata | AnyNamedConfig | ZarrV3NamedConfigJSON
 """
 A chunk grid declaration as an input takes it (`ArraySpec.create_default`,
 `ArraySpec.replace`, `ArraySpec.from_array`): the regular grid the core spec
 defines, typed exactly, or any other grid as a named configuration, judged by
 its definition in the scope when the document is validated. The exact member
-keeps a typed regular-grid object (such as `zarr_metadata`'s
-`RegularChunkGridObject`) assignable, since TypedDict keys are invariant. A
-spec holds the grid as an `AnyNamedConfig`.
+and the read-only `ZarrV3NamedConfigJSON` keep typed grid objects (such as
+`zarr_metadata`'s `RegularChunkGridObject`) assignable, since TypedDict keys
+are invariant. A spec holds the grid as an `AnyNamedConfig`.
 """
 
 ChunkKeyEncodingLike = (
-    DefaultChunkKeyEncodingMetadata | V2ChunkKeyEncodingMetadata | AnyNamedConfig | str
+    DefaultChunkKeyEncodingMetadata
+    | V2ChunkKeyEncodingMetadata
+    | AnyNamedConfig
+    | ZarrV3NamedConfigJSON
+    | str
 )
 """
 A chunk key encoding declaration as an input takes it: the two the core spec
 defines, typed exactly (as an object or a bare name), or any other as a named
-configuration or a bare name, judged by its definition in the scope when the
-document is validated. A spec holds the encoding as an `AnyNamedConfig`.
+configuration (typed objects through the read-only `ZarrV3NamedConfigJSON`) or a
+bare name, judged by its definition in the scope when the document is
+validated. A spec holds the encoding as an `AnyNamedConfig`.
 """
 
 
