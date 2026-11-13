@@ -260,7 +260,7 @@ try:
     ClimateDataset(
         attributes=dataset.attributes,
         members=dict(dataset.members)
-        | {"temperature": temperature.update(attributes=CFAttrs(coordinates="lat lon elevation"))},
+        | {"temperature": temperature.replace(attributes=CFAttrs(coordinates="lat lon elevation"))},
     )
     raise AssertionError("accepted a dangling `coordinates` reference")
 except ValidationError as exc:

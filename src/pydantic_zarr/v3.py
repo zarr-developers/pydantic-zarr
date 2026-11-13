@@ -251,7 +251,7 @@ class NodeSpec(ExtraFieldsBase):
         context carries none, making the scope a property of the model
         rather than of each ``model_validate`` call: a subclass that sets
         it keeps its scope through direct construction and every derived
-        operation (``update``, ``from_shape_and_data_type``, ``like``, ...),
+        operation (``replace``, ``from_shape_and_data_type``, ``like``, ...),
         which re-validate as the class. An explicit validation context
         still wins, and ``None`` (the default) means ``zarr-metadata``'s
         ``CORE_AND_EXTENSIONS_CONTEXT``. A group's members are validated as their
@@ -287,7 +287,7 @@ class NodeSpec(ExtraFieldsBase):
     field name. Accepted extra fields are
     kept in the `extra_fields` mapping (see `ExtraFieldsBase`) and written
     back as top-level members wherever the document is written:
-    ``model_dump``, ``model_dump_json``, ``update``, ``like``, ``to_zarr``
+    ``model_dump``, ``model_dump_json``, ``replace``, ``like``, ``to_zarr``
     and ``from_zarr``.
     """
 
@@ -1088,7 +1088,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         metadata-only counterpart to `from_array`, for when there is no array
         object to describe.
 
-        `overrides` takes the fields an `update` call takes, minus the two
+        `overrides` takes the fields a `replace` call takes, minus the two
         this method takes positionally. Every field absent from it gets a
         spec default or one derived from the data type: a size-guessed regular chunk grid (the same heuristic
         zarr-python applies when no chunks are given), the `default` chunk key
@@ -1297,7 +1297,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             )
             raise ValueError(msg)
 
-    def update(self, **changes: Unpack[ArraySpecUpdate]) -> Self:
+    def replace(self, **changes: Unpack[ArraySpecUpdate]) -> Self:
         """
         Return a revalidated copy of this model with `changes` applied.
 
@@ -1306,8 +1306,14 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         `shape` with a matching `chunk_grid`) change together atomically.
         Unlike `model_copy(update=...)`, the result is validated. Passing
         `extra_fields` replaces the extra fields as a whole.
+
+        `copy.replace` (Python 3.13 and later) calls this method too, so it
+        validates as well, where pydantic's own `__replace__` would copy
+        without validating.
         """
-        return self._updated(changes)
+        return self._replaced(changes)
+
+    __replace__ = replace
 
     def with_sharding_codec(
         self,
@@ -1338,7 +1344,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
                 "index_location": index_location,
             },
         }
-        return self.update(codecs=(sharding_codec,))
+        return self.replace(codecs=(sharding_codec,))
 
     def like(
         self,
@@ -1527,14 +1533,20 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         self._refuse_unjudged(GroupExtraFieldDefinition, scope)
         return self
 
-    def update(self, **changes: Unpack[BaseGroupSpecUpdate]) -> Self:
+    def replace(self, **changes: Unpack[BaseGroupSpecUpdate]) -> Self:
         """
         Return a revalidated copy of this model with `changes` applied.
 
         Unlike `model_copy(update=...)`, the result is validated, so an
         invalid change is refused. Passing `extra_fields` replaces the extra fields as a whole.
+
+        `copy.replace` (Python 3.13 and later) calls this method too, so it
+        validates as well, where pydantic's own `__replace__` would copy
+        without validating.
         """
-        return self._updated(changes)
+        return self._replaced(changes)
+
+    __replace__ = replace
 
     def _own_metadata(self) -> AnyBaseGroupSpec:
         """
@@ -1562,7 +1574,7 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
                 f"This group holds `{ZARR_V3_CONSOLIDATED_METADATA_KEY}`, which `to_zarr` does "
                 "not write: it lists the members of the hierarchy as it was consolidated, "
                 "which need not be the members written. Drop it before writing (pass "
-                "`update` the `extra_fields` without it), and consolidate the written "
+                "`replace` the `extra_fields` without it), and consolidate the written "
                 "hierarchy with `zarr.consolidate_metadata`."
             )
             raise ValueError(msg)
@@ -1714,15 +1726,21 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         return self
 
     @override
-    def update(self, **changes: Unpack[GroupSpecUpdate]) -> Self:  # type: ignore[override]
+    def replace(self, **changes: Unpack[GroupSpecUpdate]) -> Self:  # type: ignore[override]
         """
         Return a revalidated copy of this model with `changes` applied.
 
         All changes land in one validation pass, so `attributes` and `members`
         change together atomically. Unlike `model_copy(update=...)`, the
         result is validated. Passing `extra_fields` replaces the extra fields as a whole.
+
+        `copy.replace` (Python 3.13 and later) calls this method too, so it
+        validates as well, where pydantic's own `__replace__` would copy
+        without validating.
         """
-        return self._updated(changes)
+        return self._replaced(changes)
+
+    __replace__ = replace
 
     def resolve_path(self, path: str) -> AnyArraySpec | AnyGroupSpec:
         """

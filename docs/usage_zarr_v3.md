@@ -266,7 +266,7 @@ print(spec.codecs[-1]["name"])
 ### Scope as a class property
 
 A per-call context lasts one call: operations that build new specs
-(`update`, `from_shape_and_data_type`, `with_sharding_codec`, `like`)
+(`replace`, `from_shape_and_data_type`, `with_sharding_codec`, `like`)
 re-validate with no context, back in the default scope. To make the scope a
 property of the model instead, set the `zarr_scope` class variable on a
 subclass: it is the scope every validation of that class reads in when the
@@ -419,7 +419,7 @@ except ValidationError as e:
     """
 ```
 
-`update(extra_fields=...)` replaces the extra fields as a whole. `to_zarr`
+`replace(extra_fields=...)` replaces the extra fields as a whole. `to_zarr`
 writes them and `from_zarr` reads them back (`zarr-python` stores them on
 arrays from 3.1 and on groups from 3.4; `to_zarr` refuses extra fields an
 older `zarr-python` cannot store). `consolidated_metadata` is the exception:

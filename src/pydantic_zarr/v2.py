@@ -269,7 +269,7 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         does not define. The spec says such keys "SHOULD NOT be present
         within the metadata object and SHOULD be ignored by implementations",
         so any key with a JSON value is accepted, given no meaning, and kept
-        for `model_dump`, `model_dump_json`, `update` and `like`.
+        for `model_dump`, `model_dump_json`, `replace` and `like`.
         zarr-python drops them when it reads or writes an array, so
         `from_zarr` never finds any and `to_zarr` does not write them. Group
         metadata, where "Other keys MUST NOT be present", takes none.
@@ -618,7 +618,7 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         sync(async_array._save_metadata(meta))
         return Array(_async_array=async_array)
 
-    def update(self, **changes: Unpack[ArraySpecUpdate]) -> Self:
+    def replace(self, **changes: Unpack[ArraySpecUpdate]) -> Self:
         """
         Return a revalidated copy of this model with `changes` applied.
 
@@ -629,8 +629,14 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         accept it, pass a `fill_value` in the same call. Unlike
         `model_copy(update=...)`, the result is validated. Passing
         `extra_fields` replaces the extra fields as a whole.
+
+        `copy.replace` (Python 3.13 and later) calls this method too, so it
+        validates as well, where pydantic's own `__replace__` would copy
+        without validating.
         """
-        return self._updated(changes)
+        return self._replaced(changes)
+
+    __replace__ = replace
 
     def like(
         self,
@@ -711,14 +717,20 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
 
     attributes: TAttr = Field(default={}, validate_default=True)
 
-    def update(self, **changes: Unpack[BaseGroupSpecUpdate]) -> Self:
+    def replace(self, **changes: Unpack[BaseGroupSpecUpdate]) -> Self:
         """
         Return a revalidated copy of this model with `changes` applied.
 
         Unlike `model_copy(update=...)`, the result is validated, so an
         invalid change is refused.
+
+        `copy.replace` (Python 3.13 and later) calls this method too, so it
+        validates as well, where pydantic's own `__replace__` would copy
+        without validating.
         """
         return type(self).model_validate({**self.model_dump(), **changes})
+
+    __replace__ = replace
 
     def to_metadata_json(self) -> ZarrV2GroupMetadataJSON:
         """
@@ -858,15 +870,21 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         return self
 
     @override
-    def update(self, **changes: Unpack[GroupSpecUpdate]) -> Self:  # type: ignore[override]
+    def replace(self, **changes: Unpack[GroupSpecUpdate]) -> Self:  # type: ignore[override]
         """
         Return a revalidated copy of this model with `changes` applied.
 
         All changes land in one validation pass, so `attributes` and `members`
         change together atomically. Unlike `model_copy(update=...)`, the
         result is validated.
+
+        `copy.replace` (Python 3.13 and later) calls this method too, so it
+        validates as well, where pydantic's own `__replace__` would copy
+        without validating.
         """
         return type(self).model_validate({**self.model_dump(), **changes})
+
+    __replace__ = replace
 
     def resolve_path(self, path: str) -> AnyArraySpec | AnyGroupSpec:
         """

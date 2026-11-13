@@ -4,6 +4,7 @@ Testts for pydantic_zarr.v2.
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 from contextlib import suppress
@@ -17,6 +18,7 @@ from pydantic_zarr.core import tuplify_json
 from .conftest import DTYPE_EXAMPLES_V2, ZARR_PYTHON_VERSION, DTypeExample
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
     from typing import Literal
 
@@ -756,18 +758,18 @@ def test_typevar_defaults_v2() -> None:
         ("compressor", None),
     ],
 )
-def test_update_v2(field: str, value: object) -> None:
-    """The v2 `update` returns a revalidated copy with the new field, everything else unchanged."""
+def test_replace_v2(field: str, value: object) -> None:
+    """The v2 `replace` returns a revalidated copy with the new field, everything else unchanged."""
     spec: AnyArraySpec = ArraySpec(shape=(4,), dtype="uint8", chunks=(2,), attributes={})
-    built = spec.update(**{field: value})  # type: ignore[arg-type]
+    built = spec.replace(**{field: value})  # type: ignore[arg-type]
     assert getattr(built, field) == value
     assert built.model_dump(exclude={field}) == spec.model_dump(exclude={field})
 
 
-def test_update_dtype_v2() -> None:
+def test_replace_dtype_v2() -> None:
     """A dtype change routes through parse_dtype_v2, accepting numpy dtypes."""
     spec: AnyArraySpec = ArraySpec(shape=(4,), dtype="uint8", chunks=(2,), attributes={})
-    assert spec.update(dtype=np.dtype("float64")).dtype == "<f8"
+    assert spec.replace(dtype=np.dtype("float64")).dtype == "<f8"
 
 
 def test_base_group_spec_v2() -> None:
@@ -1073,15 +1075,70 @@ def test_fill_value_default_subclass(cls: type[AnyArraySpec], expected: object) 
     assert cls(shape=(4,), chunks=(2,), dtype="<f8").fill_value == expected
 
 
-def test_update_dtype_keeps_fill_value() -> None:
+def _replacers() -> list[Callable[..., Any]]:
+    """The spellings of a validated changed copy: the method, `__replace__`, and `copy.replace` where Python has it."""
+    spellings: list[Callable[..., Any]] = [
+        lambda spec, **changes: spec.replace(**changes),
+        lambda spec, **changes: spec.__replace__(**changes),
+    ]
+    if hasattr(copy, "replace"):
+        spellings.append(lambda spec, **changes: copy.replace(spec, **changes))
+    return spellings
+
+
+@pytest.mark.parametrize(
+    ("spec", "changes", "expected"),
+    [
+        (
+            ArraySpec(shape=(4,), chunks=(2,), dtype="<i4"),
+            {"shape": (8,)},
+            ArraySpec(shape=(8,), chunks=(2,), dtype="<i4"),
+        ),
+        (BaseGroupSpec(), {"attributes": {"a": 1}}, BaseGroupSpec(attributes={"a": 1})),
+        (
+            GroupSpec(),
+            {"members": {"x": GroupSpec().model_dump()}},
+            GroupSpec(members={"x": GroupSpec()}),
+        ),
+    ],
+    ids=["array", "base-group", "group"],
+)
+def test_replace_spellings_agree_v2(spec: Any, changes: dict[str, Any], expected: Any) -> None:
+    """
+    `replace`, `__replace__` and `copy.replace` give the same revalidated
+    copy: members are validated into their spec classes, the original is
+    unchanged, and the copy has the class of the original.
+    """
+    for replace in _replacers():
+        replaced = replace(spec, **changes)
+        assert replaced == expected
+        assert type(replaced) is type(spec)
+        assert replaced is not spec
+    assert spec != expected
+
+
+@pytest.mark.parametrize(
+    "replace", _replacers(), ids=["method", "dunder", "copy"][: len(_replacers())]
+)
+def test_replace_spellings_refuse_invalid_change_v2(replace: Callable[..., Any]) -> None:
+    """
+    Every spelling refuses an invalid change, where pydantic's own
+    `__replace__`, a `model_copy` that does not validate, accepted it.
+    """
+    spec = ArraySpec(shape=(4,), chunks=(2,), dtype="<i4")
+    with pytest.raises(ValidationError, match="shape"):
+        replace(spec, shape="nonsense")
+
+
+def test_replace_dtype_keeps_fill_value() -> None:
     """
     A new dtype keeps the current fill value, so changing to a dtype that
     refuses it, without a matching fill value, is a validation error.
     """
     spec = ArraySpec(shape=(4,), chunks=(2,), dtype="<i4")
-    assert spec.update(dtype="|b1", fill_value=False).fill_value is False
+    assert spec.replace(dtype="|b1", fill_value=False).fill_value is False
     with pytest.raises(ValidationError, match=r"fill_value: expected a boolean or null, got 0"):
-        spec.update(dtype="|b1")
+        spec.replace(dtype="|b1")
 
 
 def test_fill_value_invalid_for_dtype() -> None:
@@ -1113,7 +1170,7 @@ def test_from_zarr_non_finite_fill_value(dtype: str, fill_value: object, expecte
     )
     spec = ArraySpec.from_zarr(array)
     assert spec.fill_value == expected
-    assert spec.update(fill_value=cast("Any", fill_value)) == spec
+    assert spec.replace(fill_value=cast("Any", fill_value)) == spec
     spec.to_zarr(store, path="b")
     assert ArraySpec.from_zarr(zarr.open_array(store, path="b")) == spec
 

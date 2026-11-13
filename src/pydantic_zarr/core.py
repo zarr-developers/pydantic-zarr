@@ -203,10 +203,10 @@ class ExtraFieldsBase(StrictBase):
         if extra:
             yield EXTRA_FIELDS, extra
 
-    def _updated(self, changes: Mapping[str, object]) -> Self:
+    def _replaced(self, changes: Mapping[str, object]) -> Self:
         """
         A revalidated copy of this spec with `changes` applied: the engine of
-        each subclass's `update`. The extra fields are passed as the
+        each subclass's `replace`. The extra fields are passed as the
         `extra_fields` mapping, so a change to `extra_fields` replaces them.
         """
         document = self.model_dump(exclude={EXTRA_FIELDS})

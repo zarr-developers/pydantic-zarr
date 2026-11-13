@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import importlib
 import importlib.util
 import json
@@ -41,6 +42,7 @@ from pydantic_zarr.v3 import (
 from .conftest import DTYPE_EXAMPLES_V3, ZARR_PYTHON_VERSION, DTypeExample
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     import zarr
@@ -804,7 +806,7 @@ def test_zarr_scope_class_default() -> None:
     spec = CoreArraySpec(**_scale_offset_kwargs())
     assert spec.codecs[-1]["name"] == "scale_offset"  # type: ignore[index]
     # derived operations re-validate as the class, so the scope sticks
-    assert spec.update(attributes={"a": 1}).attributes == {"a": 1}
+    assert spec.replace(attributes={"a": 1}).attributes == {"a": 1}
     # from_shape_and_data_type validates in the class scope too
     derived = CoreArraySpec.from_shape_and_data_type(
         (4, 4), "float32", codecs=_scale_offset_kwargs()["codecs"]
@@ -1040,18 +1042,18 @@ def test_typevar_defaults() -> None:
         ("dimension_names", ("y", "x")),
     ],
 )
-def test_update(field: str, value: object) -> None:
-    """`update` returns a revalidated copy with the new field, everything else unchanged."""
+def test_replace(field: str, value: object) -> None:
+    """`replace` returns a revalidated copy with the new field, everything else unchanged."""
     spec: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
-    built = spec.update(**{field: value})  # type: ignore[arg-type]
+    built = spec.replace(**{field: value})  # type: ignore[arg-type]
     assert getattr(built, field) == value
     assert built.model_dump(exclude={field}) == spec.model_dump(exclude={field})
 
 
-def test_update_atomic() -> None:
+def test_replace_atomic() -> None:
     """Correlated fields change together in one validation pass."""
     spec: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
-    built = spec.update(
+    built = spec.replace(
         shape=(8, 8, 8),
         chunk_grid={"name": "regular", "configuration": {"chunk_shape": (2, 2, 2)}},
         dimension_names=("z", "y", "x"),
@@ -1060,18 +1062,73 @@ def test_update_atomic() -> None:
     assert built.dimension_names == ("z", "y", "x")
 
 
-def test_update_revalidates() -> None:
-    """`update` revalidates: an invalid change is refused."""
+def test_replace_revalidates() -> None:
+    """`replace` revalidates: an invalid change is refused."""
     spec: AnyArraySpec = ArraySpec(**_v3_array_kwargs(dimension_names=("a", "b")))
     with pytest.raises(ValidationError, match="dimension names"):
-        spec.update(shape=(1, 2, 3))
+        spec.replace(shape=(1, 2, 3))
 
 
-def test_update_unknown_field() -> None:
+def test_replace_unknown_field() -> None:
     """A change naming a field the model does not have is refused."""
     spec: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
     with pytest.raises(ValidationError, match="bogus"):
-        spec.update(bogus=1)  # type: ignore[call-arg]
+        spec.replace(bogus=1)  # type: ignore[call-arg]
+
+
+def _replacers() -> list[Callable[..., Any]]:
+    """The spellings of a validated changed copy: the method, `__replace__`, and `copy.replace` where Python has it."""
+    spellings: list[Callable[..., Any]] = [
+        lambda spec, **changes: spec.replace(**changes),
+        lambda spec, **changes: spec.__replace__(**changes),
+    ]
+    if hasattr(copy, "replace"):
+        spellings.append(lambda spec, **changes: copy.replace(spec, **changes))
+    return spellings
+
+
+@pytest.mark.parametrize(
+    ("spec", "changes", "expected"),
+    [
+        (
+            ArraySpec(**_v3_array_kwargs()),
+            {"shape": (8, 8)},
+            ArraySpec(**_v3_array_kwargs(shape=(8, 8))),
+        ),
+        (BaseGroupSpec(), {"attributes": {"a": 1}}, BaseGroupSpec(attributes={"a": 1})),
+        (
+            GroupSpec(),
+            {"members": {"x": GroupSpec().model_dump()}},
+            GroupSpec(members={"x": GroupSpec()}),
+        ),
+    ],
+    ids=["array", "base-group", "group"],
+)
+def test_replace_spellings_agree(spec: Any, changes: dict[str, Any], expected: Any) -> None:
+    """
+    `replace`, `__replace__` and `copy.replace` give the same revalidated
+    copy: members are validated into their spec classes, the original is
+    unchanged, and the copy has the class of the original.
+    """
+    for replace in _replacers():
+        replaced = replace(spec, **changes)
+        assert replaced == expected
+        assert type(replaced) is type(spec)
+        assert replaced is not spec
+    assert spec != expected
+
+
+@pytest.mark.parametrize(
+    "replace", _replacers(), ids=["method", "dunder", "copy"][: len(_replacers())]
+)
+def test_replace_spellings_refuse_invalid_change(replace: Callable[..., Any]) -> None:
+    """
+    Every spelling refuses an invalid change, where pydantic's own
+    `__replace__`, a `model_copy` that does not validate, accepted it.
+    """
+    spec: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
+    with pytest.raises(ValidationError, match="shape"):
+        replace(spec, shape="nonsense")
 
 
 def test_base_group_spec() -> None:
@@ -1095,7 +1152,7 @@ def test_base_group_spec() -> None:
     base = BaseGroupSpec(attributes={"a": 1})
     assert base.like(outer)  # members do not participate
     assert not base.like(GroupSpec(attributes={"a": 2}, members={}))
-    assert base.update(attributes={"a": 2}).attributes == {"a": 2}
+    assert base.replace(attributes={"a": 2}).attributes == {"a": 2}
 
 
 @pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr is required for this test")
