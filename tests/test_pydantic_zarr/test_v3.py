@@ -6,7 +6,7 @@ import importlib.util
 import json
 import re
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 import pytest
@@ -16,7 +16,7 @@ from zarr_metadata.model import ZarrV3ArrayMetadata, ZarrV3GroupMetadata
 from zarr_metadata.v3.definition import ZARR_PYTHON_CONTEXT
 
 from pydantic_zarr._metadata import CORE_AND_EXTENSIONS_CONTEXT, CORE_CONTEXT
-from pydantic_zarr.core import tuplify_json
+from pydantic_zarr.core import AttributesBase, tuplify_json
 from pydantic_zarr.v3 import (
     _SINGLE_BYTE_DATA_TYPES,
     AnyArraySpec,
@@ -1730,6 +1730,98 @@ def test_create_default_numpy_style_name_suggestion() -> None:
     """
     with pytest.raises(ValueError, match="Zarr V3 form is 'int64'"):
         ArraySpec.create_default(shape=(4,), data_type="i8")
+
+
+class _NaNFillArraySpec(ArraySpec):
+    fill_value: Literal["NaN"] = "NaN"
+
+
+class _Uint16ArraySpec(ArraySpec):
+    data_type: Literal["uint16"] = "uint16"
+
+
+class _FixedShapeArraySpec(ArraySpec):
+    shape: tuple[Literal[2], Literal[3]] = (2, 3)
+
+
+class _UnitsAttrs(AttributesBase):
+    units: str
+
+
+class _UnitsArraySpec(ArraySpec[_UnitsAttrs]):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("cls", "fields", "expected"),
+    [
+        (
+            _NaNFillArraySpec,
+            {"shape": (4,), "data_type": "float32"},
+            {
+                "fill_value": "NaN",
+                "codecs": ({"name": "bytes", "configuration": {"endian": "little"}},),
+            },
+        ),
+        (
+            _Uint16ArraySpec,
+            {"shape": (4,)},
+            {
+                "data_type": "uint16",
+                "fill_value": 0,
+                "codecs": ({"name": "bytes", "configuration": {"endian": "little"}},),
+            },
+        ),
+        (
+            _FixedShapeArraySpec,
+            {"data_type": "uint8"},
+            {
+                "shape": (2, 3),
+                "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": (2, 3)}},
+            },
+        ),
+        (
+            _UnitsArraySpec,
+            {"shape": (4,), "data_type": "uint8", "attributes": _UnitsAttrs(units="m")},
+            {"fill_value": 0},
+        ),
+        (
+            _Uint16ArraySpec,
+            {"shape": (4,), "fill_value": 7},
+            {"data_type": "uint16", "fill_value": 7},
+        ),
+    ],
+    ids=[
+        "pinned-fill",
+        "pinned-data-type",
+        "pinned-shape",
+        "required-attributes-given",
+        "given-wins",
+    ],
+)
+def test_create_default_starts_from_class_defaults(
+    cls: type[AnyArraySpec], fields: dict[str, Any], expected: dict[str, Any]
+) -> None:
+    """
+    On a subclass, `create_default` treats a field the class declares a default
+    for as given, and derives the fields not given from it, so a pinned data
+    type, fill value or shape is kept; a field given wins over the class's
+    default, and a required field given is used as given.
+    """
+    spec = cls.create_default(**fields)
+    assert type(spec) is cls
+    for name, value in expected.items():
+        assert getattr(spec, name) == value, name
+
+
+def test_create_default_required_field_missing() -> None:
+    """
+    A field the class requires and the data cannot provide, such as an
+    attributes model with a required key, is refused when not given, as the
+    constructor refuses it.
+    """
+    with pytest.raises(ValidationError, match="units"):
+        _UnitsArraySpec.create_default(shape=(4,), data_type="uint8")
 
 
 class _ZarrPythonArraySpec(ArraySpec):

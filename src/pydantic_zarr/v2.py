@@ -102,6 +102,12 @@ FillValue = (
     BoolFillValue | IntFillValue | FloatFillValue | ComplexFillValue | RawFillValue | str | None
 )
 
+FillValueLike = FillValue | np.generic | complex
+"""
+A fill value as an input takes it: its JSON form, or a numpy scalar or a Python
+complex number, which validation writes in JSON form.
+"""
+
 DimensionSeparator = ZarrV2ArrayDimensionSeparator
 MemoryOrder = ZarrV2ArrayOrder
 
@@ -198,28 +204,33 @@ class NodeSpec(StrictBase):
 
 
 class ArraySpecUpdate(TypedDict, total=False):
-    """The fields an `ArraySpec.update` call may replace."""
+    """
+    The fields an `ArraySpec.replace` call may replace, of the types an input
+    takes: validation writes them as the types the spec holds (a numpy dtype as
+    its typestr, a numpy scalar fill value in its JSON form, a numcodecs codec
+    as its configuration mapping, a sequence as a tuple).
+    """
 
     attributes: TBaseAttr
-    shape: tuple[int, ...]
-    chunks: tuple[int, ...]
+    shape: Sequence[int]
+    chunks: Sequence[int]
     dtype: npt.DTypeLike | list[tuple[Any, ...]]
-    fill_value: FillValue
+    fill_value: FillValueLike
     order: MemoryOrder
-    filters: Sequence[Mapping[str, Any]] | None
+    filters: Sequence[Mapping[str, Any] | Codec] | None
     dimension_separator: DimensionSeparator
-    compressor: Mapping[str, Any] | None
+    compressor: Mapping[str, Any] | Codec | None
     extra_fields: Mapping[str, JSONValue]
 
 
 class BaseGroupSpecUpdate(TypedDict, total=False):
-    """The fields a `BaseGroupSpec.update` call may replace."""
+    """The fields a `BaseGroupSpec.replace` call may replace."""
 
     attributes: TBaseAttr
 
 
 class GroupSpecUpdate(TypedDict, total=False):
-    """The fields a `GroupSpec.update` call may replace."""
+    """The fields a `GroupSpec.replace` call may replace."""
 
     attributes: TBaseAttr
     members: Mapping[str, TBaseItem]
