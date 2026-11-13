@@ -846,7 +846,8 @@ def walk_zarr_hierarchy(
 
     .. deprecated:: 0.11
         Removed in pydantic-zarr 0.12 with the rest of the zarr-python IO.
-        Walk the hierarchy with zarr-python (`zarr.Group.members`).
+        Walk the hierarchy with zarr-python (`zarr.Group.members`), and pass
+        the nodes' stored metadata documents to `from_stored_metadata_json`.
 
     Raises
     ------
@@ -854,7 +855,9 @@ def walk_zarr_hierarchy(
         If `depth` is lower than -1.
     """
     warn_deprecated_io(
-        "walk_zarr_hierarchy", "Walk the hierarchy with zarr-python (`zarr.Group.members`)."
+        "walk_zarr_hierarchy",
+        "Walk the hierarchy with zarr-python (`zarr.Group.members`), and pass the nodes' "
+        "stored metadata documents to `from_stored_metadata_json`.",
     )
     return _walk_zarr_hierarchy(node, depth=depth)
 

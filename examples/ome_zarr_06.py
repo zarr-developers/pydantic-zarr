@@ -142,7 +142,7 @@ assert CoordinateReference(name="physical", path=None).model_dump() == {
 # --8<-- [start:image]
 import zarr
 import zarr.storage
-from zarr_io import read_documents, write_hierarchy
+from zarr_io import read_documents, repaired, write_hierarchy
 
 from pydantic_zarr.v3 import ArraySpec, GroupSpec, is_array_spec
 
@@ -395,7 +395,7 @@ else:
 
         # --- compare every document ngff-zarr wrote with the model's ---
         ref_docs = {
-            str(p.relative_to(ref_path)): json.loads(p.read_text())
+            str(p.relative_to(ref_path)): repaired(json.loads(p.read_text()))
             for p in ref_path.rglob("zarr.json")
         }
         # the model's documents, as JSON holds them (tuples become arrays)

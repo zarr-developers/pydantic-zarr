@@ -22,13 +22,13 @@ uv run --no-project --with-editable <path to pydantic-zarr checkout> \
 # (zarr-metadata-backed v3 document validation and the APIs used below).
 
 # --8<-- [start:attrs]
-from typing import Self
+from typing import Self, cast
 
 import zarr
 import zarr.storage
 from pydantic import Field, ValidationError, model_validator
 from typing_extensions import TypedDict
-from zarr_io import read_documents, write_hierarchy
+from zarr_io import read_documents, repaired, write_hierarchy
 
 from pydantic_zarr.core import MISSING, AttributesBase, get_attribute
 from pydantic_zarr.v3 import ArraySpec, CodecLike, GroupSpec, is_array_spec
@@ -286,7 +286,7 @@ model = R10mDataset(
 
 
 def metadata_documents(store: zarr.storage.MemoryStore) -> dict[str, dict[str, object]]:
-    """Every zarr.json in the store, parsed (chunk payloads ignored)."""
+    """Every zarr.json in the store, parsed (chunk payloads ignored), as a reader takes it."""
 
     async def keys(s: zarr.storage.MemoryStore) -> list[str]:
         return [k async for k in s.list()]
@@ -298,7 +298,7 @@ def metadata_documents(store: zarr.storage.MemoryStore) -> dict[str, dict[str, o
             continue
         buffer = asyncio.run(store.get(key, prototype=proto))
         assert buffer is not None
-        documents[key] = json.loads(buffer.to_bytes())
+        documents[key] = cast("dict[str, object]", repaired(json.loads(buffer.to_bytes())))
     return documents
 
 

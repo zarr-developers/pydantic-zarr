@@ -1402,6 +1402,21 @@ _DEPRECATED_IO_V2: list[
         ),
     ),
     ("to_zarr", lambda spec, group, array, store: to_zarr(spec, store, "w")),
+    # over an existing node, `to_zarr` compares with it: still one warning
+    (
+        "GroupSpec.to_zarr",
+        lambda spec, group, array, store: spec.to_zarr(store, path="g", overwrite=True),
+    ),
+    (
+        "BaseGroupSpec.to_zarr",
+        lambda spec, group, array, store: BaseGroupSpec().to_zarr(store, path="g", overwrite=True),
+    ),
+    (
+        "ArraySpec.to_zarr",
+        lambda spec, group, array, store: cast("AnyArraySpec", spec.members["x"]).to_zarr(
+            store, path="g/x", overwrite=True
+        ),
+    ),
     ("GroupSpec.from_zarr", lambda spec, group, array, store: GroupSpec.from_zarr(group)),
     ("BaseGroupSpec.from_zarr", lambda spec, group, array, store: BaseGroupSpec.from_zarr(group)),
     ("ArraySpec.from_zarr", lambda spec, group, array, store: ArraySpec.from_zarr(array)),

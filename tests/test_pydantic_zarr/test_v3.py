@@ -18,7 +18,7 @@ from zarr_metadata.model import ZarrV3ArrayMetadata, ZarrV3GroupMetadata
 from zarr_metadata.v3.definition import ZARR_PYTHON_CONTEXT
 
 from pydantic_zarr._metadata import CORE_AND_EXTENSIONS_CONTEXT, CORE_CONTEXT
-from pydantic_zarr.core import AttributesBase, tuplify_json
+from pydantic_zarr.core import AttributesBase, tuplify_json, walk_zarr_hierarchy
 from pydantic_zarr.v3 import (
     _SINGLE_BYTE_DATA_TYPES,
     AnyArraySpec,
@@ -2511,6 +2511,21 @@ _DEPRECATED_IO_V3: list[
         ),
     ),
     ("to_zarr", lambda spec, group, array, store: to_zarr(spec, store, "w")),
+    # over an existing node, `to_zarr` compares with it: still one warning
+    (
+        "GroupSpec.to_zarr",
+        lambda spec, group, array, store: spec.to_zarr(store, path="g", overwrite=True),
+    ),
+    (
+        "BaseGroupSpec.to_zarr",
+        lambda spec, group, array, store: BaseGroupSpec().to_zarr(store, path="g", overwrite=True),
+    ),
+    (
+        "ArraySpec.to_zarr",
+        lambda spec, group, array, store: cast("AnyArraySpec", spec.members["x"]).to_zarr(
+            store, path="g/x", overwrite=True
+        ),
+    ),
     ("GroupSpec.from_zarr", lambda spec, group, array, store: GroupSpec.from_zarr(group)),
     ("BaseGroupSpec.from_zarr", lambda spec, group, array, store: BaseGroupSpec.from_zarr(group)),
     ("ArraySpec.from_zarr", lambda spec, group, array, store: ArraySpec.from_zarr(array)),
@@ -2529,6 +2544,7 @@ _DEPRECATED_IO_V3: list[
         "ArraySpec.from_array with a zarr.Array",
         lambda spec, group, array, store: ArraySpec.from_array(array),
     ),
+    ("walk_zarr_hierarchy", lambda spec, group, array, store: list(walk_zarr_hierarchy(group))),
 ]
 
 

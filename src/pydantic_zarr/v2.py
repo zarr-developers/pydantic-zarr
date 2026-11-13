@@ -642,7 +642,7 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         if isinstance(extant_node, zarr.Array):
             # zarr-python neither writes nor reads extra fields, so the stored
             # array is this spec as written when it matches in everything else
-            if not self.like(extant_node, exclude={"extra_fields"}) and not overwrite:
+            if not self._like(extant_node, exclude={"extra_fields"}) and not overwrite:
                 raise ContainsArrayError(store, path)
             else:
                 # If there's an existing array that is identical to the model, and overwrite is False,
@@ -724,10 +724,21 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         >>> print(x.like(y, exclude={'attributes'}))
         True
         """
+        if (zarr := sys.modules.get("zarr")) is not None and isinstance(other, zarr.Array):
+            warn_deprecated_io("ArraySpec.like with a zarr.Array", LIKE_REPLACEMENT)
+        return self._like(other, include=include, exclude=exclude)
+
+    def _like(
+        self,
+        other: ArraySpec | zarr.Array,
+        *,
+        include: IncEx = None,
+        exclude: IncEx = None,
+    ) -> bool:
+        """`like` without the deprecation warning, for the deprecated IO paths to call."""
 
         other_parsed: ArraySpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Array):
-            warn_deprecated_io("ArraySpec.like with a zarr.Array", LIKE_REPLACEMENT)
             other_parsed = ArraySpec._from_zarr(other)
         else:
             other_parsed = other  # type: ignore[assignment]
@@ -852,7 +863,7 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
 
         extant_node = maybe_node(store, path, zarr_format=2)
         if isinstance(extant_node, zarr.Group):
-            if not self.like(extant_node):
+            if not self._like(extant_node):
                 if not overwrite:
                     raise ContainsGroupError(store, path)
             elif not overwrite:
@@ -878,9 +889,20 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         participate in the comparison: a `GroupSpec` or `zarr.Group` is reduced
         to its own metadata first.
         """
+        if (zarr := sys.modules.get("zarr")) is not None and isinstance(other, zarr.Group):
+            warn_deprecated_io("BaseGroupSpec.like with a zarr.Group", LIKE_REPLACEMENT)
+        return self._like(other, include=include, exclude=exclude)
+
+    def _like(
+        self,
+        other: AnyBaseGroupSpec | AnyGroupSpec | zarr.Group,
+        *,
+        include: IncEx = None,
+        exclude: IncEx = None,
+    ) -> bool:
+        """`like` without the deprecation warning, for the deprecated IO paths to call."""
         other_parsed: AnyBaseGroupSpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
-            warn_deprecated_io("BaseGroupSpec.like with a zarr.Group", LIKE_REPLACEMENT)
             other_parsed = BaseGroupSpec._from_zarr(other)
         elif isinstance(other, GroupSpec):
             other_parsed = BaseGroupSpec(attributes=other.attributes)
@@ -1080,7 +1102,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         attrs = spec_dict.pop("attributes")
         extant_node = maybe_node(store, path, zarr_format=2)
         if isinstance(extant_node, zarr.Group):
-            if not self.like(extant_node):
+            if not self._like(extant_node):
                 if not overwrite:
                     """
                     msg = (
@@ -1167,6 +1189,19 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         >>> print(z1.like(z2, exclude={'attributes'}))
         True
         """
+        if (zarr := sys.modules.get("zarr")) is not None and isinstance(other, zarr.Group):
+            warn_deprecated_io("GroupSpec.like with a zarr.Group", LIKE_REPLACEMENT)
+        return self._like(other, include=include, exclude=exclude)
+
+    @override
+    def _like(
+        self,
+        other: AnyBaseGroupSpec | AnyGroupSpec | zarr.Group,
+        *,
+        include: IncEx = None,
+        exclude: IncEx = None,
+    ) -> bool:
+        """`like` without the deprecation warning, for the deprecated IO paths to call."""
 
         if isinstance(other, BaseGroupSpec) and not isinstance(other, GroupSpec):
             # a group without members compares by the group's own metadata;
@@ -1176,7 +1211,6 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
             return projection.like(other, include=include, exclude=exclude)
         other_parsed: GroupSpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
-            warn_deprecated_io("GroupSpec.like with a zarr.Group", LIKE_REPLACEMENT)
             other_parsed = GroupSpec._from_zarr(other)
         else:
             other_parsed = other  # type: ignore[assignment]

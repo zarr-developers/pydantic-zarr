@@ -67,6 +67,18 @@ def write_hierarchy(
 
 
 # --8<-- [start:read]
+def repaired(document: object) -> object:
+    """
+    `document` as a reader takes it: zarr-python before 3.4 writes
+    `"consolidated_metadata": null` into every group's `zarr.json` to say the
+    group has none, and the readers refuse a null there, so a null is dropped
+    as the absence it stands for. Any other document is returned unchanged.
+    """
+    if isinstance(document, dict) and document.get("consolidated_metadata", {}) is None:
+        return {key: value for key, value in document.items() if key != "consolidated_metadata"}
+    return document
+
+
 def read_documents(node: zarr.Array | zarr.Group) -> dict[str, object]:
     """
     The stored metadata documents of `node` and, for a group, of every node
@@ -75,10 +87,8 @@ def read_documents(node: zarr.Array | zarr.Group) -> dict[str, object]:
 
     `to_buffer_dict` gives a node's documents as zarr-python writes them
     (`zarr.json`, or `.zarray`/`.zgroup` and `.zattrs`), so this reads what the
-    store holds, not zarr-python's in-memory view of it. One repair: zarr-python
-    before 3.4 writes `"consolidated_metadata": null` into every group's
-    `zarr.json` to say the group has none, and the readers refuse a null there,
-    so a null is dropped as the absence it stands for.
+    store holds, not zarr-python's in-memory view of it, with one repair (see
+    `repaired`).
     """
     prototype = default_buffer_prototype()
     nodes: list[tuple[str, zarr.Array | zarr.Group]] = [("", node)]
@@ -87,10 +97,9 @@ def read_documents(node: zarr.Array | zarr.Group) -> dict[str, object]:
     documents: dict[str, object] = {}
     for member_path, member in nodes:
         for name, buffer in member.metadata.to_buffer_dict(prototype).items():
-            document = json.loads(buffer.to_bytes())
-            if isinstance(document, dict) and document.get("consolidated_metadata", {}) is None:
-                del document["consolidated_metadata"]
-            documents[f"{member_path}/{name}" if member_path else name] = document
+            documents[f"{member_path}/{name}" if member_path else name] = repaired(
+                json.loads(buffer.to_bytes())
+            )
     return documents
 
 

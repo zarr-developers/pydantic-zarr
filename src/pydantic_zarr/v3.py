@@ -1351,7 +1351,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         store_path = sync(make_store_path(store, path=path))
         extant_node = maybe_node(store, path, zarr_format=3)
         if isinstance(extant_node, zarr.Array):
-            if not self.like(extant_node) and not overwrite:
+            if not self._like(extant_node) and not overwrite:
                 raise ContainsArrayError(store, path)
             else:
                 # If there's an existing array that is identical to the model, and overwrite is False,
@@ -1473,11 +1473,22 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         >>> print(x.like(y, exclude={'attributes'}))
         True
         """
+        if (zarr := sys.modules.get("zarr")) is not None and isinstance(other, zarr.Array):
+            warn_deprecated_io("ArraySpec.like with a zarr.Array", LIKE_REPLACEMENT)
+        return self._like(other, include=include, exclude=exclude)
+
+    def _like(
+        self,
+        other: ArraySpec | zarr.Array,
+        *,
+        include: IncEx = None,
+        exclude: IncEx = None,
+    ) -> bool:
+        """`like` without the deprecation warning, for the deprecated IO paths to call."""
 
         other_parsed: ArraySpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Array):
             try:
-                warn_deprecated_io("ArraySpec.like with a zarr.Array", LIKE_REPLACEMENT)
                 other_parsed = ArraySpec._from_zarr(other)
             except ValidationError:
                 # a stored array that does not validate as a spec (one holding
@@ -1743,7 +1754,7 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         self._check_storable()
         extant_node = maybe_node(store, path, zarr_format=3)
         if isinstance(extant_node, zarr.Group):
-            if not self.like(extant_node):
+            if not self._like(extant_node):
                 if not overwrite:
                     raise ContainsGroupError(store, path)
             elif not overwrite:
@@ -1771,10 +1782,21 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         validate as a spec (one holding an extra field the spec's rules refuse,
         say) is like no spec.
         """
+        if (zarr := sys.modules.get("zarr")) is not None and isinstance(other, zarr.Group):
+            warn_deprecated_io("BaseGroupSpec.like with a zarr.Group", LIKE_REPLACEMENT)
+        return self._like(other, include=include, exclude=exclude)
+
+    def _like(
+        self,
+        other: AnyBaseGroupSpec | AnyGroupSpec | zarr.Group,
+        *,
+        include: IncEx = None,
+        exclude: IncEx = None,
+    ) -> bool:
+        """`like` without the deprecation warning, for the deprecated IO paths to call."""
         other_parsed: AnyBaseGroupSpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
             try:
-                warn_deprecated_io("BaseGroupSpec.like with a zarr.Group", LIKE_REPLACEMENT)
                 other_parsed = BaseGroupSpec._from_zarr(other)
             except ValidationError:
                 # a stored group that does not validate as a spec is like no spec
@@ -2109,7 +2131,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         _check_storable_tree(self)
         extant_node = maybe_node(store, path, zarr_format=3)
         if isinstance(extant_node, zarr.Group):
-            if not self.like(extant_node):
+            if not self._like(extant_node):
                 if not overwrite:
                     """
                     msg = (
@@ -2206,6 +2228,19 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         >>> print(z1.like(z2, exclude={'attributes'}))
         True
         """
+        if (zarr := sys.modules.get("zarr")) is not None and isinstance(other, zarr.Group):
+            warn_deprecated_io("GroupSpec.like with a zarr.Group", LIKE_REPLACEMENT)
+        return self._like(other, include=include, exclude=exclude)
+
+    @override
+    def _like(
+        self,
+        other: AnyBaseGroupSpec | AnyGroupSpec | zarr.Group,
+        *,
+        include: IncEx = None,
+        exclude: IncEx = None,
+    ) -> bool:
+        """`like` without the deprecation warning, for the deprecated IO paths to call."""
 
         if isinstance(other, BaseGroupSpec) and not isinstance(other, GroupSpec):
             # a group without members compares by the group's own metadata;
@@ -2215,7 +2250,6 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         other_parsed: AnyGroupSpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
             try:
-                warn_deprecated_io("GroupSpec.like with a zarr.Group", LIKE_REPLACEMENT)
                 other_parsed = GroupSpec._from_zarr(other)
             except ValidationError:
                 # a stored hierarchy that does not validate as a spec is like no spec
