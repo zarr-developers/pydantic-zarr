@@ -37,6 +37,8 @@ if TYPE_CHECKING:
     )
     from zarr_metadata.v3.chunk_grid.regular import RegularChunkGridObject
     from zarr_metadata.v3.chunk_key_encoding.default import DefaultChunkKeyEncodingObject
+    from zarr_metadata.v3.codec.bytes import BytesCodecObject
+    from zarr_metadata.v3.codec.zstd import ZstdCodecObject
 
 
 class Attrs(BaseModel):
@@ -209,6 +211,7 @@ def input_paths_accept_input_types_v3(
     data: npt.NDArray[Any],
     grid: RegularChunkGridObject,
     encoding: DefaultChunkKeyEncodingObject,
+    codecs: tuple[BytesCodecObject, ZstdCodecObject],
 ) -> list[v3.AnyArraySpec]:
     created: v3.AnyArraySpec = v3.ArraySpec.create_default(
         shape=[4, 4],
@@ -225,7 +228,13 @@ def input_paths_accept_input_types_v3(
     from_array: v3.AnyArraySpec = v3.ArraySpec.from_array(
         data, chunk_grid=grid, chunk_key_encoding=encoding, fill_value=np.float64(0)
     )
-    return [created, replaced, from_array]
+    # zarr-metadata's typed codec objects are codec inputs on every input path
+    typed_codecs: list[v3.AnyArraySpec] = [
+        v3.ArraySpec.create_default(shape=[4], data_type="float32", codecs=codecs),
+        created.replace(codecs=codecs),
+        v3.ArraySpec.from_array(data, codecs=codecs),
+    ]
+    return [created, replaced, from_array, *typed_codecs]
 
 
 def input_paths_accept_input_types_v2(spec: v2.AnyArraySpec, codec: Codec) -> v2.AnyArraySpec:
