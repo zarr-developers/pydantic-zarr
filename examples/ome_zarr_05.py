@@ -239,8 +239,8 @@ else:
 # --8<-- [end:image]
 
 # --8<-- [start:reference]
-# The model should write exactly what a reference OME-Zarr 0.5 implementation
-# writes. ome-zarr-py generates a multiscale image from synthetic data; a
+# The model should hold exactly the documents a reference OME-Zarr 0.5
+# implementation writes. ome-zarr-py generates a multiscale image from synthetic data; a
 # MultiscaleImage instance then describes that same image, and every zarr.json
 # ome-zarr-py wrote must be identical to the document the model holds for it.
 import json
