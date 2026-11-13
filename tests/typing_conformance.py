@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 from pydantic import BaseModel
 
 import pydantic_zarr.v2 as v2
@@ -24,6 +25,7 @@ import pydantic_zarr.v3 as v3
 
 if TYPE_CHECKING:
     import numpy.typing as npt
+    from numcodecs.abc import Codec
     from zarr_metadata import (
         ZarrV2ArrayMetadataJSON,
         ZarrV2GroupMetadataJSON,
@@ -33,6 +35,8 @@ if TYPE_CHECKING:
         ZarrV3ArrayMetadataJSON,
         ZarrV3GroupMetadataJSON,
     )
+    from zarr_metadata.v3.chunk_grid.regular import RegularChunkGridObject
+    from zarr_metadata.v3.chunk_key_encoding.default import DefaultChunkKeyEncodingObject
 
 
 class Attrs(BaseModel):
@@ -185,4 +189,46 @@ def stored_layout_round_trip(
         GroupOfUnionV3.from_stored_metadata_json(group_v3.to_stored_metadata_json()),
         GroupOfUnionV2.from_stored_metadata_json(group_v2.to_stored_metadata_json()),
         v3.BaseGroupSpec.from_stored_metadata_json(group_v3.to_stored_metadata_json()),
+    )
+
+
+# The v3 fields are annotated with what validation stores, and the inputs it
+# converts are typed on the input paths (`create_default`, `replace`,
+# `from_array`). These guard both halves: reads need no narrowing, and the input
+# paths accept the typed core objects (TypedDict keys are invariant, so a
+# `RegularChunkGridObject` is assignable only where the exact type is listed),
+# bare names, numpy scalars and sequences.
+
+
+def stored_reads_are_objects_v3(spec: v3.AnyArraySpec) -> tuple[str, str, str]:
+    """Every codec, the chunk grid and the chunk key encoding read as named configurations."""
+    return spec.codecs[0]["name"], spec.chunk_grid["name"], spec.chunk_key_encoding["name"]
+
+
+def input_paths_accept_input_types_v3(
+    data: npt.NDArray[Any],
+    grid: RegularChunkGridObject,
+    encoding: DefaultChunkKeyEncodingObject,
+) -> list[v3.AnyArraySpec]:
+    created: v3.AnyArraySpec = v3.ArraySpec.create_default(
+        shape=[4, 4],
+        data_type=np.dtype("float32"),
+        chunk_grid=grid,
+        chunk_key_encoding=encoding,
+        fill_value=np.float32(1),
+        codecs=["bytes"],
+        storage_transformers=[],
+    )
+    replaced = created.replace(
+        shape=[8, 8], chunk_grid=grid, chunk_key_encoding="v2", fill_value=complex(0, 1)
+    )
+    from_array: v3.AnyArraySpec = v3.ArraySpec.from_array(
+        data, chunk_grid=grid, chunk_key_encoding=encoding, fill_value=np.float64(0)
+    )
+    return [created, replaced, from_array]
+
+
+def input_paths_accept_input_types_v2(spec: v2.AnyArraySpec, codec: Codec) -> v2.AnyArraySpec:
+    return spec.replace(
+        shape=[8], chunks=[4], fill_value=np.float32(0), compressor=codec, filters=[codec]
     )

@@ -319,6 +319,15 @@ class NodeSpec(ExtraFieldsBase):
     zarr_scope: ClassVar[ZarrV3Context | None] = None
     zarr_scope_strict: ClassVar[bool] = False
 
+    def __replace__(self, **changes: Any) -> Self:
+        """
+        `copy.replace(spec, **changes)` (Python 3.13 and later): the spec's own
+        `replace`, so it validates the changes, where pydantic's
+        `BaseModel.__replace__` copies without validating. It calls
+        `self.replace`, so a subclass that overrides `replace` is honored.
+        """
+        return cast("Any", self).replace(**changes)
+
     @classmethod
     def _scope(cls, context: object) -> ZarrV3Context | None:
         """
@@ -384,9 +393,9 @@ def parse_dtype_v3(
     (``"i8"``, ``"float"``, ``">f4"``) is ambiguous — far more likely a numpy
     spelling than an unknown extension — and is refused, with the Zarr V3
     spelling suggested when one exists. The spellings zarr-python has stored
-    for the variable-length data types (``"str"``, ``"variable_length_bytes"``)
-    are recognized although no scope claims them, so documents zarr-python
-    wrote pass through.
+    for the variable-length data types are recognized in any scope, so
+    documents zarr-python wrote pass through: ``"str"``, which no scope claims,
+    and ``"variable_length_bytes"``, which only ``ZARR_PYTHON_CONTEXT`` claims.
     """
     if isinstance(dtype, Mapping):
         return dtype
@@ -810,9 +819,10 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         `endian` configuration, a no-op for a single-byte data type, is
         dropped when the chunk it receives is of one. That chunk's data type
         is the array's as changed by the array->array codecs before `bytes`
-        in its pipeline (`cast_value` sets it to its configured `data_type`;
-        every other codec keeps it), so a cast to a multi-byte type keeps the
-        endian the cast chunk needs. The rule reaches inside a sharding
+        in its pipeline (`cast_value` sets it to its configured `data_type`,
+        `transpose` and `scale_offset` keep it, and after any other codec it is
+        unknown, so the endian is kept), so a cast to a multi-byte type keeps
+        the endian the cast chunk needs. The rule reaches inside a sharding
         codec's inner pipeline, which continues the data type its position in
         the outer pipeline hands it; its index codecs, which encode the
         uint64 index, keep their endianness. (`zarr-metadata`'s canonical
@@ -863,11 +873,12 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             """
             codec = canonical_envelope(codec)
             if not isinstance(codec, Mapping):
-                return codec, data_type
+                return codec, None
             name = codec.get("name")
             config = codec.get("configuration")
-            if name == "cast_value" and isinstance(config, Mapping) and "data_type" in config:
-                data_type = parse_data_type(config["data_type"])
+            if name == "cast_value":
+                cast_to = config.get("data_type") if isinstance(config, Mapping) else None
+                return codec, None if cast_to is None else parse_data_type(cast_to)
             if (
                 name == "bytes"
                 and data_type in _SINGLE_BYTE_DATA_TYPES
@@ -884,7 +895,10 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
                 if isinstance(index, Sequence) and not isinstance(index, str):
                     new_config["index_codecs"] = normalize_pipeline(index, "uint64")
                 return {**codec, "configuration": new_config}, data_type
-            return codec, data_type
+            # an array -> array codec this walk does not know may change the data
+            # type, so what follows it gets an unknown one (and keeps its endian),
+            # as zarr-metadata's pipeline reader does not guess either
+            return codec, data_type if name in _DATA_TYPE_KEEPING_CODECS else None
 
         def normalize_pipeline(pipeline: Sequence[object], data_type: object) -> tuple[object, ...]:
             normalized: list[object] = []
@@ -926,7 +940,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         Extra fields (members the spec does not define) are judged in the
         same scope: one whose key a definition in the scope claims, by that
         definition; any other, by the spec's rule for fields a reader does
-        not recognize (an extension object with ``"must_understand": false``).
+        not recognize (an object that says ``"must_understand": false``, kept
+        as written).
 
         On a class with `zarr_scope_strict` set, names the scope leaves
         unjudged are refused instead: the document must be built from
@@ -1148,10 +1163,13 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         array's size in bytes, the heuristic zarr-python applies when no chunks
         are given. A numpy data type is converted to its Zarr V3 form first.
 
-        On a subclass, a field the class declares a default for counts as
-        given: a class that pins `data_type: Literal["uint16"] = "uint16"` or
+        On a subclass, a field of the array document that the class declares
+        a default for counts as given: a class that pins
+        `data_type: Literal["uint16"] = "uint16"` or
         `fill_value: Literal["NaN"] = "NaN"` keeps that value, and the fields
-        not given are derived from it. A field the class requires and the
+        not given are derived from it. Fields a subclass adds take their own
+        defaults, and so does a field whose default factory reads other fields.
+        A field the class requires and the
         data cannot provide (an attributes model with required keys, say) has
         to be passed, as it does to the constructor. A subclass whose
         construction needs more than defaults (attributes computed from the
@@ -1159,10 +1177,14 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         keep the keyword-only signature and pass the computed fields on to
         `super().create_default(...)`.
 
-        Everything is validated in one pass, in this class's scope. A data type nothing in the scope
-        derives a fill value for (an extension data type, or a spelling only
-        another scope claims) needs `fill_value` given, and the refusal says
-        so. A data type name that is not a Zarr V3 name but that numpy reads
+        Everything is validated in one pass, in this class's scope, and a
+        problem in one field is reported as itself: only the shape, the data
+        type and a given fill value feed the derivation, and when they do not
+        fit together, what each derives alone is still derived. A data type
+        nothing in the scope derives a fill value for (an extension data type,
+        or a spelling only another scope claims) needs `fill_value` given; its
+        codecs are then derived. A data type name that is not a Zarr V3 name
+        but that numpy reads
         as some other type (`"i8"`, `"float"`) is refused as a likely mistake,
         with the V3 spelling suggested.
 
@@ -1172,16 +1194,21 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         >>> ArraySpec.create_default(shape=(10, 10), data_type="uint16", dimension_names=("y", "x"))
         ArraySpec(zarr_format=3, node_type='array', attributes={}, shape=(10, 10), data_type='uint16', chunk_grid={'name': 'regular', 'configuration': {'chunk_shape': (10, 10)}}, chunk_key_encoding={'name': 'default', 'configuration': {'separator': '/'}}, fill_value=0, codecs=({'name': 'bytes', 'configuration': {'endian': 'little'}},), storage_transformers=(), dimension_names=('y', 'x'))
         """
-        # a field the class declares a default for counts as given, so the
-        # fields not given are derived from it rather than from zarr-metadata's
-        # generic defaults
-        document: dict[str, object] = {
-            name: info.get_default(call_default_factory=True)
-            for name, info in cls.model_fields.items()
-            if not info.is_required()
-            and name not in ("zarr_format", "node_type")
-            and not (name == "chunk_grid" and chunk_grid is not None)
-        }
+        # A field of the array document that the class declares a default for
+        # counts as given, so the fields not given are derived from it rather
+        # than from zarr-metadata's generic defaults. Fields a subclass adds are
+        # left to pydantic, and so is a default whose factory reads other fields:
+        # it runs at validation, and nothing derived replaces it.
+        document: dict[str, object] = {}
+        factory_fields: set[str] = set()
+        for name in _ARRAY_DOCUMENT_FIELDS:
+            info = cls.model_fields[name]
+            if name in fields or info.is_required():
+                continue
+            if info.default_factory_takes_validated_data:
+                factory_fields.add(name)
+                continue
+            document[name] = info.get_default(call_default_factory=True)
         document.update(fields)
         if "data_type" in document:
             document["data_type"] = parse_dtype_v3(
@@ -1196,31 +1223,12 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             )
         elif chunk_grid is not None:
             document["chunk_grid"] = chunk_grid
-        # `zarr-metadata` derives the members not given from the JSON ones
-        # given; attributes and extra fields are not its to read here.
-        derive_from = {
-            key: canonicalize_fill_value(value) if key == "fill_value" else value
-            for key, value in document.items()
-            if key not in ("attributes", "extra_fields")
-            and not (key == "dimension_names" and value is None)
-        }
         scope = CORE_AND_EXTENSIONS_CONTEXT if cls.zarr_scope is None else cls.zarr_scope
-        try:
-            derived: Mapping[str, object] = ZarrV3ArrayMetadataModel.create_default(
-                context=scope, **cast("Any", derive_from)
-            ).to_json()
-        except (ValueError, TypeError):
-            # Nothing is derived from a document `zarr-metadata` refuses (a data
-            # type with no default fill value in the scope, say). Validating
-            # what was given reports what to pass, as any construction does;
-            # the chunk grid, which needs only the shape, is still derived.
-            derived = {}
-            if "chunk_grid" not in document and "shape" in document:
-                shape = tuple(cast("Sequence[int]", document["shape"]))
-                document["chunk_grid"] = {
-                    "name": "regular",
-                    "configuration": {"chunk_shape": tuple(max(n, 1) for n in shape)},
-                }
+        derived = {
+            name: value
+            for name, value in _derived_array_members(document, scope).items()
+            if name not in factory_fields
+        }
         return cls.model_validate({**derived, **document})
 
     @classmethod
@@ -1384,13 +1392,10 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         Unlike `model_copy(update=...)`, the result is validated. Passing
         `extra_fields` replaces the extra fields as a whole.
 
-        `copy.replace` (Python 3.13 and later) calls this method too, so it
-        validates as well, where pydantic's own `__replace__` would copy
-        without validating.
+        `copy.replace` (Python 3.13 and later) calls this method too (see
+        `NodeSpec.__replace__`), so it validates as well.
         """
         return self._replaced(changes)
-
-    __replace__ = replace
 
     def with_sharding_codec(
         self,
@@ -1589,8 +1594,8 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         read. The scope is resolved as for `ArraySpec`: an extra field whose
         key a definition in the scope claims is judged by that definition
         (``CORE_CONTEXT`` claims ``consolidated_metadata``, whose contents are kept as
-        written and not read as members); any other must be an extension
-        object with ``"must_understand": false``. On a class with
+        written and not read as members); any other must be an object that
+        says ``"must_understand": false``, kept as written. On a class with
         `zarr_scope_strict` set, an extra field nothing in the scope claims is
         refused. Attributes and members are not part of this check.
         """
@@ -1612,13 +1617,10 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         Unlike `model_copy(update=...)`, the result is validated, so an
         invalid change is refused. Passing `extra_fields` replaces the extra fields as a whole.
 
-        `copy.replace` (Python 3.13 and later) calls this method too, so it
-        validates as well, where pydantic's own `__replace__` would copy
-        without validating.
+        `copy.replace` (Python 3.13 and later) calls this method too (see
+        `NodeSpec.__replace__`), so it validates as well.
         """
         return self._replaced(changes)
-
-    __replace__ = replace
 
     def _own_metadata(self) -> AnyBaseGroupSpec:
         """
@@ -1826,13 +1828,10 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         change together atomically. Unlike `model_copy(update=...)`, the
         result is validated. Passing `extra_fields` replaces the extra fields as a whole.
 
-        `copy.replace` (Python 3.13 and later) calls this method too, so it
-        validates as well, where pydantic's own `__replace__` would copy
-        without validating.
+        `copy.replace` (Python 3.13 and later) calls this method too (see
+        `NodeSpec.__replace__`), so it validates as well.
         """
         return self._replaced(changes)
-
-    __replace__ = replace
 
     def resolve_path(self, path: str) -> AnyArraySpec | AnyGroupSpec:
         """
@@ -2631,6 +2630,88 @@ def auto_fill_value(data: object) -> FillValue:
     if hasattr(data, "dtype"):
         return dtype_default_fill_value(np.dtype(data.dtype))
     raise ValueError("Cannot determine a default fill value for an object without a dtype.")
+
+
+_DATA_TYPE_KEEPING_CODECS = frozenset({"transpose", "scale_offset"})
+"""
+The array -> array codecs that pass on a chunk of the data type they receive
+(the specs say so for both). `cast_value` sets the data type it passes on; any
+other codec ahead of the array -> bytes codec leaves it unknown.
+"""
+
+_ARRAY_DOCUMENT_FIELDS: tuple[str, ...] = (
+    "shape",
+    "data_type",
+    "chunk_grid",
+    "chunk_key_encoding",
+    "fill_value",
+    "codecs",
+    "storage_transformers",
+    "dimension_names",
+)
+"""The `ArraySpec` fields that are members of the array's metadata document, other than its attributes."""
+
+_DERIVED_FROM_DATA_TYPE = frozenset({"data_type", "fill_value", "codecs"})
+_DERIVED_FROM_SHAPE = frozenset({"shape", "chunk_grid", "chunk_key_encoding"})
+
+
+def _derived_array_members(
+    document: Mapping[str, object], scope: ZarrV3Context
+) -> dict[str, object]:
+    """
+    The members of an array document that `zarr-metadata` derives for the
+    members `document` gives, in `scope`, without the members `document` gives.
+
+    Only the members the others depend on are handed over: the shape, the
+    data type, and the fill value when one is given (so a data type with no
+    default fill value still brings its codecs). Every other member given is
+    left for validation to judge, so a problem in it is reported as itself.
+    When `zarr-metadata` refuses the sources together, what each derives
+    alone is still derived: the data type's fill value and codecs, and the
+    shape's chunk grid. A source that is itself refused derives nothing, and
+    validation reports it.
+    """
+
+    def derive(given: Mapping[str, object], takes: frozenset[str]) -> dict[str, object] | None:
+        try:
+            derived = ZarrV3ArrayMetadataModel.create_default(
+                context=scope, **cast("Any", given)
+            ).to_json()
+        except (ValueError, TypeError):
+            return None
+        return {
+            name: value for name, value in derived.items() if name in takes and name not in document
+        }
+
+    shape = {"shape": document["shape"]} if "shape" in document else {}
+    data_type = {"data_type": document["data_type"]} if "data_type" in document else {}
+    fill_value = (
+        {"fill_value": canonicalize_fill_value(document["fill_value"])}
+        if "fill_value" in document
+        else {}
+    )
+    everything = _DERIVED_FROM_DATA_TYPE | _DERIVED_FROM_SHAPE
+    for given in ({**shape, **data_type, **fill_value}, {**shape, **data_type}):
+        together = derive(given, everything)
+        if together is not None:
+            return together
+    found: dict[str, object] = {}
+    for given in ({**data_type, **fill_value}, data_type):
+        from_data_type = derive(given, _DERIVED_FROM_DATA_TYPE)
+        if from_data_type is not None:
+            found.update(from_data_type)
+            break
+    from_shape = derive(shape, _DERIVED_FROM_SHAPE)
+    if from_shape is not None:
+        found.update(from_shape)
+    elif "chunk_grid" not in document and isinstance(document.get("shape"), Sequence):
+        # a shape zarr-metadata refuses still gets a grid of its rank, so that
+        # validation reaches the shape and reports it
+        lengths = cast("Sequence[object]", document["shape"])
+        if all(isinstance(n, int) for n in lengths):
+            chunk_shape = tuple(max(cast("int", n), 1) for n in lengths)
+            found["chunk_grid"] = {"name": "regular", "configuration": {"chunk_shape": chunk_shape}}
+    return found
 
 
 def _guessed_chunk_grid(shape: tuple[int, ...], data_type: object) -> RegularChunkGridMetadata:

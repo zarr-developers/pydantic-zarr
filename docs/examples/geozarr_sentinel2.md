@@ -22,10 +22,10 @@ CF and GeoZarr attribute keys are often not Python identifiers
 is the whole story: both spellings validate, and serialization — including the
 metadata written by `to_zarr` — uses the alias.
 `ArraySpec.create_default` builds the rest of the array metadata
-around the attributes: the chunk grid is size-guessed with the same heuristic
-zarr-python applies when no chunks are given (a 10980×10980 Sentinel-2 band
-gets chunks of (687, 1373)), and the fill value and codecs are derived from
-the data type.
+around the attributes: the chunk grid is one chunk covering the array, and the
+fill value and codecs are derived from the data type. `chunk_grid="auto"`
+guesses a chunk shape instead, with the heuristic zarr-python applies when no
+chunks are given: a 10980×10980 Sentinel-2 band gets chunks of (687, 1373).
 
 ```python
 --8<-- "examples/geozarr_sentinel2.py:attrs"

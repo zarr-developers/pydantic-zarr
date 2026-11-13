@@ -210,6 +210,15 @@ class NodeSpec(StrictBase):
 
     zarr_format: Literal[2] = 2
 
+    def __replace__(self, **changes: Any) -> Self:
+        """
+        `copy.replace(spec, **changes)` (Python 3.13 and later): the spec's own
+        `replace`, so it validates the changes, where pydantic's
+        `BaseModel.__replace__` copies without validating. It calls
+        `self.replace`, so a subclass that overrides `replace` is honored.
+        """
+        return cast("Any", self).replace(**changes)
+
 
 class ArraySpecUpdate(TypedDict, total=False):
     """
@@ -273,7 +282,8 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         are stored as Python scalars, complex numbers as ``(real, imaginary)``
         pairs, and non-finite floats as ``"NaN"``, ``"Infinity"`` or
         ``"-Infinity"``. It must be a fill value the dtype accepts. The
-        default is 0 when the dtype accepts 0, and None otherwise.
+        default is the one `zarr-metadata` derives for the dtype (see
+        `dtype_default_fill_value`).
     compressor: CodecDict | None
         A JSON-serializable representation of a compression codec, or None. The default is None.
     filters: List[CodecDict] | None, default = None
@@ -313,9 +323,8 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
     @classmethod
     def default_fill_value(cls, data: object) -> object:
         """
-        Give a spec built without a `fill_value` the default for its dtype:
-        `0` when the dtype accepts `0`, and `None` otherwise (a bool, complex
-        or structured dtype, say), as `zarr-metadata` does. A subclass that
+        Give a spec built without a `fill_value` the default `zarr-metadata`
+        derives for its dtype (see `dtype_default_fill_value`). A subclass that
         declares its own `fill_value` default, or makes the field required,
         keeps that instead.
         """
@@ -449,7 +458,7 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
             User-defined metadata associated with this array. Should be JSON-serializable. The default is "auto", which means that `array.attributes` will be used,
             with a fallback value of the empty dict `{}`.
         fill_value : "auto" | int | float | None, default = "auto"
-            The fill value for this array. Either "auto" or FillValue. The default is "auto", which means that `array.fill_value` will be used if that attribute exists, with a fallback of the dtype's default (0 when the dtype accepts 0, None otherwise).
+            The fill value for this array. Either "auto" or FillValue. The default is "auto", which means that `array.fill_value` will be used if that attribute exists, with a fallback of the dtype's default (see `dtype_default_fill_value`).
         order : "auto" | "C" | "F", default = "auto"
             The memory order of the `ArraySpec`. One of "auto", "C", or "F". The default is "auto", which means that, if present, `array.order`
             will be used, falling back to "C" if `array` does not have an `order` attribute.
@@ -666,13 +675,10 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         `model_copy(update=...)`, the result is validated. Passing
         `extra_fields` replaces the extra fields as a whole.
 
-        `copy.replace` (Python 3.13 and later) calls this method too, so it
-        validates as well, where pydantic's own `__replace__` would copy
-        without validating.
+        `copy.replace` (Python 3.13 and later) calls this method too (see
+        `NodeSpec.__replace__`), so it validates as well.
         """
         return self._replaced(changes)
-
-    __replace__ = replace
 
     def like(
         self,
@@ -755,13 +761,10 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         Unlike `model_copy(update=...)`, the result is validated, so an
         invalid change is refused.
 
-        `copy.replace` (Python 3.13 and later) calls this method too, so it
-        validates as well, where pydantic's own `__replace__` would copy
-        without validating.
+        `copy.replace` (Python 3.13 and later) calls this method too (see
+        `NodeSpec.__replace__`), so it validates as well.
         """
         return type(self).model_validate({**self.model_dump(), **changes})
-
-    __replace__ = replace
 
     def to_metadata_json(self) -> ZarrV2GroupMetadataJSON:
         """
@@ -929,13 +932,10 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         change together atomically. Unlike `model_copy(update=...)`, the
         result is validated.
 
-        `copy.replace` (Python 3.13 and later) calls this method too, so it
-        validates as well, where pydantic's own `__replace__` would copy
-        without validating.
+        `copy.replace` (Python 3.13 and later) calls this method too (see
+        `NodeSpec.__replace__`), so it validates as well.
         """
         return type(self).model_validate({**self.model_dump(), **changes})
-
-    __replace__ = replace
 
     def resolve_path(self, path: str) -> AnyArraySpec | AnyGroupSpec:
         """
