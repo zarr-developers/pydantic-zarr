@@ -343,7 +343,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert reference_documents.keys() == model_documents.keys()
     for key in reference_documents:
         assert model_documents[key] == reference_documents[key], key
-print("fidelity: the model writes exactly the documents xarray writes")
+print("fidelity: the documents the model holds equal the documents xarray wrote")
 # --8<-- [end:reference]
 
 print("SUCCESS: xarray_dataset example ran to completion")

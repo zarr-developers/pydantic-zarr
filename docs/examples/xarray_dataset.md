@@ -83,7 +83,7 @@ does not follow the layout this page encodes.
 
 ## Fidelity against real xarray
 
-The script ends by proving the model writes exactly what xarray writes: it
+The script ends by checking that the model holds exactly the documents xarray writes: it
 builds the same curvilinear `Dataset` with xarray (`assign_coords` makes
 `lat`/`lon` auxiliary coordinates, so xarray itself emits the
 `coordinates="lat lon"` attribute on the data variable), writes it with

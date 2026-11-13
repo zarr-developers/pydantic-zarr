@@ -4,8 +4,8 @@ attribute models built on `AttributesBase` (hyphenated spec keys via aliases, op
 keys omitted rather than written as `null`), a discriminated union for the spec's closed
 set of coordinate transformations, typed group members via a PEP 728 `TypedDict` with
 `extra_items`, cross-field validators tying the metadata to the members with `get_path`,
-and a store round trip. The final section proves the model writes exactly what the
-reference implementation (ome-zarr-py) writes for the same image. Rendered in the docs
+and a store round trip. The final section checks that the model holds exactly the
+documents the reference implementation (ome-zarr-py) writes for the same image. Rendered in the docs
 at docs/examples/ome_zarr_05.md. The dev environment does not carry ome-zarr; run with:
 uv run --no-project --with-editable . --with ome-zarr --with 'zarr>=3.1' \
     --python 3.12 -- python examples/ome_zarr_05.py
