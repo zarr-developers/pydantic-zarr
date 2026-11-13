@@ -30,7 +30,7 @@ dependencies = [
     "pydantic>=2.12",
     "numpy>=2.0.0",
     "packaging>=21.0",
-    "zarr-metadata>=0.6.0",
+    "zarr-metadata>=0.8.0",
     "typing-extensions>=4.6",
 ]
 
@@ -51,7 +51,7 @@ test-base = [
     # check the readers against (tests/test_pydantic_zarr/test_zarr_metadata_strategies.py);
     # 0.7 is the first release with them. The docs build, which includes
     # this group, also uses the scope names 0.7 introduced.
-    "zarr-metadata[testing]>=0.7",
+    "zarr-metadata[testing]>=0.8",
     "pytest==9.1.0",
     "pytest-cov",
     "pytest-examples",

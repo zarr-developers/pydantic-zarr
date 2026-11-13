@@ -1039,19 +1039,30 @@ def test_fill_value_stored(dtype: str, fill_value: object, expected: object) -> 
     ("dtype", "expected"),
     [
         ("<i4", 0),
-        ("<f8", 0),
-        ("|b1", None),
-        ("<c16", None),
-        ("|S3", None),
-        ([("a", "<i4"), ("b", "<f8")], None),
+        ("<f8", 0.0),
+        ("|b1", False),
+        ("<c16", (0.0, 0.0)),
+        ("|S3", ""),
+        ("<U2", ""),
+        ("|V4", "AAAAAA=="),
+        ([("a", "<i4"), ("b", "<f8")], "AAAAAAAAAAAAAAAA"),
+        ("<M8[s]", "NaT"),
+        ("<m8[s]", "NaT"),
+        ("|O", None),
     ],
+    ids=str,
 )
 def test_fill_value_default(dtype: object, expected: object) -> None:
     """
     A spec built without a fill value, or by `from_array` from an array with
-    none, gets 0 when its dtype accepts 0 and None otherwise.
+    none, gets the default `zarr-metadata` derives for its dtype, as
+    zarr-python does: zero, `False`, the empty string, null bytes (base64 for
+    raw and struct dtypes), `"NaT"` for the time dtypes, and `None` for `|O`,
+    whose values may be of any type.
     """
-    assert ArraySpec(shape=(4,), chunks=(2,), dtype=cast("Any", dtype)).fill_value == expected
+    built = ArraySpec(shape=(4,), chunks=(2,), dtype=cast("Any", dtype)).fill_value
+    assert built == expected
+    assert type(built) is type(expected)
     array = np.zeros((4,), dtype=np.dtype(cast("Any", dtype)))
     assert ArraySpec.from_array(array).fill_value == expected
 

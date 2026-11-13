@@ -282,8 +282,9 @@ what a `.zarray` document can store. Among other things, its fill value must be
 one its dtype accepts. Before that check, the fill value is put in its Zarr V2
 JSON form: numpy scalars become Python scalars, complex numbers become
 `(real, imaginary)` pairs, and non-finite floats become `"NaN"`, `"Infinity"`
-or `"-Infinity"`. A spec built without a fill value gets 0 when its dtype
-accepts 0, and `None` otherwise.
+or `"-Infinity"`. A spec built without a fill value gets the default
+`zarr-metadata` derives for its dtype, the value zarr-python uses: zero,
+`False`, the empty string, null bytes, or `"NaT"` for a time dtype.
 
 ```python
 import numpy as np
@@ -294,7 +295,7 @@ from pydantic_zarr.v2 import ArraySpec
 print(ArraySpec(shape=(4,), chunks=(2,), dtype="<c8", fill_value=np.complex64(np.nan)).fill_value)
 #> ('NaN', 0.0)
 print(ArraySpec(shape=(4,), chunks=(2,), dtype="|b1").fill_value)
-#> None
+#> False
 try:
     ArraySpec(shape=(4,), chunks=(2,), dtype="<i2", fill_value=1.5)
 except ValidationError as e:

@@ -1656,9 +1656,11 @@ def auto_attributes(data: Any) -> Mapping[str, Any]:
 
 def dtype_default_fill_value(dtype: object) -> FillValue:
     """
-    The fill value a spec of data type `dtype` gets when none is given: `0`
-    when the data type accepts `0`, and `None` otherwise. A `dtype` that is
-    not a valid Zarr V2 data type gets `0`, and validation reports the data type.
+    The fill value a spec of data type `dtype` gets when none is given: the
+    default `zarr-metadata` derives for the data type, the value zarr-python
+    uses (zero, `False`, the empty string, null bytes, `"NaT"`), or `None`
+    for `|O`, whose values may be of any type. A `dtype` that is not a valid
+    Zarr V2 data type gets `0`, and validation reports the data type.
     """
     try:
         return cast(
