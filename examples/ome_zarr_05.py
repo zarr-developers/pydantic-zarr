@@ -25,6 +25,7 @@ import zarr
 import zarr.storage
 from pydantic import ConfigDict, Field, ValidationError, model_validator
 from typing_extensions import TypedDict
+from zarr_io import read_documents, write_hierarchy
 
 from pydantic_zarr.core import MISSING, AttributesBase
 from pydantic_zarr.v3 import ArraySpec, CodecLike, GroupSpec, is_array_spec
@@ -206,10 +207,11 @@ assert is_array_spec(level0)
 assert level0.shape == (2, 32, 32)
 print("built a 2-level OME-Zarr 0.5 image:", sorted(image.members))
 
-# write the hierarchy to a store and read it back
+# write the hierarchy's documents to a store with zarr-python and read them back
 store = zarr.storage.MemoryStore()
-image.to_zarr(store, path="image.zarr")
-round_tripped = MultiscaleImage.from_zarr(zarr.open_group(store, path="image.zarr", mode="r"))
+write_hierarchy(image, store, "image.zarr")
+stored = zarr.open_group(store, path="image.zarr", mode="r")
+round_tripped = MultiscaleImage.from_stored_metadata_json(read_documents(stored))
 assert image.like(round_tripped)
 assert image == round_tripped
 print("store round trip compares equal")
@@ -239,8 +241,8 @@ else:
 # --8<-- [start:reference]
 # The model should write exactly what a reference OME-Zarr 0.5 implementation
 # writes. ome-zarr-py generates a multiscale image from synthetic data; a
-# MultiscaleImage instance then describes that same image, writes it to a
-# second store, and every zarr.json in the two stores must be identical.
+# MultiscaleImage instance then describes that same image, and every zarr.json
+# ome-zarr-py wrote must be identical to the document the model holds for it.
 import json
 import pathlib
 import tempfile
@@ -313,8 +315,6 @@ modeled = MultiscaleImage(
     ),
     members={"s0": reference_level((2, 32, 32)), "s1": reference_level((2, 16, 16))},
 )
-modeled_dir = pathlib.Path(tempfile.mkdtemp()) / "modeled.zarr"
-modeled.to_zarr(zarr.storage.LocalStore(modeled_dir), path="")
 
 
 def metadata_documents(root: pathlib.Path) -> dict[str, object]:
@@ -323,7 +323,8 @@ def metadata_documents(root: pathlib.Path) -> dict[str, object]:
 
 
 reference_docs = metadata_documents(reference_dir)
-modeled_docs = metadata_documents(modeled_dir)
+# the model's documents, as JSON holds them (tuples become arrays), to compare
+modeled_docs = json.loads(json.dumps(modeled.to_stored_metadata_json()))
 assert reference_docs.keys() == modeled_docs.keys(), (
     sorted(reference_docs),
     sorted(modeled_docs),

@@ -8,9 +8,9 @@
 
 ```sh
 pip install -U pydantic-zarr
-# or, with zarr i/o support
-pip install -U "pydantic-zarr[zarr]"
 ```
+
+`pydantic-zarr` models Zarr metadata documents and does no IO; [zarr-python](https://github.com/zarr-developers/zarr-python) moves the documents in and out of stores, as the [usage guide](https://pydantic-zarr.readthedocs.io/en/latest/usage_zarr_v3/#reading-and-writing-with-zarr-python) shows.
 
 ## Getting help
 
@@ -20,15 +20,29 @@ pip install -U "pydantic-zarr[zarr]"
 ## Example
 
 ```python
-import zarr
-from pydantic_zarr import GroupSpec
+import json
 
-group = zarr.group(path='foo')
-array = zarr.create(store = group.store, path='foo/bar', shape=10, dtype='uint8')
+import zarr
+from zarr.core.buffer import default_buffer_prototype
+
+from pydantic_zarr.v2 import GroupSpec
+
+group = zarr.create_group(store={}, path='foo', zarr_format=2)
+array = zarr.create_array(
+    store=group.store, name='foo/bar', shape=10, dtype='uint8', zarr_format=2
+)
 array.attrs.put({'metadata': 'hello'})
 
+# collect the metadata documents zarr-python stored, keyed as the store keys them
+prototype = default_buffer_prototype()
+documents = {
+    f"{path}/{name}" if path else name: json.loads(buffer.to_bytes())
+    for path, node in [("", group), *group.members(max_depth=None)]
+    for name, buffer in node.metadata.to_buffer_dict(prototype).items()
+}
+
 # this is a pydantic model
-spec = GroupSpec.from_zarr(group)
+spec = GroupSpec.from_stored_metadata_json(documents)
 print(spec.model_dump())
 """
 {
@@ -45,13 +59,7 @@ print(spec.model_dump())
             'order': 'C',
             'filters': None,
             'dimension_separator': '.',
-            'compressor': {
-                'id': 'blosc',
-                'cname': 'lz4',
-                'clevel': 5,
-                'shuffle': 1,
-                'blocksize': 0,
-            },
+            'compressor': {'id': 'zstd', 'level': 0},
         }
     },
 }

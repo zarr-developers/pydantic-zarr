@@ -142,6 +142,7 @@ assert CoordinateReference(name="physical", path=None).model_dump() == {
 # --8<-- [start:image]
 import zarr
 import zarr.storage
+from zarr_io import read_documents, write_hierarchy
 
 from pydantic_zarr.v3 import ArraySpec, GroupSpec, is_array_spec
 
@@ -265,10 +266,11 @@ s0 = image["s0"]
 assert is_array_spec(s0)
 assert s0.shape == (16, 16)
 
-# round trip through an in-memory Zarr v3 store
+# round trip through an in-memory Zarr v3 store, written and read with zarr-python
 store = zarr.storage.MemoryStore()
-image.to_zarr(store, path="image.ome.zarr")
-readback = Image.from_zarr(zarr.open_group(store, path="image.ome.zarr", mode="r"))
+write_hierarchy(image, store, "image.ome.zarr")
+stored = zarr.open_group(store, path="image.ome.zarr", mode="r")
+readback = Image.from_stored_metadata_json(read_documents(stored))
 print("round trip like():", image.like(readback))
 assert image.like(readback)
 assert readback.attributes == attributes
@@ -390,18 +392,14 @@ else:
             attributes=ImageAttributes(ome=OmeAttrs(version="0.6", multiscales=(multiscale,))),
             members={"scale0": ref_group((16, 16)), "scale1": ref_group((8, 8))},
         )
-        my_path = Path(tmp) / "model.ome.zarr"
-        mine.to_zarr(zarr.storage.LocalStore(str(my_path)), path="")
 
-        # --- compare every metadata document between the two stores ---
+        # --- compare every document ngff-zarr wrote with the model's ---
         ref_docs = {
             str(p.relative_to(ref_path)): json.loads(p.read_text())
             for p in ref_path.rglob("zarr.json")
         }
-        my_docs = {
-            str(p.relative_to(my_path)): json.loads(p.read_text())
-            for p in my_path.rglob("zarr.json")
-        }
+        # the model's documents, as JSON holds them (tuples become arrays)
+        my_docs = json.loads(json.dumps(mine.to_stored_metadata_json()))
         assert my_docs.keys() == ref_docs.keys(), (my_docs.keys(), ref_docs.keys())
         for doc_path in sorted(ref_docs):
             assert my_docs[doc_path] == ref_docs[doc_path], f"{doc_path} differs"
