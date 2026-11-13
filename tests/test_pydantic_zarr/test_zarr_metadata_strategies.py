@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 
 from pydantic_zarr.v3 import ArraySpec, BaseGroupSpec
@@ -154,9 +154,9 @@ def test_fill_value_spellings_alike(data: st.DataObject) -> None:
     base = data.draw(READABLE_ARRAYS)
     documents = [{**base, "data_type": data_type, "fill_value": fill} for fill in (first, second)]
     models = [read_array_metadata_v3(document).metadata for document in documents]
-    if models[0] is None or models[1] is None:
-        # the base document's codecs were drawn for another data type
-        return
+    # the base document's codecs may have been drawn for another data type;
+    # such examples are discarded, so Hypothesis can tell how many checked anything
+    assume(models[0] is not None and models[1] is not None)
     specs = [ArraySpec.model_validate(document) for document in documents]
     assert specs[0].like(specs[1]) == (models[0] == models[1])
 
