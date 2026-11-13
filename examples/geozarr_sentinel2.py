@@ -5,9 +5,9 @@ attribute models with non-identifier keys (``_ARRAY_DIMENSIONS``) on
 ``AttributesBase``, closed-``TypedDict`` members for a hierarchy whose member
 names are fixed by a spec (the four native 10 m Sentinel-2 bands), a
 cross-member validator (every CF ``grid_mapping`` reference resolves), a store
-round trip, the invalid layouts the model refuses, and a check that the model
-writes the same metadata documents as xarray writing the equivalent CF
-dataset. GeoZarr: https://github.com/zarr-developers/geozarr-spec
+round trip, the invalid layouts the model refuses, and a check that the
+metadata documents the model holds equal those xarray writes for the
+equivalent CF dataset. GeoZarr: https://github.com/zarr-developers/geozarr-spec
 
 Run standalone with:
 uv run --no-project --with-editable <path to pydantic-zarr checkout> \
@@ -200,8 +200,8 @@ else:
 # reference implementation for this layer (one resolution dataset with
 # grid_mapping/spatial_ref and 1-D x/y coords — the CF layer, not the full
 # Sentinel-2 product tree). The model, told the reference's codecs and the NaN
-# fill value of its float coordinates, must write byte-for-byte the same
-# metadata documents.
+# fill value of its float coordinates, must hold the same metadata documents
+# xarray wrote, each equal once parsed; the model writes no store.
 import asyncio
 import json
 

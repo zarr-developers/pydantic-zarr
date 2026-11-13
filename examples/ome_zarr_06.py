@@ -303,8 +303,9 @@ except ValidationError as exc:
 # 0.6 (`to_ngff_zarr(..., version="0.6")`), so this section uses it as ground
 # truth instead of the spec repository's example document: it converts
 # synthetic data to a two-level 0.6 image, rebuilds the same image with the
-# models above, and asserts that every zarr.json in the two stores is
-# identical as parsed JSON (chunk payloads are not compared). The section is
+# models above, and asserts that every zarr.json ngff-zarr wrote equals, as
+# parsed JSON, the document the model holds (`to_stored_metadata_json`, no
+# second store; chunk payloads are not compared). The section is
 # skipped, loudly, when ngff-zarr is not installed.
 import importlib.util
 
