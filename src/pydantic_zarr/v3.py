@@ -1157,7 +1157,9 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         `data_type: Literal["uint16"] = "uint16"` or
         `fill_value: Literal["NaN"] = "NaN"` keeps that value, and the fields
         not given are derived from it. Fields a subclass adds take their own
-        defaults, and so does a field whose default factory reads other fields.
+        defaults, and so does a field whose default factory reads other fields;
+        nothing is derived from such a field, so when it is the shape or the
+        data type, the fields that depend on it have to be given.
         A field the class requires and the
         data cannot provide (an attributes model with required keys, say) has
         to be passed, as it does to the constructor. A subclass whose
@@ -1204,7 +1206,8 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
                 cast("npt.DTypeLike | Mapping[str, object]", document["data_type"]),
                 scope=cls.zarr_scope,
             )
-        document.setdefault("chunk_key_encoding", _DEFAULT_CHUNK_KEY_ENCODING)
+        if "chunk_key_encoding" not in factory_fields:
+            document.setdefault("chunk_key_encoding", _DEFAULT_CHUNK_KEY_ENCODING)
         if chunk_grid == "auto":
             document["chunk_grid"] = _guessed_chunk_grid(
                 tuple(cast("Sequence[int]", document.get("shape", ()))),
@@ -1213,10 +1216,17 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         elif chunk_grid is not None:
             document["chunk_grid"] = chunk_grid
         scope = CORE_AND_EXTENSIONS_CONTEXT if cls.zarr_scope is None else cls.zarr_scope
+        # a source left to its factory has no value yet, so nothing is derived
+        # from it: what depends on it is the caller's to give
+        undecided = set(factory_fields)
+        if "data_type" in factory_fields:
+            undecided |= _DERIVED_FROM_DATA_TYPE
+        if "shape" in factory_fields:
+            undecided |= _DERIVED_FROM_SHAPE
         derived = {
             name: value
             for name, value in _derived_array_members(document, scope).items()
-            if name not in factory_fields
+            if name not in undecided
         }
         return cls.model_validate({**derived, **document})
 
