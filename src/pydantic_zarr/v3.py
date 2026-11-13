@@ -10,6 +10,7 @@ from typing import (
     Annotated,
     Any,
     ClassVar,
+    Final,
     Generic,
     Literal,
     NotRequired,
@@ -374,8 +375,14 @@ def parse_dtype_v3(
     Convert a numpy data type declaration to its Zarr V3 metadata form.
 
     Only numpy data types are parsed: a numpy data type maps to its Zarr V3
-    name, or, for ``datetime64`` / ``timedelta64``, to the named configuration
-    object the Zarr V3 form of those data types requires. A declaration
+    name, or to the named configuration object the Zarr V3 form of some data
+    types requires, spelled as zarr-python writes them: ``datetime64`` /
+    ``timedelta64`` become ``numpy.datetime64`` / ``numpy.timedelta64``, a
+    fixed-length unicode type (``<U5``) ``fixed_length_utf32``, a fixed-length
+    bytes type (``S3``) ``null_terminated_bytes``, and numpy's variable-length
+    ``StringDType`` ``string``. An unstructured void type (``V4``) becomes
+    ``raw_bytes`` when `scope` claims that name (zarr-python's scope does), and
+    the core spec's raw type (``r32``) otherwise. A declaration
     already in Zarr V3 form — a data type name or a named configuration
     mapping — needs no parsing and passes through unchanged: like every other
     field, it is judged against the definitions in `scope` (``zarr-metadata``'s
@@ -424,6 +431,17 @@ def parse_dtype_v3(
         # raise ValueError so pydantic reports this as a validation error
         # instead of letting numpy's TypeError escape the validator
         raise ValueError(f"Unsupported dtype: {dtype!r}") from e
+    if isinstance(parsed, np.dtypes.StrDType):
+        return {"name": "fixed_length_utf32", "configuration": {"length_bytes": parsed.itemsize}}
+    if isinstance(parsed, np.dtypes.BytesDType):
+        return {"name": "null_terminated_bytes", "configuration": {"length_bytes": parsed.itemsize}}
+    if isinstance(parsed, np.dtypes.StringDType):
+        return "string"
+    if isinstance(parsed, np.dtypes.VoidDType) and parsed.fields is None and parsed.itemsize > 0:
+        scope_actual = CORE_AND_EXTENSIONS_CONTEXT if scope is None else scope
+        if scope_actual.claimant(DataTypeDefinition, "raw_bytes") is not None:
+            return {"name": "raw_bytes", "configuration": {"length_bytes": parsed.itemsize}}
+        return f"r{parsed.itemsize * 8}"
     if parsed.kind in ("M", "m"):
         # numpy time dtypes take the named-configuration form in Zarr V3. These are
         # handled outside the match statement because numpy's stubs reject the
@@ -467,6 +485,15 @@ def parse_dtype_v3(
                 raise ValueError(f"Unsupported dtype: {dtype}")
 
 
+_FIXED_LENGTH_NUMPY_CODES: Final = {
+    "fixed_length_utf32": ("<U", 4),
+    "null_terminated_bytes": ("S", 1),
+    "raw_bytes": ("V", 1),
+}
+"""The numpy type code and code-unit size of each fixed-length data type
+`parse_dtype_v3` writes as a named configuration with a `length_bytes`."""
+
+
 def _numpy_dtype_from_v3(data_type: str | Mapping[str, object]) -> np.dtype[Any] | None:
     """
     Best-effort inverse of `parse_dtype_v3`: the numpy data type equivalent to
@@ -474,6 +501,10 @@ def _numpy_dtype_from_v3(data_type: str | Mapping[str, object]) -> np.dtype[Any]
     extension data type).
     """
     if isinstance(data_type, str):
+        # the core spec's raw types (`r8`, `r16`, ...) are numpy's void types
+        if data_type[:1] == "r" and data_type[1:].isdigit():
+            bits = int(data_type[1:])
+            return np.dtype(f"V{bits // 8}") if bits > 0 and bits % 8 == 0 else None
         try:
             candidate = np.dtype(data_type)
         except TypeError:
@@ -489,6 +520,12 @@ def _numpy_dtype_from_v3(data_type: str | Mapping[str, object]) -> np.dtype[Any]
         return candidate
     name = data_type.get("name")
     config = data_type.get("configuration")
+    if name in _FIXED_LENGTH_NUMPY_CODES and isinstance(config, Mapping):
+        code, unit_bytes = _FIXED_LENGTH_NUMPY_CODES[name]
+        length = config.get("length_bytes")
+        if isinstance(length, int) and length > 0 and length % unit_bytes == 0:
+            return np.dtype(f"{code}{length // unit_bytes}")
+        return None
     if name in ("numpy.datetime64", "numpy.timedelta64") and isinstance(config, Mapping):
         unit = config.get("unit")
         scale = config.get("scale_factor", 1)
@@ -1043,9 +1080,12 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             A `zarr.Array` carries its complete metadata document, which is
             read whole (via `from_zarr`), so chunk grid, chunk key encoding,
             fill value, codecs and attributes are all taken from the array;
-            for other objects they are probed from same-named attributes.
-            Keyword arguments other than `"auto"` override what the array
-            provides either way.
+            for other objects they are probed from same-named attributes, and
+            a fill value or codecs the object lacks (a numpy array has
+            neither) take the defaults `zarr-metadata` derives for its data
+            type in this class's scope, as in `create_default`. Keyword
+            arguments other than `"auto"` override what the array provides
+            either way.
 
         Returns
         -------
@@ -1090,16 +1130,6 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         else:
             chunk_key_actual = chunk_key_encoding
 
-        if fill_value == "auto":
-            fill_value_actual = auto_fill_value(array)
-        else:
-            fill_value_actual = fill_value
-
-        codecs_actual: tuple[CodecLike, ...]
-        if codecs == "auto":
-            codecs_actual = auto_codecs(array)
-        else:
-            codecs_actual = tuple(codecs)
         storage_transformers_actual: Sequence[str | AnyNamedConfig]
         if storage_transformers == "auto":
             storage_transformers_actual = auto_storage_transformers(array)
@@ -1112,21 +1142,31 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         else:
             dimension_names_actual = dimension_names
 
+        document: dict[str, object] = {
+            "shape": array.shape,
+            "data_type": parse_dtype_v3(array.dtype, scope=cls.zarr_scope),
+            "chunk_grid": chunk_grid_actual,
+            "attributes": attributes_actual,
+            "chunk_key_encoding": chunk_key_actual,
+            "storage_transformers": tuple(storage_transformers_actual),
+            "dimension_names": dimension_names_actual,
+        }
+        # a fill value or codecs the array carries are taken from it; an array
+        # without them (a numpy array) gets the defaults zarr-metadata derives
+        # for its data type in this class's scope, as `create_default` does
+        if fill_value != "auto":
+            document["fill_value"] = fill_value
+        elif hasattr(array, "fill_value"):
+            document["fill_value"] = array.fill_value
+        if codecs != "auto":
+            document["codecs"] = tuple(codecs)
+        elif hasattr(array, "codecs"):
+            document["codecs"] = tuple(array.codecs)
+        scope = CORE_AND_EXTENSIONS_CONTEXT if cls.zarr_scope is None else cls.zarr_scope
+        derived = _derived_array_members(document, scope)
         # the inputs above are of the types an input takes, which validation
         # writes as the types a spec holds; `model_validate` is that door
-        return cls.model_validate(
-            {
-                "shape": array.shape,
-                "data_type": parse_dtype_v3(array.dtype),
-                "chunk_grid": chunk_grid_actual,
-                "attributes": attributes_actual,
-                "chunk_key_encoding": chunk_key_actual,
-                "fill_value": fill_value_actual,
-                "codecs": tuple(codecs_actual),
-                "storage_transformers": tuple(storage_transformers_actual),
-                "dimension_names": dimension_names_actual,
-            }
-        )
+        return cls.model_validate({**derived, **document})
 
     @classmethod
     def create_default(
