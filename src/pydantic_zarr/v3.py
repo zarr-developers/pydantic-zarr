@@ -2877,6 +2877,54 @@ def to_flat(
     return dict(sorted(result.items(), key=lambda v: len(v[0])))
 
 
+def normalize_document(
+    document: JSONValue, *, normalize_null_consolidated_metadata: bool = True
+) -> JSONValue:
+    """
+    Repair a stored Zarr V3 metadata document that a writer got wrong, before
+    it is validated, and return it; a document needing no repair is returned
+    as it is (the same object).
+
+    pydantic-zarr's readers judge a document as the spec defines it, so a
+    document that breaks the spec is refused. Some writers break it in known,
+    harmless ways; this routine undoes them, each one only when its keyword
+    asks for it:
+
+    normalize_null_consolidated_metadata :
+        zarr-python 3.0 through 3.3 writes ``"consolidated_metadata": null``
+        into every group's ``zarr.json`` to say the group has none. The
+        member, when present, is an object, so the readers refuse the null.
+        When `True` (the default), a group document's null
+        ``consolidated_metadata`` is dropped, as the absence it stands for.
+
+    The input is not modified. Apply it to each document of a stored-documents
+    mapping before `from_stored_metadata_json`.
+
+    Examples
+    --------
+    >>> from pydantic_zarr.v3 import GroupSpec, normalize_document
+    >>> stored = {"zarr_format": 3, "node_type": "group", "consolidated_metadata": None}
+    >>> normalize_document(stored)
+    {'zarr_format': 3, 'node_type': 'group'}
+    >>> GroupSpec.from_stored_metadata_json({"zarr.json": normalize_document(stored)}).members
+    {}
+    """
+    if (
+        normalize_null_consolidated_metadata
+        and isinstance(document, Mapping)
+        and document.get("zarr_format") == 3
+        and document.get("node_type") == "group"
+        and ZARR_V3_CONSOLIDATED_METADATA_KEY in document
+        and document[ZARR_V3_CONSOLIDATED_METADATA_KEY] is None
+    ):
+        return {
+            key: value
+            for key, value in document.items()
+            if key != ZARR_V3_CONSOLIDATED_METADATA_KEY
+        }
+    return document
+
+
 def is_array_spec(node: object) -> TypeIs[AnyArraySpec]:
     """Whether `node` is an `ArraySpec`, narrowing the type in both branches."""
     return isinstance(node, ArraySpec)

@@ -40,6 +40,7 @@ from pydantic_zarr.v3 import (
     from_zarr_flat,
     is_array_spec,
     is_group_spec,
+    normalize_document,
     parse_dtype_v3,
     to_zarr,
 )
@@ -2708,3 +2709,71 @@ def test_zarr_io_deprecated(
     ]
     assert [message.split("`")[1] for message in deprecations] == [name]
     assert "from_stored_metadata_json" in deprecations[0] or "create_hierarchy" in deprecations[0]
+
+
+_NULL_CM_GROUP: dict[str, Any] = {
+    "zarr_format": 3,
+    "node_type": "group",
+    "attributes": {"a": 1},
+    "consolidated_metadata": None,
+}
+
+
+@pytest.mark.parametrize(
+    ("document", "normalize", "expected"),
+    [
+        (_NULL_CM_GROUP, True, {"zarr_format": 3, "node_type": "group", "attributes": {"a": 1}}),
+        (_NULL_CM_GROUP, False, _NULL_CM_GROUP),
+        (
+            {**_NULL_CM_GROUP, "consolidated_metadata": {"kind": "inline", "metadata": {}}},
+            True,
+            {**_NULL_CM_GROUP, "consolidated_metadata": {"kind": "inline", "metadata": {}}},
+        ),
+        ({**_NULL_CM_GROUP, "node_type": "array"}, True, {**_NULL_CM_GROUP, "node_type": "array"}),
+        ({**_NULL_CM_GROUP, "zarr_format": 2}, True, {**_NULL_CM_GROUP, "zarr_format": 2}),
+        ({"zarr_format": 3, "node_type": "group"}, True, {"zarr_format": 3, "node_type": "group"}),
+        ([1, None], True, [1, None]),
+        (None, True, None),
+    ],
+    ids=[
+        "null-dropped",
+        "null-kept-when-not-asked",
+        "object-kept",
+        "array-untouched",
+        "v2-untouched",
+        "absent-untouched",
+        "list-untouched",
+        "null-document-untouched",
+    ],
+)
+def test_normalize_document(document: Any, normalize: bool, expected: Any) -> None:
+    """
+    `normalize_document` drops a Zarr V3 group document's null
+    `consolidated_metadata` when asked, returns every other JSON value as it
+    is (the same object), and never modifies its input.
+    """
+    before = copy.deepcopy(document)
+    result = normalize_document(document, normalize_null_consolidated_metadata=normalize)
+    assert result == expected
+    assert document == before
+    if expected == document:
+        assert result is document
+
+
+def test_normalize_document_lets_a_zarr_python_33_group_be_read() -> None:
+    """
+    A hierarchy zarr-python 3.0 through 3.3 wrote, with a null
+    `consolidated_metadata` in every group, is refused as stored and read once
+    each document is normalized.
+    """
+    stored = {
+        "zarr.json": _NULL_CM_GROUP,
+        "sub/zarr.json": {**_NULL_CM_GROUP, "attributes": {}},
+    }
+    with pytest.raises(ValidationError, match="consolidated_metadata"):
+        GroupSpec.from_stored_metadata_json(stored)
+    group = GroupSpec.from_stored_metadata_json(
+        {key: normalize_document(doc) for key, doc in stored.items()}
+    )
+    assert group.attributes == {"a": 1}
+    assert set(group.members) == {"sub"}
