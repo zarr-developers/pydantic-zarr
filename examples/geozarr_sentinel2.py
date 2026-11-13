@@ -199,8 +199,9 @@ else:
 # Reference check: xarray writing the equivalent CF dataset is the nearest
 # reference implementation for this layer (one resolution dataset with
 # grid_mapping/spatial_ref and 1-D x/y coords — the CF layer, not the full
-# Sentinel-2 product tree). The model, told the reference's codecs, must
-# write byte-for-byte the same metadata documents.
+# Sentinel-2 product tree). The model, told the reference's codecs and the NaN
+# fill value of its float coordinates, must write byte-for-byte the same
+# metadata documents.
 import asyncio
 import json
 
