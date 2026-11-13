@@ -91,6 +91,51 @@ For a single-byte data type like `uint8`, the `bytes` codec needs no `endian`
 configuration; a no-op `{"endian": ...}` configuration passed anyway is dropped
 at validation, matching the spelling `zarr-python` stores.
 
+## Creating array specs
+
+`ArraySpec.create_default` builds a valid array spec from whichever fields are
+given. Every other field takes the default `zarr-metadata` derives from them, as
+its `ZarrV3ArrayMetadata.create_default` does: a shape brings one regular chunk
+covering the array, and a data type brings its default fill value (zero,
+`False`, the empty string, `"NaT"`) and its array -> bytes codec. With nothing
+given, the array is a scalar `uint8`. `chunk_grid="auto"` guesses a chunk shape
+from the array's size in bytes instead, as zarr-python does when no chunks are
+given.
+
+On a subclass, a field the class declares a default for counts as given, so a
+class can pin values and leave the rest to be derived from them:
+
+```python
+from typing import Literal
+
+from pydantic_zarr.v3 import ArraySpec
+
+array = ArraySpec.create_default(shape=(4, 4), data_type="float32")
+print(array.fill_value)
+#> 0.0
+
+
+class NaNFloat32(ArraySpec):
+    data_type: Literal["float32"] = "float32"
+    fill_value: Literal["NaN"] = "NaN"
+
+
+pinned = NaNFloat32.create_default(shape=(4, 4))
+print(pinned.data_type, pinned.fill_value)
+#> float32 NaN
+
+guessed = ArraySpec.create_default(shape=(10980, 10980), data_type="uint16", chunk_grid="auto")
+print(guessed.chunk_grid["configuration"]["chunk_shape"])
+#> (687, 1373)
+```
+
+A field the class requires and the data cannot provide, such as an attributes
+model with required keys, has to be passed, as it does to the constructor. A
+subclass whose construction needs more than defaults, such as attributes
+computed from the shape, can override `create_default`. To stay a compatible
+override, it keeps the keyword-only signature and passes the computed fields on
+to `super().create_default(...)`.
+
 ## Metadata documents
 
 `model_dump` takes options that change what it returns, so its result can only

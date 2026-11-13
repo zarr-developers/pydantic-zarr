@@ -1109,9 +1109,18 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         array's size in bytes, the heuristic zarr-python applies when no chunks
         are given. A numpy data type is converted to its Zarr V3 form first.
 
-        Everything is validated in one pass, in this class's scope, so a
-        subclass that narrows a field (required attributes, say) takes the
-        narrowed values through `fields`. A data type nothing in the scope
+        On a subclass, a field the class declares a default for counts as
+        given: a class that pins `data_type: Literal["uint16"] = "uint16"` or
+        `fill_value: Literal["NaN"] = "NaN"` keeps that value, and the fields
+        not given are derived from it. A field the class requires and the
+        data cannot provide (an attributes model with required keys, say) has
+        to be passed, as it does to the constructor. A subclass whose
+        construction needs more than defaults (attributes computed from the
+        shape, say) can override this method; to stay a compatible override,
+        keep the keyword-only signature and pass the computed fields on to
+        `super().create_default(...)`.
+
+        Everything is validated in one pass, in this class's scope. A data type nothing in the scope
         derives a fill value for (an extension data type, or a spelling only
         another scope claims) needs `fill_value` given, and the refusal says
         so. A data type name that is not a Zarr V3 name but that numpy reads
@@ -1124,7 +1133,17 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         >>> ArraySpec.create_default(shape=(10, 10), data_type="uint16", dimension_names=("y", "x"))
         ArraySpec(zarr_format=3, node_type='array', attributes={}, shape=(10, 10), data_type='uint16', chunk_grid={'name': 'regular', 'configuration': {'chunk_shape': (10, 10)}}, chunk_key_encoding={'name': 'default', 'configuration': {'separator': '/'}}, fill_value=0, codecs=({'name': 'bytes', 'configuration': {'endian': 'little'}},), storage_transformers=(), dimension_names=('y', 'x'))
         """
-        document: dict[str, object] = dict(fields)
+        # a field the class declares a default for counts as given, so the
+        # fields not given are derived from it rather than from zarr-metadata's
+        # generic defaults
+        document: dict[str, object] = {
+            name: info.get_default(call_default_factory=True)
+            for name, info in cls.model_fields.items()
+            if not info.is_required()
+            and name not in ("zarr_format", "node_type")
+            and not (name == "chunk_grid" and chunk_grid is not None)
+        }
+        document.update(fields)
         if "data_type" in document:
             document["data_type"] = parse_dtype_v3(
                 cast("npt.DTypeLike | Mapping[str, object]", document["data_type"]),
