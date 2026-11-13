@@ -142,7 +142,7 @@ assert CoordinateReference(name="physical", path=None).model_dump() == {
 # --8<-- [start:image]
 import zarr
 import zarr.storage
-from zarr_io import read_documents, write_hierarchy
+from zarr_io import read_documents, repaired, write_hierarchy
 
 from pydantic_zarr.v3 import ArraySpec, GroupSpec, is_array_spec
 
@@ -258,8 +258,8 @@ attributes = ImageAttributes(
     )
 )
 members = {
-    "s0": ArraySpec.from_shape_and_data_type((16, 16), "uint16"),
-    "s1": ArraySpec.from_shape_and_data_type((8, 8), "uint16"),
+    "s0": ArraySpec.create_default(shape=(16, 16), data_type="uint16"),
+    "s1": ArraySpec.create_default(shape=(8, 8), data_type="uint16"),
 }
 image = Image(attributes=attributes, members=members)
 s0 = image["s0"]
@@ -303,8 +303,9 @@ except ValidationError as exc:
 # 0.6 (`to_ngff_zarr(..., version="0.6")`), so this section uses it as ground
 # truth instead of the spec repository's example document: it converts
 # synthetic data to a two-level 0.6 image, rebuilds the same image with the
-# models above, and asserts that every zarr.json in the two stores is
-# identical as parsed JSON (chunk payloads are not compared). The section is
+# models above, and asserts that every zarr.json ngff-zarr wrote equals, as
+# parsed JSON, the document the model holds (`to_stored_metadata_json`, no
+# second store; chunk payloads are not compared). The section is
 # skipped, loudly, when ngff-zarr is not installed.
 import importlib.util
 
@@ -369,9 +370,9 @@ else:
         )
 
         def ref_array(shape: tuple[int, ...]) -> ArraySpec[Any]:
-            return ArraySpec.from_shape_and_data_type(
-                shape,
-                "uint16",
+            return ArraySpec.create_default(
+                shape=shape,
+                data_type="uint16",
                 chunk_grid={"name": "regular", "configuration": {"chunk_shape": (8, 8)}},
                 codecs=(
                     {"name": "bytes", "configuration": {"endian": "little"}},
@@ -395,7 +396,7 @@ else:
 
         # --- compare every document ngff-zarr wrote with the model's ---
         ref_docs = {
-            str(p.relative_to(ref_path)): json.loads(p.read_text())
+            str(p.relative_to(ref_path)): repaired(json.loads(p.read_text()))
             for p in ref_path.rglob("zarr.json")
         }
         # the model's documents, as JSON holds them (tuples become arrays)

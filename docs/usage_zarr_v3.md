@@ -91,6 +91,51 @@ For a single-byte data type like `uint8`, the `bytes` codec needs no `endian`
 configuration; a no-op `{"endian": ...}` configuration passed anyway is dropped
 at validation, matching the spelling `zarr-python` stores.
 
+## Creating array specs
+
+`ArraySpec.create_default` builds a valid array spec from whichever fields are
+given. Every other field takes the default `zarr-metadata` derives from them, as
+its `ZarrV3ArrayMetadata.create_default` does: a shape brings one regular chunk
+covering the array, and a data type brings its default fill value (zero,
+`False`, the empty string, `"NaT"`) and its array -> bytes codec. With nothing
+given, the array is a scalar `uint8`. `chunk_grid="auto"` guesses a chunk shape
+from the array's size in bytes instead, as zarr-python does when no chunks are
+given.
+
+On a subclass, a field the class declares a default for counts as given, so a
+class can pin values and leave the rest to be derived from them:
+
+```python
+from typing import Literal
+
+from pydantic_zarr.v3 import ArraySpec
+
+array = ArraySpec.create_default(shape=(4, 4), data_type="float32")
+print(array.fill_value)
+#> 0.0
+
+
+class NaNFloat32(ArraySpec):
+    data_type: Literal["float32"] = "float32"
+    fill_value: Literal["NaN"] = "NaN"
+
+
+pinned = NaNFloat32.create_default(shape=(4, 4))
+print(pinned.data_type, pinned.fill_value)
+#> float32 NaN
+
+guessed = ArraySpec.create_default(shape=(10980, 10980), data_type="uint16", chunk_grid="auto")
+print(guessed.chunk_grid["configuration"]["chunk_shape"])
+#> (687, 1373)
+```
+
+A field the class requires and the data cannot provide, such as an attributes
+model with required keys, has to be passed, as it does to the constructor. A
+subclass whose construction needs more than defaults, such as attributes
+computed from the shape, can override `create_default`. To stay a compatible
+override, it keeps the keyword-only signature and passes the computed fields on
+to `super().create_default(...)`.
+
 ## Metadata documents
 
 `model_dump` takes options that change what it returns, so its result can only
@@ -102,7 +147,7 @@ members are not part of its metadata document, so they are left out.
 ```python
 from pydantic_zarr.v3 import ArraySpec, GroupSpec
 
-array = ArraySpec.from_shape_and_data_type((10,), "uint8")
+array = ArraySpec.create_default(shape=(10,), data_type="uint8")
 document = array.to_metadata_json()
 print(document["shape"], document["data_type"])
 #> (10,) uint8
@@ -110,6 +155,38 @@ print(document["shape"], document["data_type"])
 group = GroupSpec(attributes={"foo": 42}, members={"array": array})
 print(group.to_metadata_json())
 #> {'zarr_format': 3, 'node_type': 'group', 'attributes': {'foo': 42}}
+```
+
+### Envelope spellings
+
+A document's declarations (the data type, chunk grid, chunk key encoding,
+codecs and storage transformers) are read in every envelope spelling the spec
+allows, and held in the canonical one `zarr-metadata` writes: a bare name reads
+as `{"name": ...}`, an explicit `"must_understand": true` and an empty
+`configuration` are dropped, a data type object with nothing to configure reads
+as its bare name, and the JSON arrays of a configuration become tuples. So specs
+built from different spellings of one document compare equal. A declaration
+that says `"must_understand": false` is refused, as `zarr-metadata` refuses it: a
+reader may not ignore a codec or a chunk grid. `chunk_grid` and
+`chunk_key_encoding` take any declaration the scope claims; the core spec
+defines the regular grid, and `zarr-metadata` also defines the rectilinear one.
+
+```python
+from pydantic_zarr.v3 import ArraySpec
+
+canonical = ArraySpec.create_default(shape=(5,), data_type="uint8")
+spelled = ArraySpec.model_validate(
+    {
+        "shape": [5],
+        "data_type": {"name": "uint8", "must_understand": True},
+        "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": [5]}},
+        "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}},
+        "fill_value": 0,
+        "codecs": ["bytes"],
+    }
+)
+print(spelled == canonical)
+#> True
 ```
 
 ## Stored metadata documents
@@ -126,7 +203,7 @@ these are the metadata documents a Zarr implementation writes. It is typed as
 ```python
 from pydantic_zarr.v3 import ArraySpec, GroupSpec
 
-array = ArraySpec.from_shape_and_data_type((10,), "uint8")
+array = ArraySpec.create_default(shape=(10,), data_type="uint8")
 group = GroupSpec(attributes={"foo": 42}, members={"sub": GroupSpec(members={"array": array})})
 print(list(group.to_stored_metadata_json()))
 #> ['zarr.json', 'sub/zarr.json', 'sub/array/zarr.json']
@@ -141,7 +218,7 @@ with none, so `GroupSpec.from_stored_metadata_json` reads every group as a
 ```python
 from pydantic_zarr.v3 import ArraySpec, GroupSpec
 
-array = ArraySpec.from_shape_and_data_type((10,), "uint8")
+array = ArraySpec.create_default(shape=(10,), data_type="uint8")
 group = GroupSpec(attributes={"foo": 42}, members={"sub": GroupSpec(members={"array": array})})
 assert GroupSpec.from_stored_metadata_json(group.to_stored_metadata_json()) == group
 ```
@@ -168,7 +245,7 @@ from pathlib import Path
 
 from pydantic_zarr.v3 import ArraySpec, GroupSpec
 
-array = ArraySpec.from_shape_and_data_type((10,), "uint8")
+array = ArraySpec.create_default(shape=(10,), data_type="uint8")
 group = GroupSpec(attributes={"foo": 42}, members={"sub": GroupSpec(members={"array": array})})
 
 with tempfile.TemporaryDirectory() as root:
@@ -233,7 +310,7 @@ definition that claims its name in a *scope* (a `zarr_metadata`
 `ZarrV3Context`). A scope is a vocabulary, not a whitelist: a name nothing in
 the scope claims is left unjudged, so unknown extensions pass, while a claimed
 name with an invalid configuration is refused. The default scope is
-`zarr-metadata`'s `CORE_AND_EXTENSIONS`.
+`zarr-metadata`'s `CORE_AND_EXTENSIONS_CONTEXT`.
 
 ### Choosing the scope per call
 
@@ -241,12 +318,12 @@ The scope travels through pydantic's validation context: pass a
 `ZarrV3Context` as `context` to `model_validate` (or a mapping holding one
 under `pydantic_zarr.v3.CONTEXT_KEY`, when the context dict is shared with
 other keys). The `scale_offset` codec below is claimed by the default scope,
-which refuses its unknown configuration key; the `CORE` scope does not claim
+which refuses its unknown configuration key; the `CORE_CONTEXT` scope does not claim
 it, so there the same document passes with the codec unjudged:
 
 ```python
 from pydantic import ValidationError
-from zarr_metadata.v3.definition import CORE
+from zarr_metadata.v3.definition import CORE_CONTEXT
 
 from pydantic_zarr.v3 import ArraySpec
 
@@ -267,7 +344,7 @@ except ValidationError as e:
     print(e.error_count())
     #> 1
 
-spec = ArraySpec.model_validate(document, context=CORE)
+spec = ArraySpec.model_validate(document, context=CORE_CONTEXT)
 print(spec.codecs[-1]["name"])
 #> scale_offset
 ```
@@ -275,7 +352,7 @@ print(spec.codecs[-1]["name"])
 ### Scope as a class property
 
 A per-call context lasts one call: operations that build new specs
-(`update`, `from_shape_and_data_type`, `with_sharding_codec`, `like`)
+(`replace`, `create_default`, `with_sharding_codec`, `like`)
 re-validate with no context, back in the default scope. To make the scope a
 property of the model instead, set the `zarr_scope` class variable on a
 subclass: it is the scope every validation of that class reads in when the
@@ -292,12 +369,12 @@ more. A class that also sets `zarr_scope_strict` flips that: every
 extension-point name in the document — a sharding codec's inner and index
 pipelines included — and every [extra field](#extra-fields) key must be
 claimed in the operative scope, so
-`zarr_scope = CORE` plus strict accepts exactly the documents built from
+`zarr_scope = CORE_CONTEXT` plus strict accepts exactly the documents built from
 names the core spec defines:
 
 ```python
 from pydantic import ValidationError
-from zarr_metadata.v3.definition import CORE
+from zarr_metadata.v3.definition import CORE_CONTEXT
 
 from pydantic_zarr.v3 import ArraySpec
 
@@ -305,7 +382,7 @@ from pydantic_zarr.v3 import ArraySpec
 class CoreArraySpec(ArraySpec):
     """Validates in the core scope, and refuses names it does not claim."""
 
-    zarr_scope = CORE
+    zarr_scope = CORE_CONTEXT
     zarr_scope_strict = True
 
 
@@ -339,9 +416,11 @@ print(sharded.codecs[0]["name"])
 ```
 
 The variable-length data types and their codecs (`string`, `bytes`,
-`vlen-utf8`, `vlen-bytes`) are extensions that no current scope claims, as are
-the legacy spellings `zarr-python` has stored (`"str"`,
-`"variable_length_bytes"`), so a strict class refuses variable-length arrays.
+`vlen-utf8`, `vlen-bytes`) are registered extensions, not part of the core spec,
+so a strict core class refuses variable-length arrays. `CORE_AND_EXTENSIONS_CONTEXT`
+claims them, and `ZARR_PYTHON_CONTEXT` also claims the `"variable_length_bytes"`
+spelling `zarr-python` has stored. No scope claims `"str"`, the spelling
+`zarr-python` 3.0 stored for the string data type.
 
 ## Extra fields
 
@@ -355,12 +434,13 @@ implementation does not recognize and (b) are not explicitly set to
 the document, to arrays and groups alike:
 
 - An extra field whose key a definition in the scope claims is recognized,
-  and judged by that definition. `CORE` (and so `CORE_AND_EXTENSIONS`) claims
+  and judged by that definition. `CORE_CONTEXT` (and so `CORE_AND_EXTENSIONS_CONTEXT`) claims
   a group's `consolidated_metadata`, which `zarr-python` writes and which the
   spec allows on groups "for historical reasons".
-- Any other extra field is unrecognized, and accepted only as an extension
-  object — a `name` that is an extension name, an optional `configuration`
-  object, no other members — that sets `"must_understand": false`.
+- Any other extra field is unrecognized, and accepted only when it is an
+  object that says `"must_understand": false`. It is kept as written, whatever
+  else it holds: that is the reading `zarr-metadata` gives the rule, and what
+  its strategies draw.
 
 Every other unknown key is refused, which is also what a misspelled field name
 meets. Accepted extra fields are kept in the `extra_fields` mapping and written
@@ -396,9 +476,9 @@ print(group.model_dump(exclude={"members"}))
 }
 """
 
-array = ArraySpec.from_shape_and_data_type(
-    (4, 4),
-    "uint8",
+array = ArraySpec.create_default(
+    shape=(4, 4),
+    data_type="uint8",
     extra_fields={"provenance": {"name": "acme.provenance", "must_understand": False}},
 )
 print(array.model_dump()["provenance"])
@@ -421,11 +501,11 @@ except ValidationError as e:
     print(e.errors()[0]["msg"])
     """
     Value error, Invalid Zarr V3 array metadata:
-    dimensions_names: not a field of this spec, and not an extra field the spec permits: an extra field is an extension object with "must_understand": false, got ('y', 'x')
+    dimensions_names: not a field of this spec, and not an extra field the spec permits: an extra field is an object that says "must_understand": false, got ('y', 'x')
     """
 ```
 
-`update(extra_fields=...)` replaces the extra fields as a whole. The stored
+`replace(extra_fields=...)` replaces the extra fields as a whole. The stored
 documents carry them, and `from_stored_metadata_json` reads them back.
 Whether a store written through `zarr-python` holds them depends on
 `zarr-python`, which keeps an array's extra fields from 3.1 and a group's from

@@ -30,7 +30,7 @@ dependencies = [
     "pydantic>=2.12",
     "numpy>=2.0.0",
     "packaging>=21.0",
-    "zarr-metadata>=0.6.0",
+    "zarr-metadata>=0.8.0",
     "typing-extensions>=4.6",
 ]
 
@@ -47,6 +47,11 @@ zarr = ["zarr>=3.0.0"]
 test-base = [
     "coverage",
     "hypothesis>=6.100",
+    # the testing extra holds zarr-metadata's own strategies, which draw the
+    # documents the property tests check the readers against
+    # (tests/test_pydantic_zarr/test_zarr_metadata_strategies.py); the floor
+    # is the runtime floor
+    "zarr-metadata[testing]>=0.8",
     "pytest==9.1.0",
     "pytest-cov",
     "pytest-examples",
@@ -300,6 +305,7 @@ checks = [
 
 [tool.towncrier]
 directory = 'changes'
+name = "pydantic-zarr"
 package = 'pydantic_zarr'
 package_dir = 'src'
 filename = "docs/release-notes.md"

@@ -42,8 +42,12 @@ union). The group model narrows `members` to a `TypedDict`: the fixed name
 (`extra_items=ArraySpec`), so a stray subgroup is refused by name. Validators
 then cross-check the metadata against the members: every dataset `path` must
 resolve to an array whose dimensionality matches the axes. The hierarchy
-round-trips through a Zarr store, and realistic invalid layouts — a dangling
-dataset path, a stray subgroup member — are refused.
+round-trips through a Zarr store with the `write_hierarchy` and
+`read_documents` helpers from
+[`examples/zarr_io.py`](https://github.com/zarr-developers/pydantic-zarr/blob/main/examples/zarr_io.py),
+which the [usage guide](../usage_zarr_v3.md#reading-and-writing-with-zarr-python)
+explains, and realistic invalid layouts — a dangling dataset path, a stray
+subgroup member — are refused.
 
 ```python
 --8<-- "examples/ome_zarr_05.py:image"
@@ -56,8 +60,10 @@ produce. The script's final section generates the same image with
 [ome-zarr-py](https://github.com/ome/ome-zarr-py) (the reference writer,
 whose output decides the dataset paths `s0`/`s1`, the per-dataset
 `scale` + `translation` transformations, and the codec choices), describes
-that image with a `MultiscaleImage` instance, writes both to stores, and
-asserts that every `zarr.json` document in the two stores is identical.
+that image with a `MultiscaleImage` instance, and asserts that the
+`zarr.json` documents ome-zarr-py wrote are the same set, each equal once
+parsed, as the documents the model holds (`to_stored_metadata_json`), with no
+second store.
 
 ```python
 --8<-- "examples/ome_zarr_05.py:reference"

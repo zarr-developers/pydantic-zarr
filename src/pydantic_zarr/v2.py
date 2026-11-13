@@ -110,6 +110,12 @@ FillValue = (
     BoolFillValue | IntFillValue | FloatFillValue | ComplexFillValue | RawFillValue | str | None
 )
 
+FillValueLike = FillValue | np.generic | complex
+"""
+A fill value as an input takes it: its JSON form, or a numpy scalar or a Python
+complex number, which validation writes in JSON form.
+"""
+
 DimensionSeparator = ZarrV2ArrayDimensionSeparator
 MemoryOrder = ZarrV2ArrayOrder
 
@@ -204,30 +210,44 @@ class NodeSpec(StrictBase):
 
     zarr_format: Literal[2] = 2
 
+    def __replace__(self, **changes: Any) -> Self:
+        """
+        `copy.replace(spec, **changes)` (Python 3.13 and later): the spec's own
+        `replace`, so it validates the changes, where pydantic's
+        `BaseModel.__replace__` copies without validating. It calls
+        `self.replace`, so a subclass that overrides `replace` is honored.
+        """
+        return cast("Any", self).replace(**changes)
+
 
 class ArraySpecUpdate(TypedDict, total=False):
-    """The fields an `ArraySpec.update` call may replace."""
+    """
+    The fields an `ArraySpec.replace` call may replace, of the types an input
+    takes: validation writes them as the types the spec holds (a numpy dtype as
+    its typestr, a numpy scalar fill value in its JSON form, a numcodecs codec
+    as its configuration mapping, a sequence as a tuple).
+    """
 
     attributes: TBaseAttr
-    shape: tuple[int, ...]
-    chunks: tuple[int, ...]
+    shape: Sequence[int]
+    chunks: Sequence[int]
     dtype: npt.DTypeLike | list[tuple[Any, ...]]
-    fill_value: FillValue
+    fill_value: FillValueLike
     order: MemoryOrder
-    filters: Sequence[Mapping[str, Any]] | None
+    filters: Sequence[Mapping[str, Any] | Codec] | None
     dimension_separator: DimensionSeparator
-    compressor: Mapping[str, Any] | None
+    compressor: Mapping[str, Any] | Codec | None
     extra_fields: Mapping[str, JSONValue]
 
 
 class BaseGroupSpecUpdate(TypedDict, total=False):
-    """The fields a `BaseGroupSpec.update` call may replace."""
+    """The fields a `BaseGroupSpec.replace` call may replace."""
 
     attributes: TBaseAttr
 
 
 class GroupSpecUpdate(TypedDict, total=False):
-    """The fields a `GroupSpec.update` call may replace."""
+    """The fields a `GroupSpec.replace` call may replace."""
 
     attributes: TBaseAttr
     members: Mapping[str, TBaseItem]
@@ -262,7 +282,8 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         are stored as Python scalars, complex numbers as ``(real, imaginary)``
         pairs, and non-finite floats as ``"NaN"``, ``"Infinity"`` or
         ``"-Infinity"``. It must be a fill value the dtype accepts. The
-        default is 0 when the dtype accepts 0, and None otherwise.
+        default is the one `zarr-metadata` derives for the dtype (see
+        `dtype_default_fill_value`).
     compressor: CodecDict | None
         A JSON-serializable representation of a compression codec, or None. The default is None.
     filters: List[CodecDict] | None, default = None
@@ -277,7 +298,7 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         does not define. The spec says such keys "SHOULD NOT be present
         within the metadata object and SHOULD be ignored by implementations",
         so any key with a JSON value is accepted, given no meaning, and kept
-        for `model_dump`, `model_dump_json`, `update` and `like`.
+        for `model_dump`, `model_dump_json`, `replace` and `like`.
         zarr-python drops them when it reads or writes an array, so
         `from_zarr` never finds any and `to_zarr` does not write them. Group
         metadata, where "Other keys MUST NOT be present", takes none.
@@ -302,9 +323,8 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
     @classmethod
     def default_fill_value(cls, data: object) -> object:
         """
-        Give a spec built without a `fill_value` the default for its dtype:
-        `0` when the dtype accepts `0`, and `None` otherwise (a bool, complex
-        or structured dtype, say), as `zarr-metadata` does. A subclass that
+        Give a spec built without a `fill_value` the default `zarr-metadata`
+        derives for its dtype (see `dtype_default_fill_value`). A subclass that
         declares its own `fill_value` default, or makes the field required,
         keeps that instead.
         """
@@ -438,7 +458,7 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
             User-defined metadata associated with this array. Should be JSON-serializable. The default is "auto", which means that `array.attributes` will be used,
             with a fallback value of the empty dict `{}`.
         fill_value : "auto" | int | float | None, default = "auto"
-            The fill value for this array. Either "auto" or FillValue. The default is "auto", which means that `array.fill_value` will be used if that attribute exists, with a fallback of the dtype's default (0 when the dtype accepts 0, None otherwise).
+            The fill value for this array. Either "auto" or FillValue. The default is "auto", which means that `array.fill_value` will be used if that attribute exists, with a fallback of the dtype's default (see `dtype_default_fill_value`).
         order : "auto" | "C" | "F", default = "auto"
             The memory order of the `ArraySpec`. One of "auto", "C", or "F". The default is "auto", which means that, if present, `array.order`
             will be used, falling back to "C" if `array` does not have an `order` attribute.
@@ -622,7 +642,7 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         if isinstance(extant_node, zarr.Array):
             # zarr-python neither writes nor reads extra fields, so the stored
             # array is this spec as written when it matches in everything else
-            if not self.like(extant_node, exclude={"extra_fields"}) and not overwrite:
+            if not self._like(extant_node, exclude={"extra_fields"}) and not overwrite:
                 raise ContainsArrayError(store, path)
             else:
                 # If there's an existing array that is identical to the model, and overwrite is False,
@@ -643,7 +663,7 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         sync(async_array._save_metadata(meta))
         return Array(_async_array=async_array)
 
-    def update(self, **changes: Unpack[ArraySpecUpdate]) -> Self:
+    def replace(self, **changes: Unpack[ArraySpecUpdate]) -> Self:
         """
         Return a revalidated copy of this model with `changes` applied.
 
@@ -654,8 +674,11 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         accept it, pass a `fill_value` in the same call. Unlike
         `model_copy(update=...)`, the result is validated. Passing
         `extra_fields` replaces the extra fields as a whole.
+
+        `copy.replace` (Python 3.13 and later) calls this method too (see
+        `NodeSpec.__replace__`), so it validates as well.
         """
-        return self._updated(changes)
+        return self._replaced(changes)
 
     def like(
         self,
@@ -701,10 +724,21 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         >>> print(x.like(y, exclude={'attributes'}))
         True
         """
+        if (zarr := sys.modules.get("zarr")) is not None and isinstance(other, zarr.Array):
+            warn_deprecated_io("ArraySpec.like with a zarr.Array", LIKE_REPLACEMENT)
+        return self._like(other, include=include, exclude=exclude)
+
+    def _like(
+        self,
+        other: ArraySpec | zarr.Array,
+        *,
+        include: IncEx = None,
+        exclude: IncEx = None,
+    ) -> bool:
+        """`like` without the deprecation warning, for the deprecated IO paths to call."""
 
         other_parsed: ArraySpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Array):
-            warn_deprecated_io("ArraySpec.like with a zarr.Array", LIKE_REPLACEMENT)
             other_parsed = ArraySpec._from_zarr(other)
         else:
             other_parsed = other  # type: ignore[assignment]
@@ -731,12 +765,15 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
 
     attributes: TAttr = Field(default={}, validate_default=True)
 
-    def update(self, **changes: Unpack[BaseGroupSpecUpdate]) -> Self:
+    def replace(self, **changes: Unpack[BaseGroupSpecUpdate]) -> Self:
         """
         Return a revalidated copy of this model with `changes` applied.
 
         Unlike `model_copy(update=...)`, the result is validated, so an
         invalid change is refused.
+
+        `copy.replace` (Python 3.13 and later) calls this method too (see
+        `NodeSpec.__replace__`), so it validates as well.
         """
         return type(self).model_validate({**self.model_dump(), **changes})
 
@@ -826,7 +863,7 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
 
         extant_node = maybe_node(store, path, zarr_format=2)
         if isinstance(extant_node, zarr.Group):
-            if not self.like(extant_node):
+            if not self._like(extant_node):
                 if not overwrite:
                     raise ContainsGroupError(store, path)
             elif not overwrite:
@@ -852,9 +889,20 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         participate in the comparison: a `GroupSpec` or `zarr.Group` is reduced
         to its own metadata first.
         """
+        if (zarr := sys.modules.get("zarr")) is not None and isinstance(other, zarr.Group):
+            warn_deprecated_io("BaseGroupSpec.like with a zarr.Group", LIKE_REPLACEMENT)
+        return self._like(other, include=include, exclude=exclude)
+
+    def _like(
+        self,
+        other: AnyBaseGroupSpec | AnyGroupSpec | zarr.Group,
+        *,
+        include: IncEx = None,
+        exclude: IncEx = None,
+    ) -> bool:
+        """`like` without the deprecation warning, for the deprecated IO paths to call."""
         other_parsed: AnyBaseGroupSpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
-            warn_deprecated_io("BaseGroupSpec.like with a zarr.Group", LIKE_REPLACEMENT)
             other_parsed = BaseGroupSpec._from_zarr(other)
         elif isinstance(other, GroupSpec):
             other_parsed = BaseGroupSpec(attributes=other.attributes)
@@ -898,13 +946,16 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         return self
 
     @override
-    def update(self, **changes: Unpack[GroupSpecUpdate]) -> Self:  # type: ignore[override]
+    def replace(self, **changes: Unpack[GroupSpecUpdate]) -> Self:  # type: ignore[override]
         """
         Return a revalidated copy of this model with `changes` applied.
 
         All changes land in one validation pass, so `attributes` and `members`
         change together atomically. Unlike `model_copy(update=...)`, the
         result is validated.
+
+        `copy.replace` (Python 3.13 and later) calls this method too (see
+        `NodeSpec.__replace__`), so it validates as well.
         """
         return type(self).model_validate({**self.model_dump(), **changes})
 
@@ -1051,7 +1102,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         attrs = spec_dict.pop("attributes")
         extant_node = maybe_node(store, path, zarr_format=2)
         if isinstance(extant_node, zarr.Group):
-            if not self.like(extant_node):
+            if not self._like(extant_node):
                 if not overwrite:
                     """
                     msg = (
@@ -1132,12 +1183,25 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         >>> z2 = GroupSpec(members={'foo': foo})
         >>> print(z1.like(z2))
         True
-        >>> z2 = z2.update(attributes={'foo': 100}) # now they have different attributes
+        >>> z2 = z2.replace(attributes={'foo': 100}) # now they have different attributes
         >>> print(z1.like(z2))
         False
         >>> print(z1.like(z2, exclude={'attributes'}))
         True
         """
+        if (zarr := sys.modules.get("zarr")) is not None and isinstance(other, zarr.Group):
+            warn_deprecated_io("GroupSpec.like with a zarr.Group", LIKE_REPLACEMENT)
+        return self._like(other, include=include, exclude=exclude)
+
+    @override
+    def _like(
+        self,
+        other: AnyBaseGroupSpec | AnyGroupSpec | zarr.Group,
+        *,
+        include: IncEx = None,
+        exclude: IncEx = None,
+    ) -> bool:
+        """`like` without the deprecation warning, for the deprecated IO paths to call."""
 
         if isinstance(other, BaseGroupSpec) and not isinstance(other, GroupSpec):
             # a group without members compares by the group's own metadata;
@@ -1147,7 +1211,6 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
             return projection.like(other, include=include, exclude=exclude)
         other_parsed: GroupSpec
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
-            warn_deprecated_io("GroupSpec.like with a zarr.Group", LIKE_REPLACEMENT)
             other_parsed = GroupSpec._from_zarr(other)
         else:
             other_parsed = other  # type: ignore[assignment]
@@ -1713,9 +1776,11 @@ def auto_attributes(data: Any) -> Mapping[str, Any]:
 
 def dtype_default_fill_value(dtype: object) -> FillValue:
     """
-    The fill value a spec of data type `dtype` gets when none is given: `0`
-    when the data type accepts `0`, and `None` otherwise. A `dtype` that is
-    not a valid Zarr V2 data type gets `0`, and validation reports the data type.
+    The fill value a spec of data type `dtype` gets when none is given: the
+    default `zarr-metadata` derives for the data type, the value zarr-python
+    uses (zero, `False`, the empty string, null bytes, `"NaT"`), or `None`
+    for `|O`, whose values may be of any type. A `dtype` that is not a valid
+    Zarr V2 data type gets `0`, and validation reports the data type.
     """
     try:
         return cast(

@@ -20,11 +20,23 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
-import zarr_metadata.v3.definition as _definition
-from zarr_metadata.v3.definition import ZarrV3Context
+from zarr_metadata.v3.definition import (
+    CORE_AND_EXTENSIONS_CONTEXT,
+    CORE_CONTEXT,
+    ZarrV3Context,
+)
 
 if TYPE_CHECKING:
     from zarr_metadata import MetadataValidationError
+
+__all__ = [
+    "CONTEXT_KEY",
+    "CORE_AND_EXTENSIONS_CONTEXT",
+    "CORE_CONTEXT",
+    "format_lines",
+    "format_problems",
+    "scope_from_context",
+]
 
 CONTEXT_KEY = "zarr_metadata_context"
 """
@@ -32,36 +44,6 @@ The key of a mapping validation context under which the scope to read Zarr V3
 metadata in sits. The same key `zarr_metadata.pydantic` uses, so one validation
 context serves models holding field types from either library.
 """
-
-
-def _scope(name: str, legacy_name: str) -> ZarrV3Context:
-    """
-    The scope ``zarr_metadata.v3.definition`` exports as `name`, or as
-    `legacy_name` in a ``zarr-metadata`` that predates the rename.
-
-    ``zarr-metadata`` 0.7 renames its scopes to say they are contexts
-    (``CORE`` -> ``CORE_CONTEXT``) and keeps the old names as deprecated
-    aliases; 0.6 has only the old names. Reading the new name first, through
-    ``getattr``, takes neither the deprecation warning on 0.7 nor an import
-    error on 0.6.
-
-    TODO: import the scopes by name and drop this once the floor is
-    ``zarr-metadata>=0.7``.
-    """
-    scope = getattr(_definition, name, None)
-    if scope is None:
-        scope = getattr(_definition, legacy_name)
-    if not isinstance(scope, ZarrV3Context):
-        msg = f"zarr_metadata.v3.definition.{name} is not a ZarrV3Context: {scope!r}"
-        raise TypeError(msg)
-    return scope
-
-
-CORE_CONTEXT = _scope("CORE_CONTEXT", "CORE")
-"""The scope of what the Zarr V3 core specification defines."""
-
-CORE_AND_EXTENSIONS_CONTEXT = _scope("CORE_AND_EXTENSIONS_CONTEXT", "CORE_AND_EXTENSIONS")
-"""The core scope plus what ``zarr-extensions`` registers: the readers' default scope."""
 
 
 def scope_from_context(context: object) -> ZarrV3Context | None:

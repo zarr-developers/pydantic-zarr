@@ -4,8 +4,8 @@ attribute models built on `AttributesBase` (hyphenated spec keys via aliases, op
 keys omitted rather than written as `null`), a discriminated union for the spec's closed
 set of coordinate transformations, typed group members via a PEP 728 `TypedDict` with
 `extra_items`, cross-field validators tying the metadata to the members with `get_path`,
-and a store round trip. The final section proves the model writes exactly what the
-reference implementation (ome-zarr-py) writes for the same image. Rendered in the docs
+and a store round trip. The final section checks that the model holds exactly the
+documents the reference implementation (ome-zarr-py) writes for the same image. Rendered in the docs
 at docs/examples/ome_zarr_05.md. The dev environment does not carry ome-zarr; run with:
 uv run --no-project --with-editable . --with ome-zarr --with 'zarr>=3.1' \
     --python 3.12 -- python examples/ome_zarr_05.py
@@ -16,7 +16,7 @@ uv run --no-project --with-editable . --with ome-zarr --with 'zarr>=3.1' \
 # dependencies = ["pydantic-zarr", "zarr", "ome-zarr"]
 # ///
 # NOTE: needs the pydantic-zarr release carrying PR #183
-# (AttributesBase, ArraySpec.from_shape_and_data_type, GroupSpec.get_path).
+# (AttributesBase, ArraySpec.create_default, GroupSpec.get_path).
 
 import copy
 from typing import Annotated, Literal, NotRequired, Self, Union
@@ -25,7 +25,7 @@ import zarr
 import zarr.storage
 from pydantic import ConfigDict, Field, ValidationError, model_validator
 from typing_extensions import TypedDict
-from zarr_io import read_documents, write_hierarchy
+from zarr_io import read_documents, repaired, write_hierarchy
 
 from pydantic_zarr.core import MISSING, AttributesBase
 from pydantic_zarr.v3 import ArraySpec, CodecLike, GroupSpec, is_array_spec
@@ -192,11 +192,11 @@ multiscale = Multiscale(
 image = MultiscaleImage(
     attributes=ImageAttributes(ome=OmeImageBlock(version="0.5", multiscales=(multiscale,))),
     members={
-        "0": ArraySpec.from_shape_and_data_type(
-            (2, 32, 32), "uint16", dimension_names=("c", "y", "x")
+        "0": ArraySpec.create_default(
+            shape=(2, 32, 32), data_type="uint16", dimension_names=("c", "y", "x")
         ),
-        "1": ArraySpec.from_shape_and_data_type(
-            (2, 16, 16), "uint16", dimension_names=("c", "y", "x")
+        "1": ArraySpec.create_default(
+            shape=(2, 16, 16), data_type="uint16", dimension_names=("c", "y", "x")
         ),
         "labels": GroupSpec(attributes={"ome": {"version": "0.5", "labels": []}}),
     },
@@ -239,8 +239,8 @@ else:
 # --8<-- [end:image]
 
 # --8<-- [start:reference]
-# The model should write exactly what a reference OME-Zarr 0.5 implementation
-# writes. ome-zarr-py generates a multiscale image from synthetic data; a
+# The model should hold exactly the documents a reference OME-Zarr 0.5
+# implementation writes. ome-zarr-py generates a multiscale image from synthetic data; a
 # MultiscaleImage instance then describes that same image, and every zarr.json
 # ome-zarr-py wrote must be identical to the document the model holds for it.
 import json
@@ -272,9 +272,9 @@ reference_codecs: tuple[CodecLike, ...] = (
 
 
 def reference_level(shape: tuple[int, ...]) -> ArraySpec:
-    return ArraySpec.from_shape_and_data_type(
-        shape,
-        "uint16",
+    return ArraySpec.create_default(
+        shape=shape,
+        data_type="uint16",
         chunk_grid={"name": "regular", "configuration": {"chunk_shape": shape}},
         codecs=reference_codecs,
         dimension_names=("c", "y", "x"),
@@ -318,8 +318,11 @@ modeled = MultiscaleImage(
 
 
 def metadata_documents(root: pathlib.Path) -> dict[str, object]:
-    """Every zarr.json under `root`, parsed, keyed by its relative path."""
-    return {str(p.relative_to(root)): json.loads(p.read_text()) for p in root.rglob("zarr.json")}
+    """Every zarr.json under `root`, parsed as a reader takes it, keyed by its relative path."""
+    return {
+        str(p.relative_to(root)): repaired(json.loads(p.read_text()))
+        for p in root.rglob("zarr.json")
+    }
 
 
 reference_docs = metadata_documents(reference_dir)

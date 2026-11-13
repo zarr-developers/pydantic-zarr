@@ -8,7 +8,9 @@ that layout and shows four `pydantic-zarr` patterns: spec-style attribute
 models on `AttributesBase` (absent-vs-null told apart by the
 `pydantic.MISSING` sentinel), a discriminated union of transformation types with cross-field
 validators, a `GroupSpec` subclass that checks its metadata against its
-members with `get_path`, and a store round trip with `to_zarr` / `from_zarr`.
+members with `get_path`, and a store round trip through zarr-python with the
+`write_hierarchy` and `read_documents` helpers from [`examples/zarr_io.py`](https://github.com/zarr-developers/pydantic-zarr/blob/main/examples/zarr_io.py), which the
+[usage guide](../usage_zarr_v3.md#reading-and-writing-with-zarr-python) explains.
 The code on this page is the runnable script
 [`examples/ome_zarr_06.py`](https://github.com/zarr-developers/pydantic-zarr/blob/main/examples/ome_zarr_06.py),
 included section by section; because both sections share one namespace, the
@@ -40,7 +42,7 @@ group's actual members: every `datasets[*].path` resolves (via `get_path`) to
 an array whose dimensionality matches the coordinate systems, every level
 maps into the same intrinsic system, and the scale vector length equals the
 image dimensionality. The resolution-level arrays are metadata-only
-`ArraySpec.from_shape_and_data_type` documents, the hierarchy round-trips
+`ArraySpec.create_default` documents, the hierarchy round-trips
 through an in-memory Zarr v3 store, and invalid layouts are refused at
 construction. The `Scale` and `SequenceTransform` classes from the previous
 section are reused directly — their `input`/`output` are optional there
@@ -63,8 +65,9 @@ the spec repository's example documents: it converts synthetic pixels into a
 two-level 0.6 image with `to_ngff_zarr(..., version="0.6")`, rebuilds the
 same image with the models above (hand-typed structure; only the free-form
 provenance values — `"@type"`, `name`, `type`, `metadata` — are adopted from
-the reference), writes it with `to_zarr`, and asserts that every `zarr.json`
-in the two stores parses to identical JSON. Note the nested `scale0/image`
+the reference), and asserts that every `zarr.json` ngff-zarr wrote parses to
+the same JSON as the document the model holds for it (`to_stored_metadata_json`),
+with no second store. Note the nested `scale0/image`
 dataset paths, which `get_path` resolves through the intermediate groups.
 The section skips, loudly, when ngff-zarr is not installed.
 

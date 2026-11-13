@@ -5,9 +5,9 @@ attribute models with non-identifier keys (``_ARRAY_DIMENSIONS``) on
 ``AttributesBase``, closed-``TypedDict`` members for a hierarchy whose member
 names are fixed by a spec (the four native 10 m Sentinel-2 bands), a
 cross-member validator (every CF ``grid_mapping`` reference resolves), a store
-round trip, the invalid layouts the model refuses, and a check that the model
-writes the same metadata documents as xarray writing the equivalent CF
-dataset. GeoZarr: https://github.com/zarr-developers/geozarr-spec
+round trip, the invalid layouts the model refuses, and a check that the
+metadata documents the model holds equal those xarray writes for the
+equivalent CF dataset. GeoZarr: https://github.com/zarr-developers/geozarr-spec
 
 Run standalone with:
 uv run --no-project --with-editable <path to pydantic-zarr checkout> \
@@ -22,13 +22,13 @@ uv run --no-project --with-editable <path to pydantic-zarr checkout> \
 # (zarr-metadata-backed v3 document validation and the APIs used below).
 
 # --8<-- [start:attrs]
-from typing import Self
+from typing import Self, cast
 
 import zarr
 import zarr.storage
 from pydantic import Field, ValidationError, model_validator
 from typing_extensions import TypedDict
-from zarr_io import read_documents, write_hierarchy
+from zarr_io import read_documents, repaired, write_hierarchy
 
 from pydantic_zarr.core import MISSING, AttributesBase, get_attribute
 from pydantic_zarr.v3 import ArraySpec, CodecLike, GroupSpec, is_array_spec
@@ -47,9 +47,9 @@ class BandArray(ArraySpec[BandAttrs]):
     """A Sentinel-2 band: uint16 digital numbers on the (y, x) grid."""
 
 
-b02 = BandArray.from_shape_and_data_type(
-    (180, 180),
-    "uint16",
+b02 = BandArray.create_default(
+    shape=(180, 180),
+    data_type="uint16",
     attributes={"_ARRAY_DIMENSIONS": ["y", "x"], "grid_mapping": "spatial_ref"},
     dimension_names=("y", "x"),
 )
@@ -120,9 +120,9 @@ class R10mDataset(GeoZarrDataset):
 
 
 def band(grid_mapping: str = "spatial_ref") -> BandArray:
-    return BandArray.from_shape_and_data_type(
-        (180, 180),
-        "uint16",
+    return BandArray.create_default(
+        shape=(180, 180),
+        data_type="uint16",
         attributes={"_ARRAY_DIMENSIONS": ["y", "x"], "grid_mapping": grid_mapping},
         dimension_names=("y", "x"),
     )
@@ -131,16 +131,16 @@ def band(grid_mapping: str = "spatial_ref") -> BandArray:
 def coord(axis: str) -> ArraySpec:
     # plain-dict attributes work too; a list is what JSON holds, so it is what
     # a read of the stored document gives back
-    return ArraySpec.from_shape_and_data_type(
-        (180,),
-        "float64",
+    return ArraySpec.create_default(
+        shape=(180,),
+        data_type="float64",
         attributes={"_ARRAY_DIMENSIONS": [axis]},
         dimension_names=(axis,),
     )
 
 
-crs = GridMappingArray.from_shape_and_data_type(
-    (), "int32", attributes={"grid_mapping_name": "transverse_mercator"}
+crs = GridMappingArray.create_default(
+    shape=(), data_type="int32", attributes={"grid_mapping_name": "transverse_mercator"}
 )
 r10m = R10mDataset(
     members={
@@ -199,8 +199,9 @@ else:
 # Reference check: xarray writing the equivalent CF dataset is the nearest
 # reference implementation for this layer (one resolution dataset with
 # grid_mapping/spatial_ref and 1-D x/y coords — the CF layer, not the full
-# Sentinel-2 product tree). The model, told the reference's codecs, must
-# write byte-for-byte the same metadata documents.
+# Sentinel-2 product tree). The model, told the reference's codecs and the NaN
+# fill value of its float coordinates, must hold the same metadata documents
+# xarray wrote, each equal once parsed; the model writes no store.
 import asyncio
 import json
 
@@ -245,15 +246,22 @@ reference.to_zarr(  # type: ignore[no-matching-overload]
 
 
 def ref_band() -> BandArray:
-    return BandArray.from_shape_and_data_type(
-        (N, N), "uint16", attributes=dict(BAND_ATTRS), dimension_names=("y", "x"), codecs=REF_CODECS
+    return BandArray.create_default(
+        shape=(N, N),
+        data_type="uint16",
+        attributes=dict(BAND_ATTRS),
+        dimension_names=("y", "x"),
+        codecs=REF_CODECS,
     )
 
 
 def ref_coord(axis: str) -> ArraySpec:
-    return ArraySpec.from_shape_and_data_type(
-        (N,),
-        "float64",
+    # xarray writes NaN as the fill value of a float coordinate; the default
+    # create_default derives for float64 is 0.0
+    return ArraySpec.create_default(
+        shape=(N,),
+        data_type="float64",
+        fill_value="NaN",
         attributes={"_ARRAY_DIMENSIONS": [axis]},
         dimension_names=(axis,),
         codecs=REF_CODECS,
@@ -268,15 +276,18 @@ model = R10mDataset(
         "b08": ref_band(),
         "x": ref_coord("x"),
         "y": ref_coord("y"),
-        "spatial_ref": GridMappingArray.from_shape_and_data_type(
-            (), "int32", attributes={"grid_mapping_name": "transverse_mercator"}, codecs=REF_CODECS
+        "spatial_ref": GridMappingArray.create_default(
+            shape=(),
+            data_type="int32",
+            attributes={"grid_mapping_name": "transverse_mercator"},
+            codecs=REF_CODECS,
         ),
     }
 )
 
 
 def metadata_documents(store: zarr.storage.MemoryStore) -> dict[str, dict[str, object]]:
-    """Every zarr.json in the store, parsed (chunk payloads ignored)."""
+    """Every zarr.json in the store, parsed (chunk payloads ignored), as a reader takes it."""
 
     async def keys(s: zarr.storage.MemoryStore) -> list[str]:
         return [k async for k in s.list()]
@@ -288,7 +299,7 @@ def metadata_documents(store: zarr.storage.MemoryStore) -> dict[str, dict[str, o
             continue
         buffer = asyncio.run(store.get(key, prototype=proto))
         assert buffer is not None
-        documents[key] = json.loads(buffer.to_bytes())
+        documents[key] = cast("dict[str, object]", repaired(json.loads(buffer.to_bytes())))
     return documents
 
 

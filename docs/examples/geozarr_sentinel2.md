@@ -20,12 +20,12 @@ which executes top to bottom and asserts everything the page claims.
 CF and GeoZarr attribute keys are often not Python identifiers
 (`_ARRAY_DIMENSIONS`, `proj:code`). On `AttributesBase`, a `Field(alias=...)`
 is the whole story: both spellings validate, and serialization — including the
-metadata written by `to_zarr` — uses the alias.
-`ArraySpec.from_shape_and_data_type` builds the rest of the array metadata
-around the attributes: the chunk grid is size-guessed with the same heuristic
-zarr-python applies when no chunks are given (a 10980×10980 Sentinel-2 band
-gets chunks of (687, 1373)), and the fill value and codecs are derived from
-the data type.
+stored metadata documents — uses the alias.
+`ArraySpec.create_default` builds the rest of the array metadata
+around the attributes: the chunk grid is one chunk covering the array, and the
+fill value and codecs are derived from the data type. `chunk_grid="auto"`
+guesses a chunk shape instead, with the heuristic zarr-python applies when no
+chunks are given: a 10980×10980 Sentinel-2 band gets chunks of (687, 1373).
 
 ```python
 --8<-- "examples/geozarr_sentinel2.py:attrs"
@@ -41,9 +41,11 @@ base that each closed resolution dict inherits. Cross-member rules go in
 `model_validator`s on a `GroupSpec` subclass: `get_attribute` reads an
 attribute key from member attributes whether they are a model or a plain
 mapping, and `get_path` resolves a relative member path without raising. The
-section ends with a store round trip — `from_zarr` on the typed subclass
-re-validates everything it reads — and checks that the stored attribute
-documents carry the alias spellings.
+section ends with a store round trip through zarr-python, with the
+`write_hierarchy` and `read_documents` helpers from [`examples/zarr_io.py`](https://github.com/zarr-developers/pydantic-zarr/blob/main/examples/zarr_io.py) —
+`from_stored_metadata_json` on the typed subclass re-validates everything it
+reads — and checks that the stored attribute documents carry the alias
+spellings.
 
 ```python
 --8<-- "examples/geozarr_sentinel2.py:dataset"
@@ -65,10 +67,12 @@ GeoZarr has no single canonical writer to compare against, so the script
 checks the model against the nearest reference for this layer: xarray writing
 the equivalent CF dataset (one resolution dataset with `grid_mapping` /
 `spatial_ref` and 1-D `x`/`y` coordinates — the CF layer, not the full
-Sentinel-2 product tree). The reference dataset and the model go to two
-separate stores, and every `zarr.json` is compared as parsed JSON: same
-documents, same keys, same values. The only accommodation is telling the model
-which codecs the reference writer uses.
+Sentinel-2 product tree). xarray writes the reference dataset to a store,
+and every `zarr.json` it wrote is compared, as parsed JSON, with the documents
+the model holds (`to_stored_metadata_json`), with no second store: same
+documents, same keys, same values. The model is told two things the reference
+writer chose: its codecs, and the `NaN` fill value xarray writes for the float
+coordinates, where the default `create_default` derives for float64 is `0.0`.
 
 ```python
 --8<-- "examples/geozarr_sentinel2.py:reference"
