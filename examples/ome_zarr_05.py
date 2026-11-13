@@ -28,7 +28,13 @@ from typing_extensions import TypedDict
 from zarr_io import read_documents, write_hierarchy
 
 from pydantic_zarr.core import MISSING, AttributesBase
-from pydantic_zarr.v3 import ArraySpec, CodecLike, GroupSpec, is_array_spec, normalize_document
+from pydantic_zarr.v3 import (
+    ArraySpec,
+    CodecLike,
+    GroupSpec,
+    is_array_spec,
+    normalize_group_metadata,
+)
 
 # --8<-- [start:attrs]
 
@@ -320,7 +326,7 @@ modeled = MultiscaleImage(
 def metadata_documents(root: pathlib.Path) -> dict[str, object]:
     """Every zarr.json under `root`, parsed as a reader takes it, keyed by its relative path."""
     return {
-        str(p.relative_to(root)): normalize_document(json.loads(p.read_text()))
+        str(p.relative_to(root)): normalize_group_metadata(json.loads(p.read_text()))
         for p in root.rglob("zarr.json")
     }
 

@@ -69,7 +69,13 @@ from zarr.storage import MemoryStore
 from zarr_io import read_documents, write_hierarchy
 
 from pydantic_zarr.core import MISSING, AttributesBase, get_attribute
-from pydantic_zarr.v3 import ArraySpec, CodecLike, GroupSpec, is_array_spec, normalize_document
+from pydantic_zarr.v3 import (
+    ArraySpec,
+    CodecLike,
+    GroupSpec,
+    is_array_spec,
+    normalize_group_metadata,
+)
 
 
 class CFAttrs(AttributesBase):
@@ -316,7 +322,7 @@ ds = ds.assign_coords(
 def metadata_documents(root: Path) -> dict[str, object]:
     """Every zarr.json document in the store, parsed as a reader takes it, keyed by relative path."""
     return {
-        path.relative_to(root).as_posix(): normalize_document(json.loads(path.read_text()))
+        path.relative_to(root).as_posix(): normalize_group_metadata(json.loads(path.read_text()))
         for path in root.rglob("zarr.json")
     }
 

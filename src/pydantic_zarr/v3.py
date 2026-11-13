@@ -2877,13 +2877,14 @@ def to_flat(
     return dict(sorted(result.items(), key=lambda v: len(v[0])))
 
 
-def normalize_document(
+def normalize_group_metadata(
     document: JSONValue, *, normalize_null_consolidated_metadata: bool = True
 ) -> JSONValue:
     """
-    Repair a stored Zarr V3 metadata document that a writer got wrong, before
-    it is validated, and return it; a document needing no repair is returned
-    as it is (the same object).
+    Repair a stored Zarr V3 group metadata document that a writer got wrong,
+    before it is validated, and return it. A document needing no repair, and
+    any value that is not a Zarr V3 group document (an array document
+    included), is returned as it is (the same object).
 
     pydantic-zarr's readers judge a document as the spec defines it, so a
     document that breaks the spec is refused. Some writers break it in known,
@@ -2902,11 +2903,11 @@ def normalize_document(
 
     Examples
     --------
-    >>> from pydantic_zarr.v3 import GroupSpec, normalize_document
+    >>> from pydantic_zarr.v3 import GroupSpec, normalize_group_metadata
     >>> stored = {"zarr_format": 3, "node_type": "group", "consolidated_metadata": None}
-    >>> normalize_document(stored)
+    >>> normalize_group_metadata(stored)
     {'zarr_format': 3, 'node_type': 'group'}
-    >>> GroupSpec.from_stored_metadata_json({"zarr.json": normalize_document(stored)}).members
+    >>> GroupSpec.from_stored_metadata_json({"zarr.json": normalize_group_metadata(stored)}).members
     {}
     """
     if (

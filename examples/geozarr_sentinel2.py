@@ -31,7 +31,13 @@ from typing_extensions import TypedDict
 from zarr_io import read_documents, write_hierarchy
 
 from pydantic_zarr.core import MISSING, AttributesBase, get_attribute
-from pydantic_zarr.v3 import ArraySpec, CodecLike, GroupSpec, is_array_spec, normalize_document
+from pydantic_zarr.v3 import (
+    ArraySpec,
+    CodecLike,
+    GroupSpec,
+    is_array_spec,
+    normalize_group_metadata,
+)
 
 
 class BandAttrs(AttributesBase):
@@ -300,7 +306,7 @@ def metadata_documents(store: zarr.storage.MemoryStore) -> dict[str, dict[str, o
         buffer = asyncio.run(store.get(key, prototype=proto))
         assert buffer is not None
         documents[key] = cast(
-            "dict[str, object]", normalize_document(json.loads(buffer.to_bytes()))
+            "dict[str, object]", normalize_group_metadata(json.loads(buffer.to_bytes()))
         )
     return documents
 

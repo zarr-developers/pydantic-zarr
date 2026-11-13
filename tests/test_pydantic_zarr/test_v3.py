@@ -40,7 +40,7 @@ from pydantic_zarr.v3 import (
     from_zarr_flat,
     is_array_spec,
     is_group_spec,
-    normalize_document,
+    normalize_group_metadata,
     parse_dtype_v3,
     to_zarr,
 )
@@ -2746,21 +2746,21 @@ _NULL_CM_GROUP: dict[str, Any] = {
         "null-document-untouched",
     ],
 )
-def test_normalize_document(document: Any, normalize: bool, expected: Any) -> None:
+def test_normalize_group_metadata(document: Any, normalize: bool, expected: Any) -> None:
     """
-    `normalize_document` drops a Zarr V3 group document's null
+    `normalize_group_metadata` drops a Zarr V3 group document's null
     `consolidated_metadata` when asked, returns every other JSON value as it
     is (the same object), and never modifies its input.
     """
     before = copy.deepcopy(document)
-    result = normalize_document(document, normalize_null_consolidated_metadata=normalize)
+    result = normalize_group_metadata(document, normalize_null_consolidated_metadata=normalize)
     assert result == expected
     assert document == before
     if expected == document:
         assert result is document
 
 
-def test_normalize_document_lets_a_zarr_python_33_group_be_read() -> None:
+def test_normalize_group_metadata_lets_a_zarr_python_33_group_be_read() -> None:
     """
     A hierarchy zarr-python 3.0 through 3.3 wrote, with a null
     `consolidated_metadata` in every group, is refused as stored and read once
@@ -2773,7 +2773,7 @@ def test_normalize_document_lets_a_zarr_python_33_group_be_read() -> None:
     with pytest.raises(ValidationError, match="consolidated_metadata"):
         GroupSpec.from_stored_metadata_json(stored)
     group = GroupSpec.from_stored_metadata_json(
-        {key: normalize_document(doc) for key, doc in stored.items()}
+        {key: normalize_group_metadata(doc) for key, doc in stored.items()}
     )
     assert group.attributes == {"a": 1}
     assert set(group.members) == {"sub"}
