@@ -61,8 +61,10 @@ A concrete dataset then fixes its member set with a closed `TypedDict`:
 undeclared names are refused and missing members are required. Arrays are
 built with [`ArraySpec.create_default`][pydantic_zarr.v3.ArraySpec.create_default],
 which fills in the whole-shape chunk grid, the `/` chunk key encoding, and a
-data-type-derived fill value; only the codec pipeline is spelled out, since
-xarray appends a `zstd` codec to the default `bytes` codec. The dataset
+data-type-derived fill value. The codec pipeline is spelled out, since xarray
+appends a `zstd` codec to the default `bytes` codec, and so is the fill value of
+each float variable: xarray writes `NaN` there, where the derived default is
+`0.0`. The dataset
 round-trips through an in-memory store, and the three invalid layouts at the
 end — a mismatched dimension length, an array named after a dimension it
 uses without being its coordinate, and a dangling `coordinates` reference —
