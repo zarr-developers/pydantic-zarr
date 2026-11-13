@@ -59,7 +59,7 @@ The layout rules live in three `ArraySpec` / `GroupSpec` subclasses:
 
 A concrete dataset then fixes its member set with a closed `TypedDict`:
 undeclared names are refused and missing members are required. Arrays are
-built with [`ArraySpec.from_shape_and_data_type`][pydantic_zarr.v3.ArraySpec.from_shape_and_data_type],
+built with [`ArraySpec.create_default`][pydantic_zarr.v3.ArraySpec.create_default],
 which fills in the whole-shape chunk grid, the `/` chunk key encoding, and a
 data-type-derived fill value; only the codec pipeline is spelled out, since
 xarray appends a `zstd` codec to the default `bytes` codec. The dataset

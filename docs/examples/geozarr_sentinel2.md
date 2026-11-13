@@ -21,7 +21,7 @@ CF and GeoZarr attribute keys are often not Python identifiers
 (`_ARRAY_DIMENSIONS`, `proj:code`). On `AttributesBase`, a `Field(alias=...)`
 is the whole story: both spellings validate, and serialization — including the
 metadata written by `to_zarr` — uses the alias.
-`ArraySpec.from_shape_and_data_type` builds the rest of the array metadata
+`ArraySpec.create_default` builds the rest of the array metadata
 around the attributes: the chunk grid is size-guessed with the same heuristic
 zarr-python applies when no chunks are given (a 10980×10980 Sentinel-2 band
 gets chunks of (687, 1373)), and the fill value and codecs are derived from

@@ -257,8 +257,8 @@ attributes = ImageAttributes(
     )
 )
 members = {
-    "s0": ArraySpec.from_shape_and_data_type((16, 16), "uint16"),
-    "s1": ArraySpec.from_shape_and_data_type((8, 8), "uint16"),
+    "s0": ArraySpec.create_default(shape=(16, 16), data_type="uint16"),
+    "s1": ArraySpec.create_default(shape=(8, 8), data_type="uint16"),
 }
 image = Image(attributes=attributes, members=members)
 s0 = image["s0"]
@@ -367,9 +367,9 @@ else:
         )
 
         def ref_array(shape: tuple[int, ...]) -> ArraySpec[Any]:
-            return ArraySpec.from_shape_and_data_type(
-                shape,
-                "uint16",
+            return ArraySpec.create_default(
+                shape=shape,
+                data_type="uint16",
                 chunk_grid={"name": "regular", "configuration": {"chunk_shape": (8, 8)}},
                 codecs=(
                     {"name": "bytes", "configuration": {"endian": "little"}},

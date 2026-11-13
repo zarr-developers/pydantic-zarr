@@ -102,7 +102,7 @@ members are not part of its metadata document, so they are left out.
 ```python
 from pydantic_zarr.v3 import ArraySpec, GroupSpec
 
-array = ArraySpec.from_shape_and_data_type((10,), "uint8")
+array = ArraySpec.create_default(shape=(10,), data_type="uint8")
 document = array.to_metadata_json()
 print(document["shape"], document["data_type"])
 #> (10,) uint8
@@ -129,7 +129,7 @@ defines the regular grid, and `zarr-metadata` also defines the rectilinear one.
 ```python
 from pydantic_zarr.v3 import ArraySpec
 
-canonical = ArraySpec.from_shape_and_data_type((5,), "uint8")
+canonical = ArraySpec.create_default(shape=(5,), data_type="uint8")
 spelled = ArraySpec.model_validate(
     {
         "shape": [5],
@@ -158,7 +158,7 @@ these are the metadata documents `to_zarr` writes. It is typed as
 ```python
 from pydantic_zarr.v3 import ArraySpec, GroupSpec
 
-array = ArraySpec.from_shape_and_data_type((10,), "uint8")
+array = ArraySpec.create_default(shape=(10,), data_type="uint8")
 group = GroupSpec(attributes={"foo": 42}, members={"sub": GroupSpec(members={"array": array})})
 print(list(group.to_stored_metadata_json()))
 #> ['zarr.json', 'sub/zarr.json', 'sub/array/zarr.json']
@@ -173,7 +173,7 @@ with none, so `GroupSpec.from_stored_metadata_json` reads every group as a
 ```python
 from pydantic_zarr.v3 import ArraySpec, GroupSpec
 
-array = ArraySpec.from_shape_and_data_type((10,), "uint8")
+array = ArraySpec.create_default(shape=(10,), data_type="uint8")
 group = GroupSpec(attributes={"foo": 42}, members={"sub": GroupSpec(members={"array": array})})
 assert GroupSpec.from_stored_metadata_json(group.to_stored_metadata_json()) == group
 ```
@@ -202,7 +202,7 @@ import zarr
 
 from pydantic_zarr.v3 import ArraySpec, GroupSpec
 
-array = ArraySpec.from_shape_and_data_type((10,), "uint8")
+array = ArraySpec.create_default(shape=(10,), data_type="uint8")
 group = GroupSpec(attributes={"foo": 42}, members={"sub": GroupSpec(members={"array": array})})
 
 with tempfile.TemporaryDirectory() as root:
@@ -266,7 +266,7 @@ print(spec.codecs[-1]["name"])
 ### Scope as a class property
 
 A per-call context lasts one call: operations that build new specs
-(`update`, `from_shape_and_data_type`, `with_sharding_codec`, `like`)
+(`replace`, `create_default`, `with_sharding_codec`, `like`)
 re-validate with no context, back in the default scope. To make the scope a
 property of the model instead, set the `zarr_scope` class variable on a
 subclass: it is the scope every validation of that class reads in when the
@@ -390,9 +390,9 @@ print(group.model_dump(exclude={"members"}))
 }
 """
 
-array = ArraySpec.from_shape_and_data_type(
-    (4, 4),
-    "uint8",
+array = ArraySpec.create_default(
+    shape=(4, 4),
+    data_type="uint8",
     extra_fields={"provenance": {"name": "acme.provenance", "must_understand": False}},
 )
 print(array.model_dump()["provenance"])
@@ -419,7 +419,7 @@ except ValidationError as e:
     """
 ```
 
-`update(extra_fields=...)` replaces the extra fields as a whole. `to_zarr`
+`replace(extra_fields=...)` replaces the extra fields as a whole. `to_zarr`
 writes them and `from_zarr` reads them back (`zarr-python` stores them on
 arrays from 3.1 and on groups from 3.4; `to_zarr` refuses extra fields an
 older `zarr-python` cannot store). `consolidated_metadata` is the exception:

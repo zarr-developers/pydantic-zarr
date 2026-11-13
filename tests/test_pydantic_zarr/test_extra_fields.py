@@ -57,7 +57,7 @@ ACME_SCOPE = CORE_CONTEXT.union(
 
 
 def _array_document(**extra: object) -> dict[str, Any]:
-    return {**v3.ArraySpec.from_shape_and_data_type((4,), "uint8").model_dump(), **extra}
+    return {**v3.ArraySpec.create_default(shape=(4,), data_type="uint8").model_dump(), **extra}
 
 
 def _group_document(**extra: object) -> dict[str, Any]:
@@ -114,10 +114,10 @@ def test_extra_fields_accepted(cls: type[Any], document: dict[str, Any], context
     assert {key: dumped[key] for key in given} == spec.extra_fields
     assert cls.model_validate(dumped, context=context) == spec
     assert cls.model_validate_json(spec.model_dump_json(), context=context) == spec
-    assert spec.update(attributes={"x": 1}).extra_fields == spec.extra_fields
-    assert spec.update(extra_fields={}).extra_fields == {}
+    assert spec.replace(attributes={"x": 1}).extra_fields == spec.extra_fields
+    assert spec.replace(extra_fields={}).extra_fields == {}
     assert spec.like(spec)
-    assert not spec.like(spec.update(extra_fields={}))
+    assert not spec.like(spec.replace(extra_fields={}))
     if isinstance(spec, v3.GroupSpec):
         flat = v3.to_flat(spec)
         assert flat[""].extra_fields == spec.extra_fields
@@ -171,7 +171,7 @@ def test_extra_fields_v2_array_not_stored() -> None:
     store = zarr.storage.MemoryStore()
     spec = v2.ArraySpec(shape=(4,), chunks=(4,), dtype="|u1", extra_fields={"notes": 1})
     written = spec.to_zarr(store, "a")
-    assert v2.ArraySpec.from_zarr(written) == spec.update(extra_fields={})
+    assert v2.ArraySpec.from_zarr(written) == spec.replace(extra_fields={})
     assert spec.to_zarr(store, "a").metadata == written.metadata
 
 
@@ -353,7 +353,7 @@ def test_to_zarr_refuses_unstorable_member() -> None:
         {
             "attributes": {},
             "members": {
-                "a": v3.ArraySpec.from_shape_and_data_type((2,), "uint8"),
+                "a": v3.ArraySpec.create_default(shape=(2,), data_type="uint8"),
                 "sub": _group_document(consolidated_metadata=CONSOLIDATED),
             },
         }
