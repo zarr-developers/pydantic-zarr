@@ -7,7 +7,7 @@ import json
 import re
 import warnings
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 import numpy as np
 import pytest
@@ -408,6 +408,57 @@ def test_from_zarr_flat_invalid_depth() -> None:
     stored, _ = _stored_hierarchy()
     with pytest.raises(ValueError, match="Invalid value for depth"):
         from_zarr_flat(stored, depth=-2)
+
+
+class _LevelAttrs(TypedDict):
+    level: int
+
+
+class _LevelGroup(GroupSpec[_LevelAttrs]):
+    """A group class with a typed attributes field, for the deprecated `depth` reads."""
+
+
+@pytest.mark.parametrize("depth", [-1, 0, 1, 2])
+@pytest.mark.parametrize(
+    ("cls", "base_cls", "read"),
+    [
+        (GroupSpec, BaseGroupSpec, GroupSpec.from_zarr),
+        (_LevelGroup, BaseGroupSpec[_LevelAttrs], _LevelGroup.from_zarr),
+        (GroupSpec, BaseGroupSpec, from_zarr),
+    ],
+    ids=["GroupSpec.from_zarr", "subclass.from_zarr", "from_zarr"],
+)
+def test_from_zarr_depth(
+    cls: type[AnyGroupSpec],
+    base_cls: type[AnyBaseGroupSpec],
+    read: Callable[..., AnyGroupSpec | AnyBaseGroupSpec],
+    depth: int,
+) -> None:
+    """
+    The deprecated `depth` of `GroupSpec.from_zarr` and the module-level
+    `from_zarr` keeps code written for pydantic-zarr 0.10 working: 0 reads the
+    group without its members, as a `BaseGroupSpec` parametrized with the
+    class's attributes type, and any other depth reads the whole hierarchy,
+    since a `GroupSpec` cannot hold groups whose members were not read.
+    """
+    stored, flat = _stored_hierarchy()
+    observed = read(stored, depth=depth)
+    if depth == 0:
+        assert type(observed) is base_cls
+        assert observed == flat[""]
+    else:
+        assert type(observed) is cls
+        assert observed == cls.from_flat(flat)
+
+
+@pytest.mark.parametrize(
+    "read", [GroupSpec.from_zarr, from_zarr], ids=["GroupSpec.from_zarr", "from_zarr"]
+)
+def test_from_zarr_invalid_depth(read: Callable[..., object]) -> None:
+    """The deprecated `depth` of `from_zarr` refuses a depth below -1, as in 0.10."""
+    stored, _ = _stored_hierarchy()
+    with pytest.raises(ValueError, match="Invalid value for depth"):
+        read(stored, depth=-2)
 
 
 def test_members_none_refused() -> None:
@@ -2798,6 +2849,11 @@ _DEPRECATED_IO_V3: list[
     ("BaseGroupSpec.from_zarr", lambda spec, group, array, store: BaseGroupSpec.from_zarr(group)),
     ("ArraySpec.from_zarr", lambda spec, group, array, store: ArraySpec.from_zarr(array)),
     ("from_zarr", lambda spec, group, array, store: from_zarr(group)),
+    (
+        "GroupSpec.from_zarr",
+        lambda spec, group, array, store: GroupSpec.from_zarr(group, depth=0),
+    ),
+    ("from_zarr", lambda spec, group, array, store: from_zarr(group, depth=0)),
     ("from_zarr_flat", lambda spec, group, array, store: from_zarr_flat(group)),
     ("GroupSpec.like with a zarr.Group", lambda spec, group, array, store: spec.like(group)),
     (

@@ -52,6 +52,7 @@ from pydantic_zarr.core import (
     StrictBase,
     _walk_zarr_hierarchy,
     canonicalize_fill_value,
+    check_from_zarr_depth,
     ensure_key_no_path,
     guess_chunks,
     maybe_node,
@@ -997,9 +998,21 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         except KeyError:
             return default
 
+    @overload
+    @classmethod
+    def from_zarr(cls, group: zarr.Group) -> Self: ...
+
+    @overload
+    @classmethod
+    def from_zarr(cls, group: zarr.Group, *, depth: Literal[0]) -> BaseGroupSpec[TAttr]: ...
+
+    @overload
+    @classmethod
+    def from_zarr(cls, group: zarr.Group, *, depth: int) -> Self | BaseGroupSpec[TAttr]: ...
+
     @classmethod
     @override
-    def from_zarr(cls, group: zarr.Group) -> Self:
+    def from_zarr(cls, group: zarr.Group, *, depth: int = -1) -> Self | BaseGroupSpec[TAttr]:
         """
         Create a GroupSpec from an instance of `zarr.Group`. Subgroups and arrays contained in the
         Zarr group will be converted to instances of `GroupSpec` and `ArraySpec`, respectively,
@@ -1014,6 +1027,13 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         ----------
         group : zarr.Group
             The Zarr group to model.
+        depth : int, default = -1
+            Deprecated, kept so code written for pydantic-zarr 0.10 keeps working. -1 reads
+            the whole hierarchy. 0 reads the group without its members, and returns a
+            `BaseGroupSpec` with this class's attributes type, since a `GroupSpec` always
+            holds its members. A positive depth also reads the whole hierarchy, since a
+            `GroupSpec` cannot hold groups whose members were not read; use `from_zarr_flat`
+            to read part of a hierarchy. Lower than -1 raises `ValueError`.
 
         Returns
         -------
@@ -1024,6 +1044,18 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
             stored metadata documents with zarr-python and pass them to `from_stored_metadata_json`.
         """
         warn_deprecated_io("GroupSpec.from_zarr", FROM_ZARR_REPLACEMENT)
+        return cls._from_zarr_depth(group, depth)
+
+    @classmethod
+    def _from_zarr_depth(cls, group: zarr.Group, depth: int) -> Self | BaseGroupSpec[TAttr]:
+        """`from_zarr` without the deprecation warning, honoring the deprecated `depth`."""
+        check_from_zarr_depth(depth)
+        if depth == 0:
+            # a group read without its members is a `BaseGroupSpec`; parametrize it with
+            # this class's attributes type so the attributes validate as they did in 0.10
+            attributes_type = cls.model_fields["attributes"].annotation
+            base_cls: type[BaseGroupSpec[TAttr]] = BaseGroupSpec[attributes_type]  # type: ignore[valid-type]
+            return base_cls._from_zarr(group)
         return cls._from_zarr(group)
 
     @classmethod
@@ -1413,14 +1445,24 @@ def _stored_nodes(data: Mapping[str, object]) -> StoredNodes:
 
 
 @overload
-def from_zarr(element: zarr.Array) -> AnyArraySpec: ...
+def from_zarr(element: zarr.Array, depth: int = ...) -> AnyArraySpec: ...
 
 
 @overload
 def from_zarr(element: zarr.Group) -> AnyGroupSpec: ...
 
 
-def from_zarr(element: zarr.Array | zarr.Group) -> AnyArraySpec | AnyGroupSpec:
+@overload
+def from_zarr(element: zarr.Group, depth: Literal[0]) -> AnyBaseGroupSpec: ...
+
+
+@overload
+def from_zarr(element: zarr.Group, depth: int) -> AnyGroupSpec | AnyBaseGroupSpec: ...
+
+
+def from_zarr(
+    element: zarr.Array | zarr.Group, depth: int = -1
+) -> AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec:
     """
     Recursively parse a `zarr.Group` or `zarr.Array` into an `ArraySpec` or `GroupSpec`.
     A group is read with its entire hierarchy; to read part of one, use `from_zarr_flat`.
@@ -1429,6 +1471,11 @@ def from_zarr(element: zarr.Array | zarr.Group) -> AnyArraySpec | AnyGroupSpec:
     ----------
     element : zarr.Array | zarr.Group
         The `zarr.Array` or `zarr.Group` to model.
+    depth : int, default = -1
+        Deprecated, kept so code written for pydantic-zarr 0.10 keeps working. Ignored
+        for an array. For a group, 0 reads it without its members into a `BaseGroupSpec`,
+        and any other depth reads the whole hierarchy (see `GroupSpec.from_zarr`).
+        Lower than -1 raises `ValueError`.
 
     Returns
     -------
@@ -1446,7 +1493,7 @@ def from_zarr(element: zarr.Array | zarr.Group) -> AnyArraySpec | AnyGroupSpec:
     if isinstance(element, zarr.Array):
         return ArraySpec._from_zarr(element)
     else:
-        return GroupSpec._from_zarr(element)
+        return GroupSpec._from_zarr_depth(element, depth)
 
 
 def from_zarr_flat(

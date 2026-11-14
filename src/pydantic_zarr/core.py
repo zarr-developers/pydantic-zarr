@@ -677,6 +677,21 @@ def warn_deprecated_io(name: str, replacement: str, *, stacklevel: int = 3) -> N
     warnings.warn(msg, DeprecationWarning, stacklevel=stacklevel)
 
 
+def check_from_zarr_depth(depth: int) -> None:
+    """
+    Refuse a `depth` the deprecated `from_zarr` entry points never accepted.
+
+    `depth` is -1 (read the whole hierarchy), 0 (read the group without its
+    members) or a positive integer; anything lower than -1 raises `ValueError`.
+    """
+    if depth < -1:
+        msg = (
+            f"Invalid value for depth. Got {depth}, expected an integer "
+            "greater than or equal to -1."
+        )
+        raise ValueError(msg)
+
+
 # TODO: expose contains_array and contains_group as public functions in zarr-python
 # and replace these custom implementations
 def maybe_node(
