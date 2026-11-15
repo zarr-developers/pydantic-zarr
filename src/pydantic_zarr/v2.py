@@ -1075,9 +1075,10 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
             # resolve forward references in the attributes type, as a full read does
             cls.model_rebuild()
         field = cls.model_fields["attributes"]
-        attributes_type = (
-            Annotated[(field.annotation, *field.metadata)] if field.metadata else field.annotation
-        )
+        # a runtime type form, built dynamically: typed `Any` for the checkers, since
+        # pydantic types `FieldInfo.annotation` as `TypeForm[Any] | None`
+        annotation: Any = field.annotation
+        attributes_type = Annotated[(annotation, *field.metadata)] if field.metadata else annotation
         return BaseGroupSpec[attributes_type]  # type: ignore[valid-type]
 
     @classmethod
