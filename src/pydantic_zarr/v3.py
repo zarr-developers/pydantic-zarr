@@ -93,6 +93,7 @@ from pydantic_zarr.core import (
     check_from_zarr_depth,
     ensure_multiple,
     flatten_extra_fields,
+    from_zarr_group_replacement,
     guess_chunks,
     maybe_node,
     model_like,
@@ -2149,6 +2150,10 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
 
     @overload
     @classmethod
+    def from_zarr(cls, group: zarr.Group, *, depth: Literal[-1]) -> Self: ...
+
+    @overload
+    @classmethod
     def from_zarr(cls, group: zarr.Group, *, depth: Literal[0]) -> BaseGroupSpec[TAttr]: ...
 
     @overload
@@ -2172,12 +2177,16 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         group : zarr.Group
             The Zarr group to model.
         depth : int, default = -1
-            Deprecated, kept so code written for pydantic-zarr 0.10 keeps working. -1 reads
-            the whole hierarchy. 0 reads the group without its members, and returns a
-            `BaseGroupSpec` with this class's attributes type, since a `GroupSpec` always
-            holds its members. A positive depth also reads the whole hierarchy, since a
-            `GroupSpec` cannot hold groups whose members were not read; use `from_zarr_flat`
-            to read part of a hierarchy. Lower than -1 raises `ValueError`.
+            Deprecated, kept so calls written for pydantic-zarr 0.10 keep working. -1 reads
+            the whole hierarchy. 0 reads the group without its members, into a
+            `BaseGroupSpec` parametrized with this class's attributes type (`Annotated`
+            validators included), since a `GroupSpec` always holds its members. Only the
+            attributes type carries over: the result is not an instance of this class, so
+            it has no `members`, and validators and methods this class declares do not
+            apply to it. A positive depth reads the whole hierarchy, and the deprecation
+            warning says so, since a `GroupSpec` cannot hold groups whose members were not
+            read; use `from_zarr_flat` to read part of a hierarchy. Lower than -1 raises
+            `ValueError`.
 
         Returns
         -------
@@ -2187,7 +2196,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
             Removed in pydantic-zarr 0.12 with the rest of the zarr-python IO. Read the node's
             stored metadata documents with zarr-python and pass them to `from_stored_metadata_json`.
         """
-        warn_deprecated_io("GroupSpec.from_zarr", FROM_ZARR_REPLACEMENT)
+        warn_deprecated_io("GroupSpec.from_zarr", from_zarr_group_replacement(depth))
         return cls._from_zarr_depth(group, depth)
 
     @classmethod
@@ -2195,12 +2204,25 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         """`from_zarr` without the deprecation warning, honoring the deprecated `depth`."""
         check_from_zarr_depth(depth)
         if depth == 0:
-            # a group read without its members is a `BaseGroupSpec`; parametrize it with
-            # this class's attributes type so the attributes validate as they did in 0.10
-            attributes_type = cls.model_fields["attributes"].annotation
-            base_cls: type[BaseGroupSpec[TAttr]] = BaseGroupSpec[attributes_type]  # type: ignore[valid-type]
-            return base_cls._from_zarr(group)
+            return cls._members_unread_class()._from_zarr(group)
         return cls._from_zarr(group)
+
+    @classmethod
+    def _members_unread_class(cls) -> type[BaseGroupSpec[TAttr]]:
+        """
+        The class of this group read without its members: `BaseGroupSpec`,
+        parametrized with this class's attributes type and its `Annotated`
+        metadata, so the attributes validate as this class validates them.
+        Validators this class declares with decorators do not carry over.
+        """
+        if not cls.__pydantic_complete__:
+            # resolve forward references in the attributes type, as a full read does
+            cls.model_rebuild()
+        field = cls.model_fields["attributes"]
+        attributes_type = (
+            Annotated[(field.annotation, *field.metadata)] if field.metadata else field.annotation
+        )
+        return BaseGroupSpec[attributes_type]  # type: ignore[valid-type]
 
     @classmethod
     def _from_zarr(cls, group: zarr.Group) -> Self:
@@ -2476,6 +2498,10 @@ def from_zarr(element: zarr.Group) -> AnyGroupSpec: ...
 
 
 @overload
+def from_zarr(element: zarr.Group, *, depth: Literal[-1]) -> AnyGroupSpec: ...
+
+
+@overload
 def from_zarr(element: zarr.Group, *, depth: Literal[0]) -> AnyBaseGroupSpec: ...
 
 
@@ -2496,7 +2522,8 @@ def from_zarr(
     depth : int, default = -1
         Deprecated, kept so code written for pydantic-zarr 0.10 keeps working. Ignored
         for an array. For a group, 0 reads it without its members into a `BaseGroupSpec`,
-        and any other depth reads the whole hierarchy (see `GroupSpec.from_zarr`).
+        and any other depth reads the whole hierarchy; a positive depth is named in the
+        deprecation warning as ignored (see `GroupSpec.from_zarr`).
         Lower than -1 raises `ValueError`.
 
     Returns
@@ -2511,10 +2538,11 @@ def from_zarr(
 
     import zarr
 
-    warn_deprecated_io("from_zarr", FROM_ZARR_REPLACEMENT)
     if isinstance(element, zarr.Array):
+        warn_deprecated_io("from_zarr", FROM_ZARR_REPLACEMENT)
         return ArraySpec._from_zarr(element)
     else:
+        warn_deprecated_io("from_zarr", from_zarr_group_replacement(depth))
         return GroupSpec._from_zarr_depth(element, depth)
 
 

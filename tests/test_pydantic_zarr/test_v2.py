@@ -9,10 +9,10 @@ import json
 import re
 import warnings
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import AfterValidator, BaseModel, ValidationError
 
 from pydantic_zarr.core import tuplify_json
 
@@ -701,16 +701,59 @@ class _LevelGroup(GroupSpec[_LevelAttrs]):
     """A group class with a typed attributes field, for the deprecated `depth` reads."""
 
 
+def _check_level(attributes: _LevelAttrs) -> _LevelAttrs:
+    if attributes["level"] < 0:
+        raise ValueError("level must not be negative")
+    return attributes
+
+
+_CheckedAttrs = Annotated[_LevelAttrs, AfterValidator(_check_level)]
+
+
+class _CheckedGroup(GroupSpec[_LevelAttrs]):
+    """A group class whose attributes field carries an `Annotated` validator."""
+
+    attributes: _CheckedAttrs
+
+
+class _ForwardGroup(GroupSpec["_LaterAttrs"]):
+    """
+    A group class whose attributes type is defined after it, so pydantic leaves
+    it incomplete until something rebuilds it. Read only by
+    `test_from_zarr_depth_zero_forward_reference`, which needs it unbuilt.
+    """
+
+
+class _LaterAttrs(TypedDict):
+    level: int
+
+
+# Each spelling of the deprecated `depth` read, with the class a whole read
+# returns and the class a read with `depth=0` returns.
+_DEPTH_READS = [
+    pytest.param(GroupSpec, BaseGroupSpec, GroupSpec.from_zarr, id="GroupSpec.from_zarr"),
+    pytest.param(
+        _LevelGroup, BaseGroupSpec[_LevelAttrs], _LevelGroup.from_zarr, id="subclass.from_zarr"
+    ),
+    pytest.param(
+        _CheckedGroup,
+        BaseGroupSpec[_CheckedAttrs],
+        _CheckedGroup.from_zarr,
+        id="annotated-subclass.from_zarr",
+    ),
+    pytest.param(GroupSpec, BaseGroupSpec, from_zarr, id="from_zarr"),
+    # v2's module-level `from_zarr` took `depth` positionally in 0.10
+    pytest.param(
+        GroupSpec,
+        BaseGroupSpec,
+        lambda node, depth: from_zarr(node, depth),
+        id="from_zarr-positional",
+    ),
+]
+
+
 @pytest.mark.parametrize("depth", [-1, 0, 1, 2])
-@pytest.mark.parametrize(
-    ("cls", "base_cls", "read"),
-    [
-        (GroupSpec, BaseGroupSpec, GroupSpec.from_zarr),
-        (_LevelGroup, BaseGroupSpec[_LevelAttrs], _LevelGroup.from_zarr),
-        (GroupSpec, BaseGroupSpec, from_zarr),
-    ],
-    ids=["GroupSpec.from_zarr", "subclass.from_zarr", "from_zarr"],
-)
+@pytest.mark.parametrize(("cls", "base_cls", "read"), _DEPTH_READS)
 def test_from_zarr_depth(
     cls: type[AnyGroupSpec],
     base_cls: type[AnyBaseGroupSpec],
@@ -719,19 +762,38 @@ def test_from_zarr_depth(
 ) -> None:
     """
     The deprecated `depth` of `GroupSpec.from_zarr` and the module-level
-    `from_zarr` keeps code written for pydantic-zarr 0.10 working: 0 reads the
+    `from_zarr` keeps calls written for pydantic-zarr 0.10 working: 0 reads the
     group without its members, as a `BaseGroupSpec` parametrized with the
-    class's attributes type, and any other depth reads the whole hierarchy,
-    since a `GroupSpec` cannot hold groups whose members were not read.
+    class's attributes type and its `Annotated` metadata, and any other depth
+    reads the whole hierarchy, since a `GroupSpec` cannot hold groups whose
+    members were not read. The one deprecation warning says when a positive
+    depth was ignored.
     """
     stored, flat = _stored_hierarchy()
-    observed = read(stored, depth=depth)
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        observed = read(stored, depth=depth)
+    [message] = [str(w.message) for w in record if issubclass(w.category, DeprecationWarning)]
+    assert (f"`depth={depth}` is ignored" in message) == (depth > 0)
     if depth == 0:
         assert type(observed) is base_cls
         assert observed == flat[""]
     else:
         assert type(observed) is cls
         assert observed == cls.from_flat(flat)
+
+
+def test_from_zarr_depth_zero_forward_reference() -> None:
+    """
+    `depth=0` resolves a forward reference in the class's attributes type, as
+    a whole read does, even when it is the class's first read. A test of its
+    own, since any earlier read of the class would resolve it first.
+    """
+    stored, flat = _stored_hierarchy()
+    assert not _ForwardGroup.__pydantic_complete__
+    observed = _ForwardGroup.from_zarr(stored, depth=0)
+    assert type(observed) is BaseGroupSpec[_LaterAttrs]
+    assert observed == flat[""]
 
 
 @pytest.mark.parametrize(
@@ -742,6 +804,24 @@ def test_from_zarr_invalid_depth(read: Callable[..., object]) -> None:
     stored, _ = _stored_hierarchy()
     with pytest.raises(ValueError, match="Invalid value for depth"):
         read(stored, depth=-2)
+
+
+@pytest.mark.parametrize(
+    ("cls", "attributes"),
+    [(_LevelGroup, {"level": "zero"}), (_CheckedGroup, {"level": -1})],
+    ids=["attributes-type", "annotated-validator"],
+)
+def test_from_zarr_depth_zero_invalid_attributes(
+    cls: type[AnyGroupSpec], attributes: dict[str, object]
+) -> None:
+    """
+    `depth=0` refuses stored attributes the class's attributes type refuses,
+    `Annotated` validators included, as a whole read does.
+    """
+    zarr = pytest.importorskip("zarr")
+    group = zarr.create_group(zarr.storage.MemoryStore(), attributes=attributes, zarr_format=2)
+    with pytest.raises(ValidationError):
+        cls.from_zarr(group, depth=0)
 
 
 def test_members_none_refused() -> None:

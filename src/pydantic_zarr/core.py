@@ -677,6 +677,24 @@ def warn_deprecated_io(name: str, replacement: str, *, stacklevel: int = 3) -> N
     warnings.warn(msg, DeprecationWarning, stacklevel=stacklevel)
 
 
+def from_zarr_group_replacement(depth: int) -> str:
+    """
+    The replacement a deprecated `from_zarr` names when it reads a group with
+    the deprecated `depth`.
+
+    A positive `depth` is ignored, since a `GroupSpec` cannot hold groups whose
+    members were not read, so the warning says so: the read is no longer
+    bounded, and `from_zarr_flat` is the way to bound it.
+    """
+    if depth > 0:
+        return (
+            f"`depth={depth}` is ignored and the whole hierarchy is read, since a "
+            "`GroupSpec` cannot hold groups whose members were not read; use "
+            "`from_zarr_flat(node, depth=n)` to read part of a hierarchy. " + FROM_ZARR_REPLACEMENT
+        )
+    return FROM_ZARR_REPLACEMENT
+
+
 def check_from_zarr_depth(depth: int) -> None:
     """
     Refuse a `depth` the deprecated `from_zarr` entry points never accepted.

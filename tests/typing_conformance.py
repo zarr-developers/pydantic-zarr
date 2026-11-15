@@ -15,7 +15,7 @@ It is not a pytest module; it only needs to type-check.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, assert_type
 
 import numpy as np
 from pydantic import BaseModel
@@ -25,6 +25,7 @@ import pydantic_zarr.v3 as v3
 
 if TYPE_CHECKING:
     import numpy.typing as npt
+    import zarr
     from numcodecs.abc import Codec
     from zarr_metadata import (
         ZarrV2ArrayMetadataJSON,
@@ -241,3 +242,38 @@ def input_paths_accept_input_types_v2(spec: v2.AnyArraySpec, codec: Codec) -> v2
     return spec.replace(
         shape=[8], chunks=[4], fill_value=np.float32(0), compressor=codec, filters=[codec]
     )
+
+
+# The deprecated `depth` of `from_zarr`, kept for calls written for 0.10: a
+# whole read, by default or with an explicit -1, returns the class, and
+# `depth=0` returns a `BaseGroupSpec` with the class's attributes type.
+class NarrowGroupV3(v3.GroupSpec[Attrs]):
+    """A narrowed v3 group spec."""
+
+
+class NarrowGroupV2(v2.GroupSpec[Attrs]):
+    """A narrowed v2 group spec."""
+
+
+def from_zarr_depth_v3(group: zarr.Group, depth: int) -> None:
+    assert_type(NarrowGroupV3.from_zarr(group), NarrowGroupV3)
+    assert_type(NarrowGroupV3.from_zarr(group, depth=-1), NarrowGroupV3)
+    assert_type(NarrowGroupV3.from_zarr(group, depth=0), v3.BaseGroupSpec[Attrs])
+    assert_type(
+        NarrowGroupV3.from_zarr(group, depth=depth), NarrowGroupV3 | v3.BaseGroupSpec[Attrs]
+    )
+    assert_type(v3.from_zarr(group), v3.AnyGroupSpec)
+    assert_type(v3.from_zarr(group, depth=-1), v3.AnyGroupSpec)
+    assert_type(v3.from_zarr(group, depth=0), v3.AnyBaseGroupSpec)
+
+
+def from_zarr_depth_v2(group: zarr.Group, depth: int) -> None:
+    assert_type(NarrowGroupV2.from_zarr(group), NarrowGroupV2)
+    assert_type(NarrowGroupV2.from_zarr(group, depth=-1), NarrowGroupV2)
+    assert_type(NarrowGroupV2.from_zarr(group, depth=0), v2.BaseGroupSpec[Attrs])
+    assert_type(
+        NarrowGroupV2.from_zarr(group, depth=depth), NarrowGroupV2 | v2.BaseGroupSpec[Attrs]
+    )
+    assert_type(v2.from_zarr(group), v2.AnyGroupSpec)
+    assert_type(v2.from_zarr(group, -1), v2.AnyGroupSpec)
+    assert_type(v2.from_zarr(group, 0), v2.AnyBaseGroupSpec)
