@@ -377,6 +377,12 @@ Together they round-trip a hierarchy through any zarr-python store:
 --8<-- "examples/zarr_io.py:round_trip"
 ```
 
+Consolidated metadata (`zarr.consolidate_metadata`) is a copy of the
+documents below a group: `.zmetadata` in Zarr V2, and the
+`consolidated_metadata` member of a V3 group's `zarr.json`. `read_documents`
+reads every node's own documents, so it leaves the copy out, and a
+consolidated hierarchy reads back as the spec that was written.
+
 Both live in
 [`examples/zarr_io.py`](https://github.com/zarr-developers/pydantic-zarr/blob/main/examples/zarr_io.py),
 which the example scripts import; copy them into a project that needs them.
@@ -605,4 +611,6 @@ Whether a store written through `zarr-python` holds them depends on
 specs keep its contents as written, not read as members. A hierarchy written
 from a spec holding it would carry a record that need not match the members
 written, so drop it first and consolidate the written hierarchy with
-`zarr.consolidate_metadata`.
+`zarr.consolidate_metadata`. For the same reason, `read_documents` leaves it
+out when it reads a stored hierarchy (see [Reading and writing with
+zarr-python](#reading-and-writing-with-zarr-python)).

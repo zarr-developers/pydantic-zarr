@@ -408,8 +408,10 @@ The two functions below write a spec's documents to a `zarr-python` store with
 documents back, for Zarr V2 and V3 specs alike. They live in
 [`examples/zarr_io.py`](https://github.com/zarr-developers/pydantic-zarr/blob/main/examples/zarr_io.py),
 which the example scripts import; copy them into a project that needs them.
-The [Zarr V3 guide](usage_zarr_v3.md#reading-and-writing-with-zarr-python)
-discusses them.
+`read_documents` leaves out a consolidated group's `.zmetadata`, the copy of
+the documents below it that `zarr.consolidate_metadata` writes, since it reads
+every node's own documents. The [Zarr V3
+guide](usage_zarr_v3.md#reading-and-writing-with-zarr-python) discusses them.
 
 ```python
 --8<-- "examples/zarr_io.py:write"
