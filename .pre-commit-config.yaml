@@ -21,8 +21,8 @@ repos:
     hooks:
     - id: check-yaml
     - id: trailing-whitespace
-  # NOTE: the type checker (pyrefly) is deliberately not a pre-commit hook. Type checking
-  # runs via the `types` hatch environment (`hatch run types:check`, or `just typecheck`),
+  # NOTE: the type checkers are deliberately not pre-commit hooks. Type checking
+  # runs via `just typecheck` (the `types` dependency group, installed from uv.lock),
   # which is also what the `typecheck` CI job runs. Keeping a single entry point means the
   # type checker version and the dependencies being checked against cannot drift from what
   # the tests actually use.

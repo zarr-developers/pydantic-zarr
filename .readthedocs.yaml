@@ -4,19 +4,25 @@
 # Required
 version: 2
 
-# Set the version of Python and other tools you might need
+# The docs are built from uv.lock's `docs` resolution, with the uv the
+# justfile pins. The `docs` group conflicts with the default `dev` group (see
+# `[tool.uv]` in pyproject.toml), so it is installed without default groups,
+# which Read the Docs' own uv install method cannot express.
 build:
   os: ubuntu-22.04
   tools:
     python: "3.12"
+  # Read the Docs' documented uv setup: uv comes from asdf, so it stays on
+  # PATH once the virtualenv's python shadows the system one
+  jobs:
+    pre_create_environment:
+      - asdf plugin add uv
+      - asdf install uv 0.13.5
+      - asdf global uv 0.13.5
+    create_environment:
+      - uv venv "${READTHEDOCS_VIRTUALENV_PATH}"
+    install:
+      - UV_PROJECT_ENVIRONMENT="${READTHEDOCS_VIRTUALENV_PATH}" uv sync --locked --no-default-groups --group docs
 
 mkdocs:
   configuration: mkdocs.yaml
-
-# Optionally declare the Python requirements required to build your docs
-python:
-  install:
-    - method: uv
-      command: sync
-      groups:
-        - docs

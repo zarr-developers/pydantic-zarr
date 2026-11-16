@@ -353,8 +353,9 @@ def group_replaces_like_a_base_group_v2(group: v2.AnyGroupSpec) -> ReplacesLikeB
 # whatever TMembers is solved to: the TypeVar's bound refuses None (a group
 # without members is a BaseGroupSpec), a BaseGroupSpec member, and a member
 # that is not a spec. pyrefly 1.4 accepts these calls (in pydantic's lax mode
-# it reads a field typed with a bare TypeVar as Any); add its suppression,
-# `# pyrefly: ignore[bad-specialization]`, once it refuses them.
+# it reads a field typed with a bare TypeVar as Any); add its suppression
+# for the `bad-specialization` error once it refuses them. (Written out
+# here, that suppression comment would itself count as an unused one.)
 
 
 def refused_members_v3() -> None:

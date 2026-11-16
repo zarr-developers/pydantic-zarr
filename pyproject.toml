@@ -81,54 +81,6 @@ docs = [
 dev = [
     {include-group = "test"},
 ]
-
-[tool.hatch]
-version.source = "vcs"
-build.hooks.vcs.version-file = "src/pydantic_zarr/_version.py"
-
-[tool.hatch.envs.test]
-dependency-groups = ["test"]
-dependencies = [
-    "zarr~={matrix:zarr}",
-]
-
-[tool.hatch.envs.test.scripts]
-test = "pytest tests/test_pydantic_zarr/"
-test-cov = "pytest --cov-config=pyproject.toml --cov=pkg --cov-report html --cov=src tests/test_pydantic_zarr"
-list-env = "{env:HATCH_UV} pip list"
-
-[[tool.hatch.envs.test.matrix]]
-python = ["3.12", "3.13", "3.14"]
-zarr = ["3.0.10", "3.1.0", "3.3.0", "3.4.1"]
-
-[tool.hatch.envs.test-base]
-dependency-groups = ["test-base"]
-
-[tool.hatch.envs.test-base.scripts]
-test = "pytest tests/test_pydantic_zarr/"
-test-cov = "pytest --cov-config=pyproject.toml --cov=pkg --cov-report html --cov=src tests/test_pydantic_zarr"
-list-env = "{env:HATCH_UV} pip list"
-
-[[tool.hatch.envs.test-base.matrix]]
-python = ["3.12", "3.13", "3.14"]
-
-[tool.hatch.envs.default]
-installer = "uv"
-
-[tool.hatch.envs.docs]
-dependency-groups = ['docs']
-python = "3.12"
-# pip's resolver gives up on the dask/ngff-zarr combination that uv resolves
-installer = "uv"
-
-[tool.hatch.envs.docs.scripts]
-build = "mkdocs build --clean --strict"
-serve = "mkdocs serve --watch src"
-deploy = "mkdocs gh-deploy"
-test = "pytest tests/test_docs"
-
-[tool.hatch.envs.types]
-dependency-groups = ["test"]
 # three checkers on purpose, each covering the others' blind spots: pyrefly
 # (the project checker) is variance-lenient, so an invariant TypeVar bound
 # refusing narrowed downstream parameterizations (#190) was invisible to it
@@ -138,13 +90,28 @@ dependency-groups = ["test"]
 # checks the library (every module but `experimental`, which is not held to
 # this bar yet) and the downstream-shaped tests/typing_conformance.py,
 # pyright because it is what pyright-checked downstreams run.
-extra-dependencies = ["pyrefly==1.4.0", "ty==0.0.93", "pyright==1.1.414"]
-[tool.hatch.envs.types.scripts]
-check = ["check-pyrefly", "check-ty", "check-pyright"]
-check-pyrefly = "pyrefly check {args:}"
-check-ty = "ty check src/pydantic_zarr tests/typing_conformance.py --exclude src/pydantic_zarr/experimental"
-# `experimental` is excluded in [tool.pyright]: the pyright CLI takes no --exclude
-check-pyright = "pyright src/pydantic_zarr tests/typing_conformance.py"
+types = [
+    {include-group = "test"},
+    "pyrefly==1.4.0",
+    "ty==0.0.93",
+    "pyright==1.1.414",
+]
+
+[tool.uv]
+# Every check runs on uv.lock (`uv run --locked`, see the justfile), so CI
+# and a development machine install the same versions. The docs group pins
+# pydantic below what the tests should run on (see its comment), so it is
+# resolved apart from the groups that install the tests: the lockfile holds
+# one resolution for `docs` and another for `test`, `types` and `dev`.
+conflicts = [
+    [{ group = "docs" }, { group = "test" }],
+    [{ group = "docs" }, { group = "types" }],
+    [{ group = "docs" }, { group = "dev" }],
+]
+
+[tool.hatch]
+version.source = "vcs"
+build.hooks.vcs.version-file = "src/pydantic_zarr/_version.py"
 
 # tests/typing_conformance.py marks the calls it expects a checker to refuse
 # with that checker's suppression comment, so an unused one (a refusal that
@@ -256,7 +223,7 @@ ignore = [
 project-includes = ["src", "tests", "examples"]
 search-path = ["src", "tests", "examples"]
 # the reference implementations the example scripts import are docs-only
-# dependencies; the types environment does not install them
+# dependencies; the `types` group does not install them
 replace-imports-with-any = ["ome_zarr.*", "ngff_zarr", "ome_zarr"]
 python-version = "3.12"
 
@@ -275,7 +242,7 @@ unused-ignore = true
 
 [tool.pyright]
 # pyright's default excludes, plus the module the typecheck job does not hold
-# to zero errors yet (see the types environment)
+# to zero errors yet (see the `types` group)
 exclude = ["**/node_modules", "**/__pycache__", "**/.*", "src/pydantic_zarr/experimental"]
 
 [tool.pytest.ini_options]
@@ -304,8 +271,9 @@ filterwarnings = [
 ignore = [
     "MY100",  # type checking uses pyrefly, ty and pyright, not mypy
     "PC111",  # black formatting for docs, not sure if want,
-    "PC140",  # type checking (pyrefly) runs via the `types` hatch env and the typecheck CI job, not pre-commit
+    "PC140",  # type checking runs via `just typecheck` (the `types` group) and the typecheck CI job, not pre-commit
     "PC180",  # markdown formatter, no thanks
+    "PY007",  # the task runner is `just` (the justfile), which repo-review does not detect
     "RTD100", # read the docs, no thanks,
     "RTD101", # read the docs, no thanks
     "RTD102", # read the docs, no thanks,

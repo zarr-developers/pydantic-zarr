@@ -69,8 +69,8 @@ print(spec.model_dump())
 ## Development
 
 Development tasks are driven by [`just`](https://just.systems) — run
-`just --list` for the available recipes — with environments managed by
-[hatch](https://hatch.pypa.io). See the
+`just --list` for the available recipes — with environments installed from
+`uv.lock` by [uv](https://docs.astral.sh/uv/). See the
 [contributing guide](https://pydantic-zarr.readthedocs.io/en/latest/contributing/)
 for setup, testing, and changelog conventions.
 
