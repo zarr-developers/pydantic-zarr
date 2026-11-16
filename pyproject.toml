@@ -133,16 +133,18 @@ dependency-groups = ["test"]
 # (the project checker) is variance-lenient, so an invariant TypeVar bound
 # refusing narrowed downstream parameterizations (#190) was invisible to it
 # (and to mypy, which does not apply PEP 696 defaults inside lazy `type`
-# aliases). ty and pyright both catch that class of bug and check the
-# downstream-shaped tests/typing_conformance.py; pyright because it is what
-# pyright-checked downstreams run, ty also over the modules it is clean on
-# today (TODO: widen ty's scope as it and the zarr/numpy stubs mature).
+# aliases), and it let an unsound `GroupSpec.replace` override hide behind a
+# suppression comment. ty and pyright both catch those classes of bug; each
+# checks the library (every module but `experimental`, which is not held to
+# this bar yet) and the downstream-shaped tests/typing_conformance.py,
+# pyright because it is what pyright-checked downstreams run.
 extra-dependencies = ["pyrefly==1.4.0", "ty==0.0.93", "pyright==1.1.414"]
 [tool.hatch.envs.types.scripts]
-check = ["check-pyrefly", "check-ty", "check-conformance"]
+check = ["check-pyrefly", "check-ty", "check-pyright"]
 check-pyrefly = "pyrefly check {args:}"
-check-ty = "ty check src/pydantic_zarr/core.py src/pydantic_zarr/_metadata.py tests/typing_conformance.py"
-check-conformance = "pyright tests/typing_conformance.py"
+check-ty = "ty check src/pydantic_zarr tests/typing_conformance.py --exclude src/pydantic_zarr/experimental"
+# `experimental` is excluded in [tool.pyright]: the pyright CLI takes no --exclude
+check-pyright = "pyright src/pydantic_zarr tests/typing_conformance.py"
 
 [tool.coverage.run]
 source_pkgs = ["pydantic_zarr", "tests"]
@@ -256,6 +258,11 @@ implicit-any-type-argument = false
 implicit-any-lambda = false
 no-any-return-explicit = false
 no-any-return-implicit = false
+
+[tool.pyright]
+# pyright's default excludes, plus the module the typecheck job does not hold
+# to zero errors yet (see the types environment)
+exclude = ["**/node_modules", "**/__pycache__", "**/.*", "src/pydantic_zarr/experimental"]
 
 [tool.pytest.ini_options]
 minversion = "7"
