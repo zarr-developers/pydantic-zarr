@@ -93,6 +93,61 @@ at validation, matching the spelling `zarr-python` stores. Which data types are
 single-byte is what their definitions in the spec's scope declare, so in
 `zarr-python`'s scope this covers its fixed-length and raw bytes types too.
 
+## Typing a group's members
+
+`GroupSpec` takes two type parameters: the type of its attributes, and the type
+of its whole `members` mapping. The members type states what a group may hold:
+
+- Left out, the group holds any arrays and groups.
+- A `Mapping` constrains the type of every member:
+  `GroupSpec[Attrs, Mapping[str, MyArraySpec]]`.
+- A closed `TypedDict` fixes the member names, each with its own type. An
+  undeclared member is refused, and so is a missing one.
+
+```python
+from typing import Any
+
+from pydantic import ValidationError
+from typing_extensions import TypedDict
+
+from pydantic_zarr.v3 import ArraySpec, GroupSpec
+
+
+class LevelMembers(TypedDict, closed=True):
+    x: ArraySpec
+    y: ArraySpec
+    band: ArraySpec
+
+
+Level = GroupSpec[Any, LevelMembers]
+
+axis = ArraySpec.create_default(shape=(4,), data_type="float64")
+band = ArraySpec.create_default(shape=(4, 4), data_type="uint16")
+
+level = Level(members={"x": axis, "y": axis, "band": band})
+print(level.members["band"].shape)
+#> (4, 4)
+
+try:
+    Level(members={"x": axis, "y": axis})
+except ValidationError as e:
+    print(e.errors()[0]["loc"], e.errors()[0]["type"])
+    #> ('members', 'band') missing
+
+try:
+    Level(members={"x": axis, "y": axis, "band": band, "extra": band})
+except ValidationError as e:
+    print(e.errors()[0]["loc"], e.errors()[0]["type"])
+    #> ('members', 'extra') extra_forbidden
+```
+
+A type checker accepts a `TypedDict` as the members type when it is closed
+(`closed=True`) or types its other members (`extra_items=...`), because only
+then is every member known to be an array or a group. A group subclass that
+adds validators can leave the members type as a parameter, with
+`class Dataset(GroupSpec[TBaseAttr, TMembers], Generic[TMembers])`, so that
+each concrete group names its own members: `Dataset[LevelMembers]`.
+
 ## Creating array specs
 
 `ArraySpec.create_default` builds a valid array spec from whichever fields are

@@ -22,7 +22,7 @@ uv run --no-project --with-editable <path to pydantic-zarr checkout> \
 # (zarr-metadata-backed v3 document validation and the APIs used below).
 
 # --8<-- [start:attrs]
-from typing import Self, cast
+from typing import Generic, Self, cast
 
 import zarr
 import zarr.storage
@@ -31,7 +31,14 @@ from typing_extensions import TypedDict
 from zarr_io import read_documents, repaired, write_hierarchy
 
 from pydantic_zarr.core import MISSING, AttributesBase, get_attribute
-from pydantic_zarr.v3 import ArraySpec, CodecLike, GroupSpec, is_array_spec
+from pydantic_zarr.v3 import (
+    ArraySpec,
+    CodecLike,
+    GroupSpec,
+    TBaseAttr,
+    TMembers,
+    is_array_spec,
+)
 
 
 class BandAttrs(AttributesBase):
@@ -93,8 +100,11 @@ class R10mMembers(GriddedMembers, closed=True):
     b08: BandArray
 
 
-class GeoZarrDataset(GroupSpec):
-    """A group of data variables over one grid, with GeoZarr rules."""
+class GeoZarrDataset(GroupSpec[TBaseAttr, TMembers], Generic[TMembers]):
+    """A group of data variables over one grid, with GeoZarr rules.
+
+    The members type stays a parameter, so each dataset names its own members.
+    """
 
     @model_validator(mode="after")
     def check_grid_mapping_refs(self) -> Self:
@@ -113,10 +123,8 @@ class GeoZarrDataset(GroupSpec):
         return self
 
 
-class R10mDataset(GeoZarrDataset):
-    # sound at runtime: pydantic validates members against the TypedDict;
-    # the ignore is for checkers that treat the field override as unsound
-    members: R10mMembers  # type: ignore[assignment]
+class R10mDataset(GeoZarrDataset[R10mMembers]):
+    """The 10 m dataset: a GeoZarr dataset with exactly the `R10mMembers`."""
 
 
 def band(grid_mapping: str = "spatial_ref") -> BandArray:

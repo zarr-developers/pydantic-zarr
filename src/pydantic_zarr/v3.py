@@ -95,6 +95,7 @@ from pydantic_zarr.core import (
     guess_chunks,
     maybe_node,
     model_like,
+    refuse_member_type_as_members,
     resolve_member_path,
     split_store_key,
     stored_array,
@@ -125,28 +126,36 @@ type TBaseAttr = Mapping[str, object] | SerializeAsAny[BaseModel]
 # BaseGroupSpec is not a member type: a GroupSpec is a complete hierarchy,
 # and a group whose members are unknown is never part of one.
 type TBaseItem = Union["GroupSpec", "ArraySpec"]
+# The widest members mapping: any names, each member a GroupSpec or an ArraySpec.
+type TBaseMembers = Mapping[str, TBaseItem]
 
 # Aliases for specs of any specialization. Since the spec parameters are
 # covariant (specs are frozen, so a narrowed spec IS-A wider one), these are
 # ordinary wide types, not gradual-typing escapes: a value typed with one
-# keeps checked, TBaseAttr/TBaseItem-typed reads. The names remain the public
+# keeps checked, TBaseAttr/TBaseMembers-typed reads. The names remain the public
 # spelling for heterogeneous APIs (`resolve_path`, `from_flat`, `like`,
 # `is_array_spec`) and are now equal to the bare class names.
 type AnyArraySpec = "ArraySpec[TBaseAttr]"
-type AnyGroupSpec = "GroupSpec[TBaseAttr, TBaseItem]"
+type AnyGroupSpec = "GroupSpec[TBaseAttr, TBaseMembers]"
 type AnyBaseGroupSpec = "BaseGroupSpec[TBaseAttr]"
 
-# Covariant because the specs are frozen: TAttr and TItem appear only in read
-# positions on instances, so ArraySpec[CFAttrs] is substitutable for
-# ArraySpec[TBaseAttr], and TBaseItem serves as both TItem's bound and its
-# default (its bare, recursive spelling also makes pydantic validate a bare
-# GroupSpec's nested members as specs all the way down;
-# tests/typing_conformance.py guards the narrowed-parameterization contract).
+# Covariant because the specs are frozen: TAttr and TMembers appear only in
+# read positions on instances, so ArraySpec[CFAttrs] is substitutable for
+# ArraySpec[TBaseAttr], and TBaseMembers serves as both TMembers' bound and its
+# default (the bare, recursive spelling of TBaseItem inside it also makes
+# pydantic validate a bare GroupSpec's nested members as specs all the way
+# down; tests/typing_conformance.py guards the narrowed-parameterization
+# contract).
+#
+# TMembers is the whole members mapping, not the type of one member, so that a
+# group whose member names are part of its schema is one parameterization:
+# GroupSpec[Attrs, Members] with Members a closed TypedDict. A group that only
+# constrains its members' type is GroupSpec[Attrs, Mapping[str, MyArraySpec]].
 # Constructing classmethods take TBaseAttr instead of TAttr, since a covariant
 # parameter may not appear in argument positions; the class's real attribute
 # type is still enforced, by validation.
 TAttr = TypeVar("TAttr", bound=TBaseAttr, default=TBaseAttr, covariant=True)
-TItem = TypeVar("TItem", bound=TBaseItem, default=TBaseItem, covariant=True)
+TMembers = TypeVar("TMembers", bound=TBaseMembers, default=TBaseMembers, covariant=True)
 TDefault = TypeVar("TDefault")
 
 NodeType = Literal["group", "array"]
@@ -1923,9 +1932,14 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
 
-class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
+class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
     """
     A model of a Zarr Version 3 Group.
+
+    The second type parameter is the type of the whole `members` mapping. Leave it
+    out for a group of any members, give a `Mapping` to constrain every member's
+    type (`GroupSpec[Attrs, Mapping[str, MyArraySpec]]`), or give a closed
+    `TypedDict` to fix the member names (`GroupSpec[Attrs, MyMembers]`).
 
     Attributes
     ----------
@@ -1934,14 +1948,28 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         The type of this node. Must be the string "group".
     attributes: TAttr
         The user-defined attributes of this group.
-    members: dict[str, TItem], default = {}
+    members: TMembers, default = {}
         The members of this group: a `Mapping` with string keys and values that are
         `ArraySpec` or `GroupSpec`. A `GroupSpec` is a complete hierarchy, so an empty
         mapping means the group has no members. A group whose members are unknown is a
-        `BaseGroupSpec`, which has no `members` field and is never a member.
+        `BaseGroupSpec`, which has no `members` field and is never a member. The
+        default is validated against `TMembers`, so a group whose members type
+        requires a member still requires `members`.
     """
 
-    members: Mapping[str, TItem] = {}
+    members: TMembers = Field(default={}, validate_default=True)
+
+    @classmethod
+    def __class_getitem__(cls, typevar_values: Any) -> Any:
+        # the members parameter held the type of one member up to 0.11; that
+        # spelling is refused here, where it is written, instead of surfacing
+        # as a validation error about the members
+        values = typevar_values if isinstance(typevar_values, tuple) else (typevar_values,)
+        parameters = cls.__pydantic_generic_metadata__["parameters"]
+        for parameter, value in zip(parameters, values, strict=False):
+            if parameter is TMembers:
+                refuse_member_type_as_members(cls.__name__, value, (ArraySpec, BaseGroupSpec))
+        return super().__class_getitem__(typevar_values)
 
     @model_validator(mode="after")
     def validate_member_names(self) -> Self:

@@ -22,6 +22,7 @@ zarr-python): uv run --no-project --with ngff-zarr --with zarr --with . \
 # for the final reference-comparison section, which skips when it is absent.
 
 # --8<-- [start:transforms]
+from collections.abc import Mapping
 from typing import Annotated, Any, Literal, Self, Union
 
 from pydantic import ConfigDict, Field, ValidationError, model_validator
@@ -217,7 +218,7 @@ class ImageAttributes(OmeBase):
     ome: OmeAttrs
 
 
-class Image(GroupSpec[ImageAttributes, Union[ArraySpec[Any], GroupSpec[Any, Any]]]):
+class Image(GroupSpec[ImageAttributes, Mapping[str, Union[ArraySpec[Any], GroupSpec[Any, Any]]]]):
     """A 0.6 image group: the metadata must match the member arrays."""
 
     @model_validator(mode="after")

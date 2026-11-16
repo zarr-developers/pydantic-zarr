@@ -58,8 +58,10 @@ The layout rules live in three `ArraySpec` / `GroupSpec` subclasses:
   uses must be that dimension's 1-D coordinate; and every name in a member's
   CF `coordinates` attribute must resolve to a member.
 
-A concrete dataset then fixes its member set with a closed `TypedDict`:
-undeclared names are refused and missing members are required. Arrays are
+`DatasetSpec` leaves its members type as a parameter. A concrete dataset then
+fixes its member set by passing a closed `TypedDict`, as in
+`DatasetSpec[ClimateMembers]`: undeclared names are refused and missing
+members are required. Arrays are
 built with [`ArraySpec.create_default`][pydantic_zarr.v3.ArraySpec.create_default],
 which fills in the whole-shape chunk grid, the `/` chunk key encoding, and a
 data-type-derived fill value. The codec pipeline is spelled out, since xarray
@@ -76,7 +78,7 @@ are each refused with a `ValidationError`:
 ```
 
 Reading a real xarray-written store back is the same call on the typed class:
-members are re-validated against the narrowed annotations, so
+members are re-validated against the members type, so
 `ClimateDataset.from_stored_metadata_json(read_documents(zarr.open_group(...)))`
 returns typed attributes and members — or raises `ValidationError` if the store
 does not follow the layout this page encodes.

@@ -322,6 +322,14 @@ except ValidationError as e:
     #> fill_value: expected an integer or null, got 1.5
 ```
 
+### Typing a group's members
+
+The second type parameter of `GroupSpec` is the type of its whole `members`
+mapping, in v2 as in v3: a `Mapping` constrains the type of every member, and a
+closed `TypedDict` fixes the member names. See
+[Typing a group's members](usage_zarr_v3.md#typing-a-groups-members) in the
+v3 guide; the same code works with `pydantic_zarr.v2`.
+
 ## Stored metadata documents
 
 `to_stored_metadata_json` returns a node's metadata the way a Zarr store holds

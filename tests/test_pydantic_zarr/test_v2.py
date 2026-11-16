@@ -8,6 +8,7 @@ import copy
 import json
 import re
 import warnings
+from collections.abc import Mapping
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, cast
 
@@ -381,7 +382,7 @@ def test_serialize_deserialize_groupspec(
 
     store = zarr.storage.MemoryStore()
 
-    spec = GroupSpec[RootAttrs, ArraySpec | SubGroup](
+    spec = GroupSpec[RootAttrs, Mapping[str, ArraySpec | SubGroup]](
         attributes=RootAttrs(foo=10, bar=[0, 1, 2]),
         members={
             "s0": ArraySpec[ArrayAttrs](
@@ -473,8 +474,8 @@ def test_validation() -> None:
 
     ArrayA = ArraySpec[ArrayAttrsA]
     ArrayB = ArraySpec[ArrayAttrsB]
-    GroupA = GroupSpec[GroupAttrsA, ArrayA]
-    GroupB = GroupSpec[GroupAttrsB, ArrayB]
+    GroupA = GroupSpec[GroupAttrsA, Mapping[str, ArrayA]]
+    GroupB = GroupSpec[GroupAttrsB, Mapping[str, ArrayB]]
 
     store = zarr.storage.MemoryStore
 

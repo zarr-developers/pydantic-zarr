@@ -4,7 +4,7 @@ import math
 import warnings
 from collections.abc import Iterator, Mapping, Sequence
 from functools import cache
-from types import MappingProxyType
+from types import MappingProxyType, UnionType
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -14,6 +14,9 @@ from typing import (
     Protocol,
     Self,
     TypeVar,
+    Union,
+    get_args,
+    get_origin,
     overload,
     override,
     runtime_checkable,
@@ -629,6 +632,32 @@ def ensure_key_no_path(data: Any) -> Any:
         for key in data:
             ensure_member_name(key)
     return data
+
+
+def refuse_member_type_as_members(
+    class_name: str, members_type: object, spec_types: tuple[type, ...]
+) -> None:
+    """
+    Refuse a `GroupSpec` parameterization whose members type is the type of
+    one member: a spec class, or a union of spec classes.
+
+    The second type parameter of `GroupSpec` is the type of the whole members
+    mapping. Up to 0.11 it was the type of one member, and that spelling would
+    otherwise fail much later, at validation, with an error about the members.
+    """
+    candidates = (
+        get_args(members_type)
+        if get_origin(members_type) in (Union, UnionType)
+        else (members_type,)
+    )
+    if any(isinstance(item, type) and issubclass(item, spec_types) for item in candidates):
+        msg = (
+            f"{class_name} was parameterized with the member type {members_type!r}. "
+            "The second type parameter of GroupSpec is the type of the whole members "
+            "mapping: write Mapping[str, <member type>] for a group whose members are "
+            "all of one type, or a closed TypedDict to fix the member names."
+        )
+        raise TypeError(msg)
 
 
 def model_like(a: BaseModel, b: BaseModel, exclude: IncEx = None, include: IncEx = None) -> bool:

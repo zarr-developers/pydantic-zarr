@@ -37,7 +37,7 @@ rather than a stored `null`.
 The `ome` block of an image group holds `multiscales`: axes, and one dataset
 entry per resolution level, each carrying `scale`/`translation`
 transformations (the only types the spec allows there — a closed discriminated
-union). The group model narrows `members` to a `TypedDict`: the fixed name
+union). The group model takes a `TypedDict` as its members type: the fixed name
 `labels` may hold a subgroup, and every other member must be an array
 (`extra_items=ArraySpec`), so a stray subgroup is refused by name. Validators
 then cross-check the metadata against the members: every dataset `path` must
@@ -73,6 +73,6 @@ A complete model of the layout would also type the `labels` group and its
 label images (integer data types, `image-label` attributes as above, and the
 rule that label paths listed in the labels group resolve to members), using
 exactly the same ingredients: `AttributesBase` subclasses for the `ome`
-blocks, narrowed `members`, and `get_path` in validators. The reference
+blocks, a `TypedDict` members type, and `get_path` in validators. The reference
 comparison covers the multiscale image only: ome-zarr-py writes labels
 through a separate API, so the labels model above is exercised model-side.

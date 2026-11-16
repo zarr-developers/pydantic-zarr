@@ -57,6 +57,7 @@ from pydantic_zarr.core import (
     maybe_node,
     model_like,
     parse_dtype_v2,
+    refuse_member_type_as_members,
     resolve_member_path,
     split_store_key,
     stored_array,
@@ -81,20 +82,21 @@ if TYPE_CHECKING:
 # with un-narrowed attributes must serialize with its own fields, not the
 # empty base schema.
 type TBaseAttr = Mapping[str, object] | SerializeAsAny[BaseModel]
-# TBaseItem's bare, recursive spelling serves as TItem's bound and default;
-# see the notes on the v3 spellings.
+# TBaseMembers, the widest members mapping, serves as TMembers' bound and
+# default; see the notes on the v3 spellings.
 type TBaseItem = Union["GroupSpec", "ArraySpec"]
+type TBaseMembers = Mapping[str, TBaseItem]
 
 # Aliases for specs of any specialization: ordinary wide types, equal to the
 # bare class names, since the covariant parameters make a narrowed spec
 # substitutable for a wider one — see the note on the v3 aliases.
 type AnyArraySpec = "ArraySpec[TBaseAttr]"
-type AnyGroupSpec = "GroupSpec[TBaseAttr, TBaseItem]"
+type AnyGroupSpec = "GroupSpec[TBaseAttr, TBaseMembers]"
 type AnyBaseGroupSpec = "BaseGroupSpec[TBaseAttr]"
 
 # covariant because the specs are frozen; see the note on the v3 TypeVars
 TAttr = TypeVar("TAttr", bound=TBaseAttr, default=TBaseAttr, covariant=True)
-TItem = TypeVar("TItem", bound=TBaseItem, default=TBaseItem, covariant=True)
+TMembers = TypeVar("TMembers", bound=TBaseMembers, default=TBaseMembers, covariant=True)
 TDefault = TypeVar("TDefault")
 
 DtypeStr = Annotated[str, BeforeValidator(parse_dtype_v2)]
@@ -912,26 +914,45 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
 
-class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
+class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
     """
     A model of a Zarr Version 2 Group.
     The specification for the data structure being modeled by this
     class can be found in the
     [Zarr specification](https://zarr.readthedocs.io/en/stable/spec/v2.html#groups).
 
+    The second type parameter is the type of the whole `members` mapping. Leave it
+    out for a group of any members, give a `Mapping` to constrain every member's
+    type (`GroupSpec[Attrs, Mapping[str, MyArraySpec]]`), or give a closed
+    `TypedDict` to fix the member names (`GroupSpec[Attrs, MyMembers]`).
+
     Attributes
     ----------
 
     attributes: TAttr
         The user-defined attributes of this group. Should be JSON-serializable.
-    members: dict[str, TItem], default = {}
+    members: TMembers, default = {}
         The members of this group: a `Mapping` with string keys and values that are
         `ArraySpec` or `GroupSpec`. A `GroupSpec` is a complete hierarchy, so an empty
         mapping means the group has no members. A group whose members are unknown is a
-        `BaseGroupSpec`, which has no `members` field and is never a member.
+        `BaseGroupSpec`, which has no `members` field and is never a member. The
+        default is validated against `TMembers`, so a group whose members type
+        requires a member still requires `members`.
     """
 
-    members: Mapping[str, TItem] = {}
+    members: TMembers = Field(default={}, validate_default=True)
+
+    @classmethod
+    def __class_getitem__(cls, typevar_values: Any) -> Any:
+        # the members parameter held the type of one member up to 0.11; that
+        # spelling is refused here, where it is written, instead of surfacing
+        # as a validation error about the members
+        values = typevar_values if isinstance(typevar_values, tuple) else (typevar_values,)
+        parameters = cls.__pydantic_generic_metadata__["parameters"]
+        for parameter, value in zip(parameters, values, strict=False):
+            if parameter is TMembers:
+                refuse_member_type_as_members(cls.__name__, value, (ArraySpec, BaseGroupSpec))
+        return super().__class_getitem__(typevar_values)
 
     @model_validator(mode="after")
     def validate_member_names(self) -> Self:
