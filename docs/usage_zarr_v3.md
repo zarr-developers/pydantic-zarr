@@ -141,12 +141,35 @@ except ValidationError as e:
     #> ('members', 'extra') extra_forbidden
 ```
 
-A type checker accepts a `TypedDict` as the members type when it is closed
-(`closed=True`) or types its other members (`extra_items=...`), because only
-then is every member known to be an array or a group. A group subclass that
-adds validators can leave the members type as a parameter, with
-`class Dataset(GroupSpec[TBaseAttr, TMembers], Generic[TMembers])`, so that
-each concrete group names its own members: `Dataset[LevelMembers]`.
+A group subclass that adds validators can leave the members type as a
+parameter, with `class Dataset(GroupSpec[TBaseAttr, TMembers], Generic[TMembers])`,
+so that each concrete group names its own members: `Dataset[LevelMembers]`.
+
+Notes for type checkers and for `TypedDict` members:
+
+- **Closed `TypedDict`s only.** pyright, ty and pyrefly accept a `TypedDict`
+  as the members type when it is closed (`closed=True`) or types its other
+  members (`extra_items=...`), because only then is every member known to be
+  an array or a group ([PEP 728](https://peps.python.org/pep-0728/)). mypy
+  does not implement that rule yet and reports the argument as outside the
+  parameter's bound.
+- **`extra_items` and pydantic.** A `TypedDict` with `extra_items` should set
+  `__pydantic_config__ = ConfigDict()` in its body. Without it pydantic warns
+  that the group's `extra="forbid"` setting does not apply to the
+  `TypedDict`.
+- **`Any`.** `GroupSpec[Any, Any]` holds any mapping with string keys, and
+  does not validate the members themselves. Leave the parameter out, or give
+  `TBaseMembers`, for members validated as arrays and groups.
+- **Building a group without a members type.** A checker infers the members
+  type from the `members` argument. With arrays and groups mixed in one dict
+  literal, pyright infers `dict[str, Unknown]`; annotate the result, as in
+  `group: AnyGroupSpec = GroupSpec(members={...})`, to keep the members typed.
+- **The type of one member.** Up to 0.11 the parameter was the type of one
+  member. `GroupSpec[Attrs, MyArraySpec]` is now written
+  `GroupSpec[Attrs, Mapping[str, MyArraySpec]]`. The old spelling still works,
+  read as that mapping, with a `DeprecationWarning`; type checkers refuse it.
+  Any other type that is not a mapping raises a `TypeError` when the class is
+  parameterized.
 
 ## Creating array specs
 

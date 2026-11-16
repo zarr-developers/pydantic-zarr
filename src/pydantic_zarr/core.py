@@ -10,13 +10,16 @@ from typing import (
     Annotated,
     Any,
     Final,
+    ForwardRef,
     Literal,
     Protocol,
     Self,
+    TypeAliasType,
     TypeVar,
     Union,
     get_args,
     get_origin,
+    get_type_hints,
     overload,
     override,
     runtime_checkable,
@@ -39,6 +42,11 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+
+# before Python 3.14 the typing_extensions class is a backport, distinct from
+# the class a `type` statement creates, and an alias may be an instance of either
+from typing_extensions import TypeAliasType as _TypeAliasTypeBackport  # noqa: UP035
+from typing_extensions import is_typeddict
 
 # pydantic resolves the `extra_fields` annotation at runtime
 from zarr_metadata import JSONValue  # noqa: TC002
@@ -651,30 +659,95 @@ def ensure_members_mapping(members: object) -> None:
         raise ValueError(msg)
 
 
-def refuse_member_type_as_members(
-    class_name: str, members_type: object, spec_types: tuple[type, ...]
-) -> None:
+def _members_type_kind(
+    members_type: object, namespace: Mapping[str, object], spec_types: tuple[type, ...]
+) -> Literal["mapping", "member", "other", "unknown"]:
     """
-    Refuse a `GroupSpec` parameterization whose members type is the type of
-    one member: a spec class, or a union of spec classes.
+    Classify a members type argument: a mapping type, the type of one member
+    (a spec class, or a union of them), another type, or one that cannot be
+    told (a type variable, or a name that does not resolve in `namespace`).
+    Aliases, `Annotated`, forward references and unions are looked through.
+    """
+    if isinstance(members_type, TypeAliasType | _TypeAliasTypeBackport):
+        return _members_type_kind(members_type.__value__, namespace, spec_types)
+    if isinstance(members_type, ForwardRef):
+        members_type = members_type.__forward_arg__
+    if isinstance(members_type, str):
+        holder = type("_Holder", (), {"__annotations__": {"value": members_type}})
+        try:
+            resolved = get_type_hints(holder, globalns=dict(namespace), include_extras=True)
+        except Exception:
+            return "unknown"
+        return _members_type_kind(resolved["value"], namespace, spec_types)
+    origin = get_origin(members_type)
+    if origin is Annotated:
+        return _members_type_kind(get_args(members_type)[0], namespace, spec_types)
+    if origin in (Union, UnionType):
+        kinds = {_members_type_kind(item, namespace, spec_types) for item in get_args(members_type)}
+        if len(kinds) == 1:
+            return kinds.pop()
+        # a union that mixes kinds is a mapping type only if every arm is one
+        return "unknown" if kinds == {"mapping", "unknown"} else "other"
+    if is_typeddict(members_type):
+        return "mapping"
+    candidate = members_type if origin is None else origin
+    if isinstance(candidate, type):
+        if issubclass(candidate, Mapping):
+            return "mapping"
+        return "member" if issubclass(candidate, spec_types) else "other"
+    return "unknown"
 
-    The second type parameter of `GroupSpec` is the type of the whole members
-    mapping. Up to 0.11 it was the type of one member, and that spelling would
-    otherwise fail much later, at validation, with an error about the members.
+
+def members_type_argument(
+    class_name: str,
+    members_type: object,
+    namespace: Mapping[str, object],
+    spec_types: tuple[type, ...],
+) -> object:
     """
-    candidates = (
-        get_args(members_type)
-        if get_origin(members_type) in (Union, UnionType)
-        else (members_type,)
-    )
-    if any(isinstance(item, type) and issubclass(item, spec_types) for item in candidates):
-        msg = (
+    Check the members type a `GroupSpec` is parameterized with, and return the
+    type to parameterize with.
+
+    - `Any` becomes `Mapping[str, Any]`. pydantic does not enforce a type
+      parameter's bound, so a bare `Any` would let any value through as
+      `members`, and keep a reference to the caller's dict where a mapping
+      type copies it.
+    - The type of one member (a spec class, or a union or alias of spec
+      classes) becomes `Mapping[str, <that type>]`, with a
+      `DeprecationWarning`. That was the parameter's meaning up to 0.11, and
+      released packages spell it that way.
+    - Any other type that is not a mapping is refused with a `TypeError`.
+
+    `namespace` resolves names given as strings, and `spec_types` are the
+    classes a member may be. A type that cannot be told apart, such as a type
+    variable of a generic subclass, is passed through.
+    """
+    if members_type is Any:
+        return Mapping[str, Any]
+    kind = _members_type_kind(members_type, namespace, spec_types)
+    if kind == "member":
+        warnings.warn(
             f"{class_name} was parameterized with the member type {members_type!r}. "
-            "The second type parameter of GroupSpec is the type of the whole members "
-            "mapping: write Mapping[str, <member type>] for a group whose members are "
-            "all of one type, or a closed TypedDict to fix the member names."
+            "The second type parameter of GroupSpec is now the type of the whole members "
+            "mapping, and a member type there is deprecated: write "
+            "Mapping[str, <member type>]. It is read as that mapping for now, and will "
+            "be refused in a later release.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        # built at runtime from a value, so not written as a type expression
+        mapping: Any = Mapping
+        return mapping[str, members_type]
+    if kind == "other":
+        msg = (
+            f"{class_name} was parameterized with {members_type!r} as its members type, "
+            "which is not a mapping. The second type parameter of GroupSpec is the type "
+            "of the whole members mapping: write Mapping[str, <member type>] for a group "
+            "whose members are all of one type, or a closed TypedDict to fix the member "
+            "names."
         )
         raise TypeError(msg)
+    return members_type
 
 
 def model_like(a: BaseModel, b: BaseModel, exclude: IncEx = None, include: IncEx = None) -> bool:

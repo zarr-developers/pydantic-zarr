@@ -95,8 +95,8 @@ from pydantic_zarr.core import (
     flatten_extra_fields,
     guess_chunks,
     maybe_node,
+    members_type_argument,
     model_like,
-    refuse_member_type_as_members,
     resolve_member_path,
     split_store_key,
     stored_array,
@@ -1958,19 +1958,24 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
         requires a member still requires `members`.
     """
 
-    members: TMembers = Field(default={}, validate_default=True)
+    # the default is cast so that a checker does not solve TMembers from it:
+    # an unparameterized GroupSpec() then has the default members type
+    members: TMembers = Field(default=cast("TMembers", {}), validate_default=True)
 
     @classmethod
     def __class_getitem__(cls, typevar_values: Any) -> Any:
-        # the members parameter held the type of one member up to 0.11; that
-        # spelling is refused here, where it is written, instead of surfacing
-        # as a validation error about the members
-        values = typevar_values if isinstance(typevar_values, tuple) else (typevar_values,)
+        # the members type is checked where it is written: `Any` becomes any
+        # mapping, the type of one member (the parameter's meaning up to 0.11)
+        # becomes a mapping of it with a deprecation warning, and any other
+        # type that is not a mapping is refused
+        values = list(typevar_values if isinstance(typevar_values, tuple) else (typevar_values,))
         parameters = cls.__pydantic_generic_metadata__["parameters"]
-        for parameter, value in zip(parameters, values, strict=False):
+        for index, (parameter, value) in enumerate(zip(parameters, values, strict=False)):
             if parameter is TMembers:
-                refuse_member_type_as_members(cls.__name__, value, (ArraySpec, BaseGroupSpec))
-        return super().__class_getitem__(typevar_values)
+                values[index] = members_type_argument(
+                    cls.__name__, value, globals(), (ArraySpec, BaseGroupSpec)
+                )
+        return super().__class_getitem__(tuple(values))
 
     @model_validator(mode="after")
     def validate_member_names(self) -> Self:

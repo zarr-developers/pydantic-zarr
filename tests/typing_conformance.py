@@ -120,6 +120,13 @@ def widened_named_group_v2(group: GroupOfNamedV2) -> v2.AnyGroupSpec:
     return group
 
 
+def annotated_mixed_members_v3(array: v3.AnyArraySpec) -> v3.AnyArraySpec | v3.AnyGroupSpec:
+    """Arrays and groups mixed in one literal stay typed when the result is
+    annotated with the wide group type."""
+    group: v3.AnyGroupSpec = v3.GroupSpec(members={"a": array, "g": v3.GroupSpec()})
+    return group.members["a"]
+
+
 def narrowed_members_v3(group: GroupOfNarrowV3) -> Mapping[str, NarrowArrayV3]:
     """A narrowed members mapping reads back at its narrowed type."""
     return group.members
