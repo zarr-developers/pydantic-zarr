@@ -55,15 +55,6 @@ from zarr_metadata import (
 from zarr_metadata.model import ZarrV3ArrayMetadata as ZarrV3ArrayMetadataModel
 from zarr_metadata.model import ZarrV3GroupMetadata as ZarrV3GroupMetadataModel
 from zarr_metadata.model import validate_node_name_v3
-from zarr_metadata.v3.chunk_grid.regular import RegularChunkGridConfiguration
-from zarr_metadata.v3.chunk_key_encoding.default import (
-    DefaultChunkKeyEncodingConfiguration,
-    DefaultChunkKeyEncodingObject,
-)
-from zarr_metadata.v3.chunk_key_encoding.v2 import (
-    V2ChunkKeyEncodingConfiguration,
-    V2ChunkKeyEncodingObject,
-)
 from zarr_metadata.v3.definition import (
     ArrayExtraFieldDefinition,
     ChunkGridDefinition,
@@ -114,6 +105,9 @@ if TYPE_CHECKING:
     import zarr
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
+    from zarr_metadata.v3.chunk_key_encoding.default import (
+        DefaultChunkKeyEncodingObject,
+    )
     from zarr_metadata.v3.definition import ZarrV3Context
 
 
@@ -234,17 +228,6 @@ are read-only, keeps every typed codec object (`BytesCodecObject`,
 since TypedDict keys are invariant. A spec holds every codec as an object
 (`AnyNamedConfig`), since validation writes a bare name as ``{"name": ...}``.
 """
-
-# The structured Zarr V3 metadata types are defined once, by `zarr-metadata`;
-# the names this module exported before it delegated to that library are kept
-# as aliases. The aliased TypedDicts are *closed*: a member their definition
-# does not declare is rejected rather than silently dropped.
-RegularChunkingConfig = RegularChunkGridConfiguration
-RegularChunking = RegularChunkGridMetadata
-DefaultChunkKeyEncodingConfig = DefaultChunkKeyEncodingConfiguration
-DefaultChunkKeyEncoding = DefaultChunkKeyEncodingObject
-V2ChunkKeyEncodingConfig = V2ChunkKeyEncodingConfiguration
-V2ChunkKeyEncoding = V2ChunkKeyEncodingObject
 
 ChunkGridLike = RegularChunkGridMetadata | AnyNamedConfig | ZarrV3NamedConfigJSON
 """
