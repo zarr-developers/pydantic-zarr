@@ -814,20 +814,20 @@ class ArraySpecCreate(TypedDict, total=False):
     extra_fields: Mapping[str, ZarrV3ExtensionField]
 
 
-class ArraySpecUpdate(ArraySpecCreate, total=False):
+class ArraySpecUpdate(ArraySpecCreate, total=False, closed=True):
     """The fields an `ArraySpec.replace` call may replace."""
 
     chunk_grid: ChunkGridLike
 
 
-class BaseGroupSpecUpdate(TypedDict, total=False):
+class BaseGroupSpecUpdate(TypedDict, total=False, closed=True):
     """The fields a `BaseGroupSpec.replace` call may replace."""
 
     attributes: TBaseAttr
     extra_fields: Mapping[str, ZarrV3ExtensionField]
 
 
-class GroupSpecUpdate(TypedDict, total=False):
+class GroupSpecUpdate(TypedDict, total=False, closed=True):
     """The fields a `GroupSpec.replace` call may replace."""
 
     attributes: TBaseAttr
@@ -1071,8 +1071,10 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         except MetadataValidationError as e:
             raise ValueError(format_problems(e)) from e
 
+    # No return annotation, as on `ExtraFieldsBase`: pydantic would take it as
+    # the serialization schema in place of the fields' schema.
     @model_serializer(mode="wrap")
-    def _serialize_document(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
+    def _serialize_document(self, handler: SerializerFunctionWrapHandler):  # noqa: ANN202
         """
         Omit `dimension_names` when it is `None`: the Zarr V3 spec allows the
         key to be absent, not null. This is a model serializer rather than a
@@ -1977,7 +1979,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
         return self
 
     @override
-    def replace(self, **changes: Unpack[GroupSpecUpdate]) -> Self:  # type: ignore[override]
+    def replace(self, **changes: Unpack[GroupSpecUpdate]) -> Self:
         """
         Return a revalidated copy of this model with `changes` applied.
 
