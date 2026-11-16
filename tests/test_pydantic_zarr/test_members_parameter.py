@@ -5,12 +5,13 @@ parameter is the type of the whole `members` mapping.
 
 from __future__ import annotations
 
+import pickle
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Annotated, Any, Generic, NotRequired, Union
 
 import pytest
 from pydantic import BaseModel, ConfigDict, ValidationError
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, TypeVar
 
 from pydantic_zarr import v2, v3
 
@@ -81,11 +82,37 @@ class DatasetV3(v3.GroupSpec[Any, v3.TMembers], Generic[v3.TMembers]):
     """A generic subclass that passes the members type through."""
 
 
+TOwnMembers = TypeVar("TOwnMembers", bound=Mapping[str, Any])
+
+
+class OwnDatasetV2(v2.GroupSpec[Any, TOwnMembers], Generic[TOwnMembers]):
+    """A generic subclass with a members type variable of its own."""
+
+
+class OwnDatasetV3(v3.GroupSpec[Any, TOwnMembers], Generic[TOwnMembers]):
+    """A generic subclass with a members type variable of its own."""
+
+
+# parameterized at module level, as a group class usually is, so that pydantic
+# registers the classes where pickle looks them up
+NamedGroupV2 = v2.GroupSpec[Any, NamedV2]
+NamedGroupV3 = v3.GroupSpec[Any, NamedV3]
+
 OPTIONAL_NAMES = {v2: OptionalNamesV2, v3: OptionalNamesV3}
+OWN_DATASET: dict[Any, Any] = {v2: OwnDatasetV2, v3: OwnDatasetV3}
+NAMED_GROUP: dict[Any, Any] = {v2: NamedGroupV2, v3: NamedGroupV3}
 NAMED_AND_EXTRA = {v2: NamedAndExtraV2, v3: NamedAndExtraV3}
 DATASET: dict[Any, Any] = {v2: DatasetV2, v3: DatasetV3}
 
-KINDS = ["default", "mapping", "named", "optional names", "named and extra", "subclass"]
+KINDS = [
+    "default",
+    "mapping",
+    "named",
+    "optional names",
+    "named and extra",
+    "subclass",
+    "subclass with its own type variable",
+]
 
 
 def _members_case(module: ModuleType, named: type, kind: str) -> tuple[Any, dict[str, Any]]:
@@ -104,6 +131,10 @@ def _members_case(module: ModuleType, named: type, kind: str) -> tuple[Any, dict
             {"g": group, "s0": array, "s1": array},
         ),
         "subclass": (DATASET[module][named], {"a": array, "g": group}),
+        "subclass with its own type variable": (
+            OWN_DATASET[module][named],
+            {"a": array, "g": group},
+        ),
     }[kind]
 
 
@@ -115,7 +146,8 @@ def test_members_type_parameter(module: ModuleType, named: type, kind: str) -> N
     a group holds any arrays and groups. A `Mapping` constrains the type of
     every member. A closed `TypedDict` fixes the member names and the type of
     each; its names may be optional, and `extra_items` types the members it
-    does not name. A generic subclass passes the members type through.
+    does not name. A generic subclass passes the members type through, with
+    the class's type variable or one of its own.
 
     In every case the members validate from specs and from their dumped
     documents, read back as specs, and survive the operations that build a
@@ -136,6 +168,13 @@ def test_members_type_parameter(module: ModuleType, named: type, kind: str) -> N
     assert spec.replace(attributes={"k": 1}).members == members
     assert spec.like(spec.replace(members=members))
     assert spec.get_path(next(iter(members))) == next(iter(members.values()))
+
+
+@VERSIONS
+def test_parameterized_group_pickles(module: ModuleType, named: type) -> None:
+    """A group class parameterized at module level round-trips through pickle."""
+    spec = NAMED_GROUP[module](members={"a": _array(module), "g": module.GroupSpec()})
+    assert pickle.loads(pickle.dumps(spec)) == spec
 
 
 @VERSIONS
@@ -251,6 +290,35 @@ def test_member_type_as_members_type_is_deprecated(
     assert isinstance(spec.members["a"], module.ArraySpec)
     with pytest.raises(ValidationError, match="members"):
         cls(members={"a": 1})
+
+
+@VERSIONS
+def test_member_type_as_forward_references_is_deprecated(module: ModuleType, named: type) -> None:
+    """
+    A member type given as forward references is deprecated the same way.
+    The released ome-zarr-models spells its v0.5 and v0.6 groups like this:
+    dotted names that only the code writing the parameterization can resolve.
+    """
+    import pydantic_zarr  # noqa: F401 (the forward references below name it)
+
+    name = module.__name__
+    with pytest.warns(DeprecationWarning, match=r"Mapping\[str, <member type>\]"):
+
+        class Legacy(module.GroupSpec[Any, Union[f"{name}.GroupSpec", f"{name}.ArraySpec"]]):  # type: ignore[misc,name-defined]
+            """A subclass of the parameterization, as ome-zarr-models defines its groups."""
+
+    assert isinstance(Legacy(members={"a": _array(module)}).members["a"], module.ArraySpec)
+
+
+@VERSIONS
+def test_member_type_through_a_subclass_type_variable_is_deprecated(
+    module: ModuleType, named: type
+) -> None:
+    """The members type is checked on the class that results, so a member type
+    given through a subclass's own type variable is deprecated the same way."""
+    with pytest.warns(DeprecationWarning, match=r"Mapping\[str, <member type>\]"):
+        cls = OWN_DATASET[module][module.ArraySpec]
+    assert isinstance(cls(members={"a": _array(module)}).members["a"], module.ArraySpec)
 
 
 @VERSIONS

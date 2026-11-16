@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import math
+import sys
 import warnings
 from collections.abc import Iterator, Mapping, Sequence
+from copy import copy
 from functools import cache
+from pathlib import Path
 from types import MappingProxyType, UnionType
 from typing import (
     TYPE_CHECKING,
@@ -27,6 +30,7 @@ from typing import (
 
 import numpy as np
 import numpy.typing as npt
+import pydantic
 from pydantic import (
     AliasChoices,
     BaseModel,
@@ -659,6 +663,14 @@ def ensure_members_mapping(members: object) -> None:
         raise ValueError(msg)
 
 
+# a deprecation raised while a class is being created is attributed to the
+# code that created the class, not to pydantic's or this package's machinery
+_DEPRECATION_SKIP_PREFIXES = (
+    str(Path(pydantic.__file__).parent),
+    str(Path(__file__).parent),
+)
+
+
 def _members_type_kind(
     members_type: object, namespace: Mapping[str, object], spec_types: tuple[type, ...]
 ) -> Literal["mapping", "member", "other", "unknown"]:
@@ -698,56 +710,75 @@ def _members_type_kind(
     return "unknown"
 
 
-def members_type_argument(
-    class_name: str,
-    members_type: object,
-    namespace: Mapping[str, object],
-    spec_types: tuple[type, ...],
-) -> object:
+def normalize_members_annotation(cls: type[BaseModel], spec_types: tuple[type, ...]) -> None:
     """
-    Check the members type a `GroupSpec` is parameterized with, and return the
-    type to parameterize with.
+    Check the members type of a newly created `GroupSpec` class, and replace
+    it where it is not a mapping type.
+
+    This runs when the class is created (a subclass, or a parameterization of
+    the generic class), on the annotation of the `members` field as pydantic
+    resolved it, so it sees the same type whether it was given as a type
+    argument, through a subclass's own type variable, through an alias, or as
+    a forward reference.
 
     - `Any` becomes `Mapping[str, Any]`. pydantic does not enforce a type
       parameter's bound, so a bare `Any` would let any value through as
       `members`, and keep a reference to the caller's dict where a mapping
       type copies it.
-    - The type of one member (a spec class, or a union or alias of spec
-      classes) becomes `Mapping[str, <that type>]`, with a
-      `DeprecationWarning`. That was the parameter's meaning up to 0.11, and
-      released packages spell it that way.
+    - The type of one member (a spec class, or a union of spec classes)
+      becomes `Mapping[str, <that type>]`, with a `DeprecationWarning`. That
+      was the parameter's meaning up to 0.11, and released packages spell it
+      that way.
     - Any other type that is not a mapping is refused with a `TypeError`.
 
-    `namespace` resolves names given as strings, and `spec_types` are the
-    classes a member may be. A type that cannot be told apart, such as a type
-    variable of a generic subclass, is passed through.
+    A type that cannot be told apart, such as a type variable still to be
+    given, is left alone. `spec_types` are the classes a member may be.
     """
+    field = cls.__pydantic_fields__.get("members")
+    if field is None:
+        return
+    members_type = field.annotation
+    # names a forward reference may use: this package (released packages write
+    # dotted names such as "pydantic_zarr.v3.ArraySpec"), the module of the
+    # class, and the namespace the class was created in
+    namespace = {
+        "pydantic_zarr": sys.modules["pydantic_zarr"],
+        **vars(sys.modules[cls.__module__]),
+        **(cls.__pydantic_parent_namespace__ or {}),
+    }
+    mapping: Any = Mapping
     if members_type is Any:
-        return Mapping[str, Any]
-    kind = _members_type_kind(members_type, namespace, spec_types)
-    if kind == "member":
+        replacement = mapping[str, Any]
+    else:
+        kind = _members_type_kind(members_type, namespace, spec_types)
+        if kind == "other":
+            msg = (
+                f"{cls.__name__} has the members type {members_type!r}, which is not a "
+                "mapping. The second type parameter of GroupSpec is the type of the "
+                "whole members mapping: write Mapping[str, <member type>] for a group "
+                "whose members are all of one type, or a closed TypedDict to fix the "
+                "member names."
+            )
+            raise TypeError(msg)
+        if kind != "member":
+            return
         warnings.warn(
-            f"{class_name} was parameterized with the member type {members_type!r}. "
-            "The second type parameter of GroupSpec is now the type of the whole members "
-            "mapping, and a member type there is deprecated: write "
+            f"{cls.__name__} has the member type {members_type!r} as its members type. "
+            "The second type parameter of GroupSpec is now the type of the whole "
+            "members mapping, and a member type there is deprecated: write "
             "Mapping[str, <member type>]. It is read as that mapping for now, and will "
             "be refused in a later release.",
             DeprecationWarning,
-            stacklevel=3,
+            stacklevel=1,
+            skip_file_prefixes=_DEPRECATION_SKIP_PREFIXES,
         )
-        # built at runtime from a value, so not written as a type expression
-        mapping: Any = Mapping
-        return mapping[str, members_type]
-    if kind == "other":
-        msg = (
-            f"{class_name} was parameterized with {members_type!r} as its members type, "
-            "which is not a mapping. The second type parameter of GroupSpec is the type "
-            "of the whole members mapping: write Mapping[str, <member type>] for a group "
-            "whose members are all of one type, or a closed TypedDict to fix the member "
-            "names."
-        )
-        raise TypeError(msg)
-    return members_type
+        replacement = mapping[str, members_type]
+    # a copy, so that a field object shared with a parent class is not changed
+    field = copy(field)
+    field.annotation = replacement
+    cls.__pydantic_fields__["members"] = field
+    # forward references that are still unresolved are left for a later rebuild
+    cls.model_rebuild(force=True, raise_errors=False)
 
 
 def model_like(a: BaseModel, b: BaseModel, exclude: IncEx = None, include: IncEx = None) -> bool:

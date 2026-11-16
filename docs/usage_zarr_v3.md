@@ -169,7 +169,7 @@ Notes for type checkers and for `TypedDict` members:
   `GroupSpec[Attrs, Mapping[str, MyArraySpec]]`. The old spelling still works,
   read as that mapping, with a `DeprecationWarning`; type checkers refuse it.
   Any other type that is not a mapping raises a `TypeError` when the class is
-  parameterized.
+  created.
 
 ## Creating array specs
 

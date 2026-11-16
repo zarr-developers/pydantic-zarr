@@ -56,8 +56,8 @@ from pydantic_zarr.core import (
     ensure_members_mapping,
     guess_chunks,
     maybe_node,
-    members_type_argument,
     model_like,
+    normalize_members_annotation,
     parse_dtype_v2,
     resolve_member_path,
     split_store_key,
@@ -946,19 +946,13 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
     members: TMembers = Field(default=cast("TMembers", {}), validate_default=True)
 
     @classmethod
-    def __class_getitem__(cls, typevar_values: Any) -> Any:
-        # the members type is checked where it is written: `Any` becomes any
-        # mapping, the type of one member (the parameter's meaning up to 0.11)
-        # becomes a mapping of it with a deprecation warning, and any other
-        # type that is not a mapping is refused
-        values = list(typevar_values if isinstance(typevar_values, tuple) else (typevar_values,))
-        parameters = cls.__pydantic_generic_metadata__["parameters"]
-        for index, (parameter, value) in enumerate(zip(parameters, values, strict=False)):
-            if parameter is TMembers:
-                values[index] = members_type_argument(
-                    cls.__name__, value, globals(), (ArraySpec, BaseGroupSpec)
-                )
-        return super().__class_getitem__(tuple(values))
+    def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
+        super().__pydantic_init_subclass__(**kwargs)
+        # the members type is checked when the class is created: `Any` becomes
+        # any mapping, the type of one member (the parameter's meaning up to
+        # 0.11) becomes a mapping of it with a deprecation warning, and any
+        # other type that is not a mapping is refused
+        normalize_members_annotation(cls, (ArraySpec, BaseGroupSpec))
 
     @model_validator(mode="after")
     def validate_member_names(self) -> Self:
