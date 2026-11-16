@@ -67,18 +67,6 @@ def write_hierarchy(
 
 
 # --8<-- [start:read]
-def repaired(document: object) -> object:
-    """
-    `document` as a reader takes it: zarr-python before 3.4 writes
-    `"consolidated_metadata": null` into every group's `zarr.json` to say the
-    group has none, and the readers refuse a null there, so a null is dropped
-    as the absence it stands for. Any other document is returned unchanged.
-    """
-    if isinstance(document, dict) and document.get("consolidated_metadata", {}) is None:
-        return {key: value for key, value in document.items() if key != "consolidated_metadata"}
-    return document
-
-
 def read_documents(node: zarr.Array | zarr.Group) -> dict[str, object]:
     """
     The stored metadata documents of `node` and, for a group, of every node
@@ -104,7 +92,8 @@ def read_documents(node: zarr.Array | zarr.Group) -> dict[str, object]:
                 continue
             document = json.loads(buffer.to_bytes())
             if isinstance(document, dict):
-                # also the null zarr-python before 3.4 writes (see `repaired`)
+                # with the copy goes the null zarr-python before 3.4 writes, which
+                # `v3.normalize_group_metadata` repairs for readers that keep it
                 document.pop("consolidated_metadata", None)
             documents[f"{member_path}/{name}" if member_path else name] = document
     return documents
