@@ -273,6 +273,10 @@ filterwarnings = [
     # numpy 2.5 deprecates unit-less np.datetime64("NaT") / np.timedelta64("NaT"), which zarr-python
     # and xarray still call internally. Remove once those libraries no longer trigger the warning.
     "ignore:The 'generic' unit for NumPy timedelta is deprecated:DeprecationWarning",
+    # the experimental module warns once, when first imported; its own tests
+    # still exercise it until it is removed in 0.13 (test_deprecated_import
+    # checks the warning itself)
+    "ignore:`pydantic_zarr.experimental` is deprecated:DeprecationWarning",
 ]
 
 [tool.repo-review]

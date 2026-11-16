@@ -1,5 +1,11 @@
 # Experimental Module
 
+> [!WARNING]
+> This module is deprecated and will be removed in pydantic-zarr 0.13; importing it
+> emits a `DeprecationWarning`. Use `pydantic_zarr.v2` and `pydantic_zarr.v3` instead:
+> they define `BaseGroupSpec`, and a subclass of their `ArraySpec` or `GroupSpec` can
+> annotate `attributes` and `members` directly, as the experimental classes do.
+
 This module contains refactored versions of the core pydantic-zarr modules with breaking API changes. It is provided for early testing and feedback on proposed changes.
 
 ## What's Different
