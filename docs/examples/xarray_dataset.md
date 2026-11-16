@@ -20,8 +20,8 @@ coordinates, a cross-member dimension-consistency validator, and a closed
 member set for one concrete dataset. The same model classes validate real
 xarray-written stores, read back with the `read_documents` helper from
 [`examples/zarr_io.py`](https://github.com/zarr-developers/pydantic-zarr/blob/main/examples/zarr_io.py) and `from_stored_metadata_json`. (xarray also writes a
-`consolidated_metadata` block into the root `zarr.json` by default;
-pydantic-zarr does not model consolidated metadata yet.)
+`consolidated_metadata` block into the root `zarr.json` by default, which
+`read_documents` leaves out.)
 
 All the code on this page comes from one runnable script,
 `examples/xarray_dataset.py`, which executes top to bottom: the claims below
