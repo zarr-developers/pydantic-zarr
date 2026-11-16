@@ -939,7 +939,7 @@ name = "itkwasm-downsample-emscripten"
 version = "2.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "itkwasm" },
+    { name = "itkwasm", marker = "sys_platform == 'emscripten'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/26/35/09d599175fc8c76de87894324520e1278d7e29d34584d5f26c5f7881dab6/itkwasm_downsample_emscripten-2.0.2.tar.gz", hash = "sha256:5d7cae3e26a23fa50890e5e50bf5b38df448a1b7f3056ed24202db04557ecee4", size = 132743, upload-time = "2026-08-12T20:29:25.022Z" }
 wheels = [
@@ -951,8 +951,8 @@ name = "itkwasm-downsample-wasi"
 version = "2.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "importlib-resources" },
-    { name = "itkwasm" },
+    { name = "importlib-resources", marker = "sys_platform != 'emscripten'" },
+    { name = "itkwasm", marker = "sys_platform != 'emscripten'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/21/b4/ad221de375a4a0655c26b8560fda9d6a310f62ecbde7887bcb318aeaabd9/itkwasm_downsample_wasi-2.0.2.tar.gz", hash = "sha256:b0f60ee4a243ecfb897406a8086c12563d1844cf665722994d0c95a82601b785", size = 9224204, upload-time = "2026-08-12T20:29:02.912Z" }
 wheels = [
@@ -2340,7 +2340,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.12" },
     { name = "typing-extensions", specifier = ">=4.6" },
     { name = "zarr", marker = "extra == 'zarr'", specifier = ">=3.0.0" },
-    { name = "zarr-metadata", specifier = ">=0.8.0" },
+    { name = "zarr-metadata", specifier = ">=0.9.0" },
 ]
 provides-extras = ["zarr"]
 
@@ -2354,7 +2354,7 @@ dev = [
     { name = "pytest-cov" },
     { name = "pytest-examples" },
     { name = "xarray", specifier = ">=2025.10.0" },
-    { name = "zarr-metadata", extras = ["testing"], specifier = ">=0.8" },
+    { name = "zarr-metadata", extras = ["testing"], specifier = ">=0.9" },
 ]
 docs = [
     { name = "coverage" },
@@ -2371,7 +2371,7 @@ docs = [
     { name = "towncrier" },
     { name = "xarray", specifier = ">=2025.10.0" },
     { name = "zarr", specifier = ">=3.1.0" },
-    { name = "zarr-metadata", extras = ["testing"], specifier = ">=0.8" },
+    { name = "zarr-metadata", extras = ["testing"], specifier = ">=0.9" },
 ]
 test = [
     { name = "coverage" },
@@ -2382,7 +2382,7 @@ test = [
     { name = "pytest-cov" },
     { name = "pytest-examples" },
     { name = "xarray", specifier = ">=2025.10.0" },
-    { name = "zarr-metadata", extras = ["testing"], specifier = ">=0.8" },
+    { name = "zarr-metadata", extras = ["testing"], specifier = ">=0.9" },
 ]
 test-base = [
     { name = "coverage" },
@@ -2392,7 +2392,7 @@ test-base = [
     { name = "pytest-cov" },
     { name = "pytest-examples" },
     { name = "xarray", specifier = ">=2025.10.0" },
-    { name = "zarr-metadata", extras = ["testing"], specifier = ">=0.8" },
+    { name = "zarr-metadata", extras = ["testing"], specifier = ">=0.9" },
 ]
 types = [
     { name = "coverage" },
@@ -2406,7 +2406,7 @@ types = [
     { name = "pytest-examples" },
     { name = "ty", specifier = "==0.0.93" },
     { name = "xarray", specifier = ">=2025.10.0" },
-    { name = "zarr-metadata", extras = ["testing"], specifier = ">=0.8" },
+    { name = "zarr-metadata", extras = ["testing"], specifier = ">=0.9" },
 ]
 
 [[package]]
@@ -3272,15 +3272,15 @@ wheels = [
 
 [[package]]
 name = "zarr-metadata"
-version = "0.8.0"
+version = "0.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-types" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/95/e2/8e1f15171c0a21e9fda74e17ba6ed5820dc2ee10e500d2594ceec4eaf1ff/zarr_metadata-0.8.0.tar.gz", hash = "sha256:cd91855317118014f84c670a6f73c568cafdc781750e4f071651084a73b5c71f", size = 607925, upload-time = "2026-11-13T08:15:50.448Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7f/5d/5f1778697e0022d5cf7b215554a96827949a1d065b51913059b83b770ab3/zarr_metadata-0.9.0.tar.gz", hash = "sha256:7c7612ccb0177f2d1abb05cc38cdb89a54f31558edccf78d848a1c68d95415f7", size = 616077, upload-time = "2026-11-16T13:12:44.238Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9a/da/f7d2d72d44a6bd4f361d9e6b4f81166fed0254ff3856573ca2949c0eb150/zarr_metadata-0.8.0-py3-none-any.whl", hash = "sha256:6cb20d7c96665dbf5ba2eaebe49f9a2f416a73b8f8dbb2e0ed95ece67cf5a0b6", size = 336024, upload-time = "2026-11-13T08:15:49.029Z" },
+    { url = "https://files.pythonhosted.org/packages/35/26/c1eb0a10cbbe9cc7d759ee66261f2461f09e964359dd4d3e6a0c74824bba/zarr_metadata-0.9.0-py3-none-any.whl", hash = "sha256:61714b08a7eacd4bef4e1ccc485e331de2ac5b7afda624094a711e474641338a", size = 339074, upload-time = "2026-11-16T13:12:42.616Z" },
 ]
 
 [package.optional-dependencies]
@@ -3293,7 +3293,7 @@ name = "zarrista"
 version = "0.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "zarr-metadata" },
+    { name = "zarr-metadata", marker = "sys_platform != 'emscripten'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d7/c8/0f2c439bf922685b7febd3add98093e778d9f00f53bc03a1d9fdcc906ce3/zarrista-0.1.0.tar.gz", hash = "sha256:6b2a7a05a4abb062824cee8fad023c6b34041b73b600733ea4c1404fd243a669", size = 375969, upload-time = "2026-08-13T14:44:45.517Z" }
 wheels = [

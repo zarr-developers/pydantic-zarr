@@ -15,7 +15,6 @@ from typing import (
     Union,
     Unpack,
     cast,
-    get_args,
     overload,
     override,
 )
@@ -34,7 +33,10 @@ from pydantic import (
 from pydantic.functional_validators import BeforeValidator
 from typing_extensions import TypedDict, TypeIs, TypeVar
 from zarr_metadata import (
+    ZARR_V2_ARRAY_DEFAULT_DIMENSION_SEPARATOR,
+    ZARR_V2_ARRAY_DIMENSION_SEPARATOR,
     ZARR_V2_ARRAY_METADATA_STORE_KEY,
+    ZARR_V2_ARRAY_ORDER,
     ZARR_V2_ATTRIBUTES_STORE_KEY,
     ZARR_V2_GROUP_METADATA_STORE_KEY,
     JSONValue,
@@ -49,6 +51,10 @@ from zarr_metadata import (
     ZarrV2ZGroupJSON,
 )
 from zarr_metadata.model import ZarrV2ArrayMetadata as ZarrV2ArrayMetadataModel
+from zarr_metadata.v2.array import (
+    is_zarr_v2_array_dimension_separator,
+    is_zarr_v2_array_order,
+)
 
 from pydantic_zarr._metadata import format_problems
 from pydantic_zarr.core import (
@@ -211,11 +217,12 @@ def parse_dimension_separator(data: object) -> DimensionSeparator:
     -------
     Literal["/", "."]
     """
-    if data is None or data == ".":
-        return "."
-    if data == "/":
-        return "/"
-    raise ValueError(f'Invalid data, expected one of ("/", ".", None), got {data}')
+    if data is None:
+        return ZARR_V2_ARRAY_DEFAULT_DIMENSION_SEPARATOR
+    if is_zarr_v2_array_dimension_separator(data):
+        return data
+    expected = (*ZARR_V2_ARRAY_DIMENSION_SEPARATOR, None)
+    raise ValueError(f"Invalid data, expected one of {expected}, got {data}")
 
 
 CodecDict = Annotated[dict[str, object], BeforeValidator(dictify_codec)]
@@ -608,7 +615,7 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
             from zarr.core.buffer import default_buffer_prototype
 
             stored_meta = array.metadata.to_buffer_dict(prototype=default_buffer_prototype())
-            meta_json = json.loads(stored_meta[".zarray"].to_bytes()) | {
+            meta_json = json.loads(stored_meta[ZARR_V2_ARRAY_METADATA_STORE_KEY].to_bytes()) | {
                 "attributes": array.attrs.asdict()
             }
         else:
@@ -1946,10 +1953,9 @@ def auto_order(data: object) -> MemoryOrder:
     """
     if hasattr(data, "order"):
         order = read_attribute(data, "order")
-        if order in get_args(MemoryOrder):
-            return cast("MemoryOrder", order)
-        else:
-            raise ValueError(f"Order attribute not in {get_args(MemoryOrder)}")
+        if is_zarr_v2_array_order(order):
+            return order
+        raise ValueError(f"Order attribute not in {ZARR_V2_ARRAY_ORDER}")
     return "C"
 
 
@@ -1959,10 +1965,11 @@ def auto_dimension_separator(data: object) -> DimensionSeparator:
     """
     if hasattr(data, "dimension_separator"):
         separator = read_attribute(data, "dimension_separator")
-        if separator in get_args(DimensionSeparator):
-            return cast("DimensionSeparator", separator)
-        else:
-            raise ValueError(f"Dimension separator attribute not in {get_args(DimensionSeparator)}")
+        if is_zarr_v2_array_dimension_separator(separator):
+            return separator
+        raise ValueError(
+            f"Dimension separator attribute not in {ZARR_V2_ARRAY_DIMENSION_SEPARATOR}"
+        )
     return "/"
 
 

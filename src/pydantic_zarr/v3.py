@@ -38,6 +38,8 @@ from pydantic import (
 )
 from typing_extensions import TypedDict, TypeIs, TypeVar
 from zarr_metadata import (
+    DEFAULT_CHUNK_KEY_ENCODING_DEFAULT_SEPARATOR,
+    DEFAULT_CHUNK_KEY_ENCODING_NAME,
     ZARR_V3_ARRAY_METADATA_STORE_KEY,
     ZARR_V3_CONSOLIDATED_METADATA_KEY,
     ZARR_V3_GROUP_METADATA_STORE_KEY,
@@ -51,11 +53,13 @@ from zarr_metadata import (
     ZarrV3ExtensionField,
     ZarrV3GroupMetadataJSON,
     ZarrV3NamedConfigJSON,
+    ZarrV3NodeType,
 )
 from zarr_metadata.model import ZarrV3ArrayMetadata as ZarrV3ArrayMetadataModel
 from zarr_metadata.model import ZarrV3GroupMetadata as ZarrV3GroupMetadataModel
 from zarr_metadata.model import validate_node_name_v3
 from zarr_metadata.typed_json import check as check_json
+from zarr_metadata.v3 import is_zarr_v3_node_type
 from zarr_metadata.v3.definition import (
     ArrayExtraFieldDefinition,
     ChunkGridDefinition,
@@ -161,7 +165,7 @@ TAttr = TypeVar("TAttr", bound=TBaseAttr, default=TBaseAttr, covariant=True)
 TMembers = TypeVar("TMembers", bound=TBaseMembers, default=TBaseMembers, covariant=True)
 TDefault = TypeVar("TDefault")
 
-NodeType = Literal["group", "array"]
+NodeType = ZarrV3NodeType
 
 type ZarrV3StoredDocumentJSON = ZarrV3ArrayMetadataJSON | ZarrV3GroupMetadataJSON
 """Any document a Zarr V3 hierarchy stores: a node's `zarr.json`."""
@@ -616,8 +620,8 @@ _VARIABLE_LENGTH_DATA_TYPES: frozenset[str] = frozenset(
 _VARIABLE_LENGTH_NOMINAL_ITEM_SIZE = 8
 
 _DEFAULT_CHUNK_KEY_ENCODING: DefaultChunkKeyEncodingObject = {
-    "name": "default",
-    "configuration": {"separator": "/"},
+    "name": DEFAULT_CHUNK_KEY_ENCODING_NAME,
+    "configuration": {"separator": DEFAULT_CHUNK_KEY_ENCODING_DEFAULT_SEPARATOR},
 }
 """
 The chunk key encoding `create_default` gives an array: the `default` encoding,
@@ -1195,7 +1199,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
 
         chunk_key_actual: ChunkKeyEncodingLike
         if chunk_key_encoding == "auto":
-            chunk_key_actual = {"name": "default", "configuration": {"separator": "/"}}
+            chunk_key_actual = _DEFAULT_CHUNK_KEY_ENCODING
         else:
             chunk_key_actual = chunk_key_encoding
 
@@ -2449,7 +2453,7 @@ def _stored_nodes(data: Mapping[str, object]) -> StoredNodes:
     `"array"` or `"group"`, and `None` otherwise. Raises `ValueError` naming a
     malformed key, or a key other than a node's `zarr.json`.
     """
-    nodes: dict[str, tuple[Literal["array", "group"] | None, object]] = {}
+    nodes: dict[str, tuple[ZarrV3NodeType | None, object]] = {}
     for key, document in data.items():
         path, name = split_store_key(key)
         if name != ZARR_V3_GROUP_METADATA_STORE_KEY:
@@ -2460,7 +2464,7 @@ def _stored_nodes(data: Mapping[str, object]) -> StoredNodes:
             raise ValueError(msg)
         node_type = document.get("node_type") if isinstance(document, Mapping) else None
         nodes[path] = (
-            node_type if node_type == "array" or node_type == "group" else None,
+            node_type if is_zarr_v3_node_type(node_type) else None,
             document,
         )
     return nodes
@@ -2839,7 +2843,10 @@ def auto_chunk_key_encoding(data: object) -> AnyNamedConfig:
                 msg = f"Cannot read the chunk key encoding of {metadata!r}."
                 raise TypeError(msg)
             return _as_named_config(document["chunk_key_encoding"])
-    return {"name": "default", "configuration": {"separator": "/"}}
+    return {
+        "name": DEFAULT_CHUNK_KEY_ENCODING_NAME,
+        "configuration": {"separator": DEFAULT_CHUNK_KEY_ENCODING_DEFAULT_SEPARATOR},
+    }
 
 
 def _checked_declaration(declaration: str | Mapping[str, object]) -> ZarrV3DeclarationJSON:

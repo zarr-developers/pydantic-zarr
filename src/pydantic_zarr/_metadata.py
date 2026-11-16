@@ -20,6 +20,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
+from zarr_metadata.pydantic import CONTEXT_KEY
 from zarr_metadata.v3.definition import (
     CORE_AND_EXTENSIONS_CONTEXT,
     CORE_CONTEXT,
@@ -38,12 +39,10 @@ __all__ = [
     "scope_from_context",
 ]
 
-CONTEXT_KEY = "zarr_metadata_context"
-"""
-The key of a mapping validation context under which the scope to read Zarr V3
-metadata in sits. The same key `zarr_metadata.pydantic` uses, so one validation
-context serves models holding field types from either library.
-"""
+# `CONTEXT_KEY` is the key of a mapping validation context under which the
+# scope to read Zarr V3 metadata in sits. It is `zarr_metadata.pydantic`'s own
+# key, so one validation context serves models holding field types from either
+# library.
 
 
 def scope_from_context(context: object) -> ZarrV3Context | None:
