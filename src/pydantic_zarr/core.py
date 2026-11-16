@@ -684,6 +684,9 @@ def _members_type_kind(
         except Exception:
             return "unknown"
         return _members_type_kind(resolved["value"], namespace)
+    if members_type is Any:
+        # `Any` is a class, but it is no claim about the members type
+        return "unknown"
     origin = get_origin(members_type)
     if origin is Annotated:
         return _members_type_kind(get_args(members_type)[0], namespace)
@@ -722,7 +725,7 @@ def check_members_type(cls: type[BaseModel]) -> None:
         module = sys.modules.get(cls.__module__)
         namespace = vars(module) if module is not None else {}
         message = None
-        if members_type is not Any and _members_type_kind(members_type, namespace) == "other":
+        if _members_type_kind(members_type, namespace) == "other":
             message = (
                 f"{cls.__name__} has the members type {members_type!r}, which is not a "
                 "mapping. The second type parameter of GroupSpec is the type of the "

@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Annotated, Any, Generic, NotRequired, Union
 
 import pytest
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, create_model
 from typing_extensions import TypedDict, TypeVar
 
 from pydantic_zarr import v2, v3
@@ -177,15 +177,23 @@ def test_parameterized_group_pickles(module: ModuleType, named: type) -> None:
     assert pickle.loads(pickle.dumps(spec)) == spec
 
 
+type AnyAlias = Any
+
+
 @VERSIONS
-def test_any_members_type_copies_the_members(module: ModuleType, named: type) -> None:
+@pytest.mark.parametrize(
+    "members_type", [Any, AnyAlias, Annotated[Any, "a note"]], ids=["Any", "alias", "annotated"]
+)
+def test_any_members_type_copies_the_members(
+    module: ModuleType, named: type, members_type: Any
+) -> None:
     """
-    `Any` as the members type means any mapping. The spec holds its own copy
-    of the members, so a later change to the mapping it was built from does
-    not reach it.
+    `Any` as the members type, directly or through an alias or `Annotated`,
+    means any mapping. The spec holds its own copy of the members, so a later
+    change to the mapping it was built from does not reach it.
     """
     members = {"a": _array(module)}
-    spec = module.GroupSpec[Any, Any](members=members)
+    spec = module.GroupSpec[Any, members_type](members=members)
     members["b/c"] = _array(module)
     assert list(spec.members) == ["a"]
 
@@ -281,9 +289,9 @@ def _non_mapping_type(module: ModuleType, spelling: str) -> Any:
 # "ArraySpec" names the spec class only for the generic class itself
 REFUSED = [
     (spelling, through)
-    for through in ("the class", "a subclass type variable")
+    for through in ("the class", "a subclass type variable", "a field override")
     for spelling in NON_MAPPING_SPELLINGS
-    if (spelling, through) != ("array by name", "a subclass type variable")
+    if spelling != "array by name" or through == "the class"
 ]
 
 
@@ -297,19 +305,40 @@ def test_non_mapping_members_type_is_refused(
     first validates members, with a `TypeError` that says what to write.
     Up to 0.11 the second parameter was the type of one member, so a spec
     class is the common case; it is recognized through unions, aliases,
-    `Annotated` and names given as strings, and through a subclass's own type
-    variable.
+    `Annotated` and names given as strings, and however the type reaches the
+    `members` field: as a type argument, through a subclass's own type
+    variable, or by a field override.
     """
     members_type = _non_mapping_type(module, spelling)
     if through == "the class":
         cls = module.GroupSpec[Any, members_type]
-    else:
+    elif through == "a subclass type variable":
         cls = OWN_DATASET[module][members_type]
+    else:
+        cls = create_model("Overriding", __base__=module.GroupSpec, members=(members_type, ...))
     with pytest.raises(TypeError, match=r"whole members\s+mapping"):
         cls(members={"a": _array(module)})
-    # the refusal does not depend on the value given, and repeats
+    # the refusal does not depend on the value given, and repeats (a field
+    # override here has no default, so the value is given again)
+    again = {"members": {}} if through == "a field override" else {}
     with pytest.raises(TypeError, match=r"Mapping\[str, <member type>\]"):
-        cls()
+        cls(**again)
+
+
+@VERSIONS
+def test_non_mapping_members_type_resolved_later_is_refused(
+    module: ModuleType, named: type
+) -> None:
+    """A member type that names a class defined afterwards is refused once
+    the name resolves and the class validates members."""
+    cls = module.GroupSpec[Any, Union["DefinedLater", module.ArraySpec]]
+
+    class DefinedLater(module.GroupSpec):  # type: ignore[misc,name-defined]
+        """The class the forward reference names."""
+
+    cls.model_rebuild(_types_namespace={"DefinedLater": DefinedLater})
+    with pytest.raises(TypeError, match=r"Mapping\[str, <member type>\]"):
+        cls(members={"a": _array(module)})
 
 
 @VERSIONS
