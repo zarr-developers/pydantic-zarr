@@ -1,5 +1,6 @@
 # Every check runs a `justfile` recipe, so `just <recipe>` locally is the same
-# command CI runs. The only other `run:` steps install tools (hatch).
+# command CI runs, on the same uv.lock: the recipes install every environment
+# with `uv run --locked` through one pinned uv (see the justfile).
 
 name: Test
 
@@ -54,15 +55,8 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         persist-credentials: false
-    - name: Set up Python
-      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: 'pip'
-    - name: Install Hatch
-      run: |
-        python -m pip install --upgrade pip
-        pip install hatch
+    - name: Install uv
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
     - name: Install just
       uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
     - name: Run Tests (with zarr)
@@ -90,17 +84,10 @@ jobs:
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
-        fetch-depth: 0 # required for hatch version discovery
+        fetch-depth: 0 # required for hatch-vcs version discovery
         persist-credentials: false
-    - name: Set up Python
-      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-      with:
-        python-version: '3.12'
-        cache: 'pip'
-    - name: Install Hatch
-      run: |
-        python -m pip install --upgrade pip
-        pip install hatch
+    - name: Install uv
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
     - name: Install just
       uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
     - name: Run the type checkers
@@ -114,17 +101,10 @@ jobs:
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
-        fetch-depth: 0 # required for hatch version discovery, which is needed for numcodecs.zarr3
+        fetch-depth: 0 # required for hatch-vcs version discovery, which is needed for numcodecs.zarr3
         persist-credentials: false
-    - name: Set up Python
-      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-      with:
-        python-version: '3.12'
-        cache: 'pip'
-    - name: Install Hatch
-      run: |
-        python -m pip install --upgrade pip
-        pip install hatch
+    - name: Install uv
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
     - name: Install just
       uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
     - name: Run Tests
