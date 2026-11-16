@@ -329,9 +329,13 @@ def test_non_mapping_members_type_is_refused(
 def test_non_mapping_members_type_resolved_later_is_refused(
     module: ModuleType, named: type
 ) -> None:
-    """A member type that names a class defined afterwards is refused once
-    the name resolves and the class validates members."""
-    cls = module.GroupSpec[Any, Union["DefinedLater", module.ArraySpec]]
+    """
+    A member type that names a class defined afterwards is refused once the
+    name resolves and the class validates members. The type is the lone name,
+    which cannot be told apart until it resolves, so the refusal shows that
+    the check reads the annotation as pydantic resolved it.
+    """
+    cls = module.GroupSpec[Any, "DefinedLater"]
 
     class DefinedLater(module.GroupSpec):  # type: ignore[misc,name-defined]
         """The class the forward reference names."""
