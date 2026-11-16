@@ -52,7 +52,6 @@ from pydantic_zarr.core import (
     StrictBase,
     _walk_zarr_hierarchy,
     canonicalize_fill_value,
-    check_members_type,
     ensure_key_no_path,
     ensure_members_mapping,
     guess_chunks,
@@ -944,16 +943,6 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
     # the default is cast so that a checker does not solve TMembers from it:
     # an unparameterized GroupSpec() then has the default members type
     members: TMembers = Field(default=cast("TMembers", {}), validate_default=True)
-
-    @field_validator("members", mode="before")
-    @classmethod
-    def _check_and_copy_members(cls, value: object) -> object:
-        # a class written for the 0.11 meaning of the second type parameter
-        # (the type of one member) is refused here with a message that says so
-        check_members_type(cls)
-        # the spec holds its own copy of the mapping, whatever the members
-        # type: under `Any`, pydantic would keep the caller's object
-        return dict(value) if isinstance(value, Mapping) else value
 
     @model_validator(mode="after")
     def validate_member_names(self) -> Self:

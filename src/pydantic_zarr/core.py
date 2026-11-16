@@ -1,31 +1,23 @@
 from __future__ import annotations
 
 import math
-import sys
 import warnings
 from collections.abc import Iterator, Mapping, Sequence
 from functools import cache
-from types import MappingProxyType, UnionType
+from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
     Final,
-    ForwardRef,
     Literal,
     Protocol,
     Self,
-    TypeAliasType,
     TypeVar,
-    Union,
-    get_args,
-    get_origin,
-    get_type_hints,
     overload,
     override,
     runtime_checkable,
 )
-from weakref import WeakKeyDictionary
 
 import numpy as np
 import numpy.typing as npt
@@ -44,11 +36,6 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
-
-# before Python 3.14 the typing_extensions class is a backport, distinct from
-# the class a `type` statement creates, and an alias may be an instance of either
-from typing_extensions import TypeAliasType as _TypeAliasTypeBackport  # noqa: UP035
-from typing_extensions import is_typeddict
 
 # pydantic resolves the `extra_fields` annotation at runtime
 from zarr_metadata import JSONValue  # noqa: TC002
@@ -659,84 +646,6 @@ def ensure_members_mapping(members: object) -> None:
     if not_names:
         msg = f"member names must be strings, got {not_names!r}"
         raise ValueError(msg)
-
-
-def _members_type_kind(
-    members_type: object, namespace: Mapping[str, object]
-) -> Literal["mapping", "other", "unknown"]:
-    """
-    Whether a members type is a mapping type, is known not to be one, or
-    cannot be told (`Any`, a type variable, a name that does not resolve in
-    `namespace`). Aliases, `Annotated`, forward references and unions are
-    looked through.
-    """
-    if isinstance(members_type, TypeAliasType | _TypeAliasTypeBackport):
-        # names inside an alias belong to the module that defines the alias
-        alias_module = sys.modules.get(members_type.__module__ or "")
-        alias_namespace = {**namespace, **(vars(alias_module) if alias_module else {})}
-        return _members_type_kind(members_type.__value__, alias_namespace)
-    if isinstance(members_type, ForwardRef):
-        members_type = members_type.__forward_arg__
-    if isinstance(members_type, str):
-        holder = type("_Holder", (), {"__annotations__": {"value": members_type}})
-        try:
-            resolved = get_type_hints(holder, globalns=dict(namespace), include_extras=True)
-        except Exception:
-            return "unknown"
-        return _members_type_kind(resolved["value"], namespace)
-    if members_type is Any:
-        # `Any` is a class, but it is no claim about the members type
-        return "unknown"
-    origin = get_origin(members_type)
-    if origin is Annotated:
-        return _members_type_kind(get_args(members_type)[0], namespace)
-    if origin in (Union, UnionType):
-        kinds = {_members_type_kind(item, namespace) for item in get_args(members_type)}
-        if "other" in kinds:
-            return "other"
-        return "unknown" if "unknown" in kinds else "mapping"
-    if is_typeddict(members_type):
-        return "mapping"
-    candidate = members_type if origin is None else origin
-    if isinstance(candidate, type):
-        return "mapping" if issubclass(candidate, Mapping) else "other"
-    return "unknown"
-
-
-# the outcome of the members type check per group class, so that it runs once
-_MEMBERS_TYPE_ERRORS: WeakKeyDictionary[type, str | None] = WeakKeyDictionary()
-
-
-def check_members_type(cls: type[BaseModel]) -> None:
-    """
-    Raise `TypeError` if the members type of a `GroupSpec` class is not a
-    mapping type.
-
-    Up to 0.11 the second type parameter of `GroupSpec` was the type of one
-    member. A class still written that way (`GroupSpec[Attrs, MyArraySpec]`)
-    would validate its whole `members` mapping as one member and report the
-    member's missing fields. This check runs when such a class first validates
-    members, and says what to write instead. It reads the annotation of the
-    `members` field, so it applies however the type was given: as a type
-    argument, through a subclass's type variable, or by a field override.
-    """
-    if cls not in _MEMBERS_TYPE_ERRORS:
-        members_type = cls.__pydantic_fields__["members"].annotation
-        module = sys.modules.get(cls.__module__)
-        namespace = vars(module) if module is not None else {}
-        message = None
-        if _members_type_kind(members_type, namespace) == "other":
-            message = (
-                f"{cls.__name__} has the members type {members_type!r}, which is not a "
-                "mapping. The second type parameter of GroupSpec is the type of the "
-                "whole members mapping. Up to pydantic-zarr 0.11 it was the type of one "
-                "member: write Mapping[str, <member type>] for a group whose members "
-                "are all of one type, or a closed TypedDict to fix the member names."
-            )
-        _MEMBERS_TYPE_ERRORS[cls] = message
-    message = _MEMBERS_TYPE_ERRORS[cls]
-    if message is not None:
-        raise TypeError(message)
 
 
 def model_like(a: BaseModel, b: BaseModel, exclude: IncEx = None, include: IncEx = None) -> bool:

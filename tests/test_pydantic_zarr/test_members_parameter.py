@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import pickle
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Annotated, Any, Generic, NotRequired, Union
+from typing import TYPE_CHECKING, Any, Generic, NotRequired
 
 import pytest
-from pydantic import BaseModel, ConfigDict, ValidationError, create_model
+from pydantic import BaseModel, ConfigDict, ValidationError
 from typing_extensions import TypedDict, TypeVar
 
 from pydantic_zarr import v2, v3
@@ -177,27 +177,6 @@ def test_parameterized_group_pickles(module: ModuleType, named: type) -> None:
     assert pickle.loads(pickle.dumps(spec)) == spec
 
 
-type AnyAlias = Any
-
-
-@VERSIONS
-@pytest.mark.parametrize(
-    "members_type", [Any, AnyAlias, Annotated[Any, "a note"]], ids=["Any", "alias", "annotated"]
-)
-def test_any_members_type_copies_the_members(
-    module: ModuleType, named: type, members_type: Any
-) -> None:
-    """
-    `Any` as the members type, directly or through an alias or `Annotated`,
-    means any mapping. The spec holds its own copy of the members, so a later
-    change to the mapping it was built from does not reach it.
-    """
-    members = {"a": _array(module)}
-    spec = module.GroupSpec[Any, members_type](members=members)
-    members["b/c"] = _array(module)
-    assert list(spec.members) == ["a"]
-
-
 @VERSIONS
 def test_named_members_refuse_an_undeclared_member(module: ModuleType, named: type) -> None:
     """A closed `TypedDict` of members refuses a member it does not declare."""
@@ -252,108 +231,12 @@ def test_member_names_are_validated_under_a_members_type(module: ModuleType, nam
         module.GroupSpec[Any, Mapping[str, module.ArraySpec]](members={name: _array(module)})
 
 
-NON_MAPPING_SPELLINGS = [
-    "array",
-    "narrowed array",
-    "union",
-    "typing union",
-    "array alias",
-    "item alias",
-    "union of aliases",
-    "annotated array",
-    "array by name",
-    "list of arrays",
-    "optional mapping",
-    "a scalar type",
-]
-
-
-def _non_mapping_type(module: ModuleType, spelling: str) -> Any:
-    return {
-        "array": module.ArraySpec,
-        "narrowed array": module.ArraySpec[Attrs],
-        "union": module.ArraySpec | module.GroupSpec,
-        "typing union": Union[module.ArraySpec, module.GroupSpec],
-        "array alias": module.AnyArraySpec,
-        "item alias": module.TBaseItem,
-        "union of aliases": module.AnyGroupSpec | module.AnyArraySpec,
-        "annotated array": Annotated[module.ArraySpec, "a note"],
-        "array by name": "ArraySpec",
-        "list of arrays": list[module.ArraySpec],
-        "optional mapping": Mapping[str, module.ArraySpec] | None,
-        "a scalar type": int,
-    }[spelling]
-
-
-# a bare name resolves in the module of the class it parameterizes, so
-# "ArraySpec" names the spec class only for the generic class itself
-REFUSED = [
-    (spelling, through)
-    for through in ("the class", "a subclass type variable", "a field override")
-    for spelling in NON_MAPPING_SPELLINGS
-    if spelling != "array by name" or through == "the class"
-]
-
-
 @VERSIONS
-@pytest.mark.parametrize(("spelling", "through"), REFUSED)
-def test_non_mapping_members_type_is_refused(
-    module: ModuleType, named: type, spelling: str, through: str
-) -> None:
+def test_member_type_as_members_type_fails_validation(module: ModuleType, named: type) -> None:
     """
-    A group class whose members type is not a mapping is refused when it
-    first validates members, with a `TypeError` that says what to write.
-    Up to 0.11 the second parameter was the type of one member, so a spec
-    class is the common case; it is recognized through unions, aliases,
-    `Annotated` and names given as strings, and however the type reaches the
-    `members` field: as a type argument, through a subclass's own type
-    variable, or by a field override.
+    Up to 0.11 the second parameter was the type of one member. A class still
+    written that way validates its whole members mapping as one member, so a
+    valid mapping of members is refused.
     """
-    members_type = _non_mapping_type(module, spelling)
-    if through == "the class":
-        cls = module.GroupSpec[Any, members_type]
-    elif through == "a subclass type variable":
-        cls = OWN_DATASET[module][members_type]
-    else:
-        cls = create_model("Overriding", __base__=module.GroupSpec, members=(members_type, ...))
-    with pytest.raises(TypeError, match=r"whole members\s+mapping"):
-        cls(members={"a": _array(module)})
-    # the refusal does not depend on the value given, and repeats (a field
-    # override here has no default, so the value is given again)
-    again = {"members": {}} if through == "a field override" else {}
-    with pytest.raises(TypeError, match=r"Mapping\[str, <member type>\]"):
-        cls(**again)
-
-
-@VERSIONS
-def test_non_mapping_members_type_resolved_later_is_refused(
-    module: ModuleType, named: type
-) -> None:
-    """
-    A member type that names a class defined afterwards is refused once the
-    name resolves and the class validates members. The type is the lone name,
-    which cannot be told apart until it resolves, so the refusal shows that
-    the check reads the annotation as pydantic resolved it.
-    """
-    cls = module.GroupSpec[Any, "DefinedLater"]
-
-    class DefinedLater(module.GroupSpec):  # type: ignore[misc,name-defined]
-        """The class the forward reference names."""
-
-    cls.model_rebuild(_types_namespace={"DefinedLater": DefinedLater})
-    with pytest.raises(TypeError, match=r"Mapping\[str, <member type>\]"):
-        cls(members={"a": _array(module)})
-
-
-@VERSIONS
-def test_non_mapping_members_type_naming_the_class_itself_is_refused(
-    module: ModuleType, named: type
-) -> None:
-    """A recursive member type, which names the class being defined, is
-    refused the same way once the class validates members."""
-
-    class Tree(module.GroupSpec[Any, Union["Tree", module.ArraySpec]]):  # type: ignore[misc,name-defined]
-        """Written for the 0.11 meaning: members that are arrays or trees."""
-
-    with pytest.raises(TypeError, match=r"Mapping\[str, <member type>\]"):
-        Tree(members={"a": _array(module)})
+    with pytest.raises(ValidationError, match="members"):
+        module.GroupSpec[Any, module.ArraySpec](members={"a": _array(module)})
