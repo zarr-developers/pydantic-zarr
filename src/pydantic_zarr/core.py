@@ -28,6 +28,7 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    GetJsonSchemaHandler,
     ModelWrapValidatorHandler,
     PrivateAttr,
     SerializationInfo,
@@ -61,7 +62,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     import zarr
-    from pydantic_core import SchemaSerializer
+    from pydantic.json_schema import JsonSchemaValue
+    from pydantic_core import CoreSchema, SchemaSerializer
     from zarr.core.array_spec import ArrayConfigParams
     from zarr.storage._common import StoreLike
 
@@ -268,6 +270,28 @@ class ExtraFieldsBase(StrictBase):
     def _serialize_document(self, handler: SerializerFunctionWrapHandler):  # noqa: ANN202
         """Write the extra fields as top-level members of the dumped document."""
         return flatten_extra_fields(handler(self))
+
+    @override
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler, /
+    ) -> JsonSchemaValue:
+        """
+        Describe the document, not the model: a document holds its extra
+        fields as top-level members and has no `extra_fields` member, so the
+        schema (in either mode, matching what validation reads and what
+        `model_dump` writes) types the members it does not declare as an
+        extra field's value, in place of the `extra_fields` property, and
+        admits no member named `extra_fields`. A declared field is a property,
+        which `additionalProperties` does not reach.
+        """
+        json_schema = handler(core_schema)
+        definition = handler.resolve_ref_schema(json_schema)
+        container = definition.get("properties", {}).pop(EXTRA_FIELDS, None)
+        if container is not None:
+            definition["additionalProperties"] = container["additionalProperties"]
+            definition["propertyNames"] = {"not": {"const": EXTRA_FIELDS}}
+        return json_schema
 
     def __repr_args__(self) -> Iterator[tuple[str | None, object]]:
         """Show `extra_fields` last, and only when the document holds some."""

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
 from pydantic import BaseModel, Field, TypeAdapter
@@ -300,41 +300,61 @@ class _Attrs(AttributesBase):
     units: str
 
 
+# how a spec with extra fields types the members it does not declare: as an
+# extra field's value, in place of an `extra_fields` property
+_EXTRA_MEMBERS = {
+    "additionalProperties": {"$ref": "#/$defs/JSONValue"},
+    "propertyNames": {"not": {"const": "extra_fields"}},
+}
+_CLOSED = {"additionalProperties": False}
+
+
 @pytest.mark.parametrize(
-    ("model", "properties", "open_"),
+    ("model", "properties", "undeclared"),
     [
         pytest.param(
-            ArraySpecV2,
-            {"shape", "chunks", "dtype", "attributes", "extra_fields"},
-            False,
-            id="v2-array",
+            ArraySpecV2, {"shape", "chunks", "dtype", "attributes"}, _EXTRA_MEMBERS, id="v2-array"
         ),
         pytest.param(
             ArraySpecV3,
-            {"shape", "data_type", "codecs", "attributes", "extra_fields"},
-            False,
+            {"shape", "data_type", "codecs", "attributes"},
+            _EXTRA_MEMBERS,
             id="v3-array",
         ),
-        pytest.param(BaseGroupSpecV2, {"attributes", "zarr_format"}, False, id="v2-base-group"),
+        pytest.param(BaseGroupSpecV2, {"attributes", "zarr_format"}, _CLOSED, id="v2-base-group"),
         pytest.param(
-            BaseGroupSpecV3, {"attributes", "node_type", "extra_fields"}, False, id="v3-base-group"
+            BaseGroupSpecV3, {"attributes", "node_type"}, _EXTRA_MEMBERS, id="v3-base-group"
         ),
-        pytest.param(GroupSpecV2, {"attributes", "members"}, False, id="v2-group"),
-        pytest.param(GroupSpecV3, {"attributes", "members", "extra_fields"}, False, id="v3-group"),
-        pytest.param(_Attrs, {"units"}, True, id="attributes"),
+        pytest.param(GroupSpecV2, {"attributes", "members"}, _CLOSED, id="v2-group"),
+        pytest.param(GroupSpecV3, {"attributes", "members"}, _EXTRA_MEMBERS, id="v3-group"),
+        pytest.param(_Attrs, {"units"}, {}, id="attributes"),
     ],
 )
-def test_serialization_json_schema(
-    model: type[BaseModel], properties: set[str], *, open_: bool
+@pytest.mark.parametrize("mode", ["validation", "serialization"])
+def test_json_schema(
+    model: type[BaseModel],
+    properties: set[str],
+    undeclared: Mapping[str, object],
+    mode: Literal["validation", "serialization"],
 ) -> None:
     """
-    The serialization-mode JSON schema describes the model's fields, as the
-    validation-mode one does, rather than collapsing to an open object: the
-    specs' wrap model serializers carry no return annotation for pydantic to
-    use in their place. An attributes model stays open to extra keys.
+    Both JSON schema modes describe the documents a model reads and writes,
+    and agree: the serialization mode describes the model's fields rather
+    than collapsing to an open object, since the specs' wrap model
+    serializers carry no return annotation for pydantic to use in their
+    place. A spec with extra fields holds them as top-level members, typed
+    as an extra field's value, and never as an `extra_fields` member, at the
+    top level or nested (a group's members); a spec without them is closed,
+    and an attributes model stays open to any key.
     """
-    schema = model.model_json_schema(mode="serialization")
+    schema = model.model_json_schema(mode=mode)
     assert schema == model.model_json_schema(mode="validation")
     definition = schema["$defs"][model.__name__] if "$ref" in schema else schema
     assert properties <= set(definition["properties"])
-    assert definition.get("additionalProperties", True) is open_
+    assert {
+        key: definition[key]
+        for key in ("additionalProperties", "propertyNames")
+        if key in definition
+    } == undeclared
+    nested = [definition, *schema.get("$defs", {}).values()]
+    assert not [d for d in nested if "extra_fields" in d.get("properties", {})]
