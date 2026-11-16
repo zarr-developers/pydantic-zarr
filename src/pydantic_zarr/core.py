@@ -13,6 +13,7 @@ from typing import (
     Literal,
     Protocol,
     Self,
+    TypedDict,
     TypeVar,
     overload,
     override,
@@ -59,11 +60,30 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     import zarr
+    from zarr.core.array_spec import ArrayConfigParams
     from zarr.storage._common import StoreLike
 
-type IncEx = set[int] | set[str] | dict[int, Any] | dict[str, Any] | None
+# the selection pydantic's `model_dump` takes as `include` / `exclude`
+# (`pydantic.main.IncEx`), plus `None` for "no selection"
+type _IncExSelection = (
+    set[int]
+    | set[str]
+    | Mapping[int, _IncExSelection | bool]
+    | Mapping[str, _IncExSelection | bool]
+)
+type IncEx = _IncExSelection | None
 
 type AccessMode = Literal["w", "w+", "r", "a"]
+
+
+class MemberToZarrOptions(TypedDict, total=False):
+    """
+    The keyword arguments a group's deprecated `to_zarr` passes on to each
+    member's `to_zarr`: those an array's `to_zarr` takes.
+    """
+
+    config: ArrayConfigParams | None
+
 
 T = TypeVar("T")
 
@@ -91,6 +111,10 @@ def tuplify_json(obj: object) -> object:
 class StrictBase(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    # `Any`, as in `BaseModel.model_dump`: the keyword arguments are passed on
+    # to pydantic, whose signature changes across the supported pydantic
+    # versions, and the dumped values are whatever the fields hold, which
+    # callers index as they do any other model's dump
     @override
     def model_dump(self, **kwargs: Any) -> dict[str, Any]:
         """
@@ -104,6 +128,7 @@ class StrictBase(BaseModel):
         kwargs.setdefault("by_alias", True)
         return super().model_dump(**kwargs)
 
+    # `Any`: the keyword arguments are passed on to pydantic; see `model_dump`
     @override
     def model_dump_json(self, **kwargs: Any) -> str:
         """Serialize to JSON with `by_alias=True` unless told otherwise; see `model_dump`."""
@@ -115,13 +140,13 @@ EXTRA_FIELDS = "extra_fields"
 """The name of the field in which `ExtraFieldsBase` keeps a document's extra fields."""
 
 
-def flatten_extra_fields(document: dict[str, Any]) -> dict[str, Any]:
+def flatten_extra_fields(document: dict[str, object]) -> dict[str, object]:
     """
     Turn a dumped spec's `extra_fields` mapping back into top-level members
     of the document, where the metadata document holds them.
     """
     extra = document.pop(EXTRA_FIELDS, None)
-    if extra:
+    if isinstance(extra, Mapping):
         document.update(extra)
     return document
 
@@ -189,11 +214,11 @@ class ExtraFieldsBase(StrictBase):
         return value
 
     @model_serializer(mode="wrap")
-    def _serialize_document(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+    def _serialize_document(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
         """Write the extra fields as top-level members of the dumped document."""
         return flatten_extra_fields(handler(self))
 
-    def __repr_args__(self) -> Iterator[tuple[str | None, Any]]:
+    def __repr_args__(self) -> Iterator[tuple[str | None, object]]:
         """Show `extra_fields` last, and only when the document holds some."""
         extra: object = None
         for name, value in super().__repr_args__():
@@ -239,7 +264,7 @@ def _declared_keys(model: type[BaseModel]) -> frozenset[str]:
     return frozenset(keys)
 
 
-_EXTRA_FIELDS_ADAPTER: Final = TypeAdapter(dict[str, Any])
+_EXTRA_FIELDS_ADAPTER: Final = TypeAdapter(dict[str, object])
 
 
 def _dumps_extra_field(key: str, value: object, info: SerializationInfo) -> bool:
@@ -279,11 +304,11 @@ class _OpenModel(BaseModel):
     fields; setting `"allow"` is refused, since it would reach the TypedDicts.
     """
 
-    _extra_fields: dict[str, Any] = PrivateAttr(default_factory=dict)
+    _extra_fields: dict[str, object] = PrivateAttr(default_factory=dict)
 
     @override
     @classmethod
-    def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
+    def __pydantic_init_subclass__(cls, **kwargs: object) -> None:
         super().__pydantic_init_subclass__(**kwargs)
         if cls.model_config.get("extra") == "allow":
             msg = (
@@ -294,7 +319,7 @@ class _OpenModel(BaseModel):
             raise TypeError(msg)
 
     @property
-    def extra_fields(self) -> Mapping[str, Any]:
+    def extra_fields(self) -> Mapping[str, object]:
         """The keys of the input this model does not declare, with their values as given."""
         return MappingProxyType(self._extra_fields)
 
@@ -317,7 +342,7 @@ class _OpenModel(BaseModel):
     @model_serializer(mode="wrap")
     def _serialize_document(
         self, handler: SerializerFunctionWrapHandler, info: SerializationInfo
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         """Write the extra fields the dump selects as top-level keys of the dumped document."""
         extra = {
             key: value
@@ -335,7 +360,7 @@ class _OpenModel(BaseModel):
         }
 
     @override
-    def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
+    def model_copy(self, *, update: Mapping[str, object] | None = None, deep: bool = False) -> Self:
         """
         Copy this model as pydantic does; a key of `update` that names no
         field is set as an extra field.
@@ -351,7 +376,7 @@ class _OpenModel(BaseModel):
         }
         return copied
 
-    def __repr_args__(self) -> Iterator[tuple[str | None, Any]]:
+    def __repr_args__(self) -> Iterator[tuple[str | None, object]]:
         """Show `extra_fields` last, and only when the model holds some."""
         yield from super().__repr_args__()
         if self._extra_fields:
@@ -401,7 +426,7 @@ class AttributesBase(_OpenModel):
 
     Attributes
     ----------
-    extra_fields: Mapping[str, Any]
+    extra_fields: Mapping[str, object]
         The keys this model does not declare, with their values as given.
     """
 
@@ -547,7 +572,7 @@ def guess_chunks(shape: tuple[int, ...], typesize: int) -> tuple[int, ...]:
     return tuple(int(x) for x in chunks)
 
 
-def parse_dtype_v2(value: npt.DTypeLike) -> str | list[tuple[Any, ...]]:
+def parse_dtype_v2(value: npt.DTypeLike) -> str | list[tuple[object, ...]]:
     """
     Convert the input to a NumPy dtype and either return the ``str`` attribute of that
     object or, if the dtype is a structured dtype, return the fields of that dtype as a list
@@ -608,7 +633,7 @@ def canonicalize_fill_value(fill_value: object) -> object:
     return fill_value
 
 
-def ensure_member_name(data: Any) -> str:
+def ensure_member_name(data: object) -> str:
     """
     If the input is a string, then ensure that it is a valid
     name for a subnode in a zarr group
@@ -624,7 +649,7 @@ def ensure_member_name(data: Any) -> str:
     raise TypeError(f"Expected a str, got {type(data)}.")
 
 
-def ensure_key_no_path(data: Any) -> Any:
+def ensure_key_no_path(data: T) -> T:
     if isinstance(data, Mapping):
         for key in data:
             ensure_member_name(key)

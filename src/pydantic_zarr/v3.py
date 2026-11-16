@@ -49,6 +49,7 @@ from zarr_metadata import (
     RegularChunkGridMetadata,
     V2ChunkKeyEncodingMetadata,
     ZarrV3ArrayMetadataJSON,
+    ZarrV3DeclarationJSON,
     ZarrV3ExtensionField,
     ZarrV3GroupMetadataJSON,
     ZarrV3NamedConfigJSON,
@@ -56,6 +57,7 @@ from zarr_metadata import (
 from zarr_metadata.model import ZarrV3ArrayMetadata as ZarrV3ArrayMetadataModel
 from zarr_metadata.model import ZarrV3GroupMetadata as ZarrV3GroupMetadataModel
 from zarr_metadata.model import validate_node_name_v3
+from zarr_metadata.typed_json import check as check_json
 from zarr_metadata.v3.definition import (
     ArrayExtraFieldDefinition,
     ChunkGridDefinition,
@@ -79,6 +81,7 @@ from pydantic_zarr.core import (
     TO_ZARR_REPLACEMENT,
     ExtraFieldsBase,
     IncEx,
+    MemberToZarrOptions,
     StoredNodes,
     _walk_zarr_hierarchy,
     canonicalize_fill_value,
@@ -108,6 +111,7 @@ if TYPE_CHECKING:
     import zarr
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
+    from zarr_metadata.definition import Definition
     from zarr_metadata.v3.chunk_key_encoding.default import (
         DefaultChunkKeyEncodingObject,
     )
@@ -325,13 +329,15 @@ class NodeSpec(ExtraFieldsBase):
     zarr_scope: ClassVar[ZarrV3Context | None] = None
     zarr_scope_strict: ClassVar[bool] = False
 
-    def __replace__(self, **changes: Any) -> Self:
+    def __replace__(self, **changes: object) -> Self:
         """
         `copy.replace(spec, **changes)` (Python 3.13 and later): the spec's own
         `replace`, so it validates the changes, where pydantic's
         `BaseModel.__replace__` copies without validating. It calls
         `self.replace`, so a subclass that overrides `replace` is honored.
         """
+        # `Any`: each subclass's `replace` takes its own TypedDict of changes,
+        # which no signature declared here can name, and validates `changes`
         return cast("Any", self).replace(**changes)
 
     @classmethod
@@ -514,7 +520,7 @@ _FIXED_LENGTH_NUMPY_CODES: Final = {
 `parse_dtype_v3` writes as a named configuration with a `length_bytes`."""
 
 
-def _numpy_dtype_from_v3(data_type: str | Mapping[str, object]) -> np.dtype[Any] | None:
+def _numpy_dtype_from_v3(data_type: str | Mapping[str, object]) -> np.dtype[np.generic] | None:
     """
     Best-effort inverse of `parse_dtype_v3`: the numpy data type equivalent to
     a Zarr V3 data type declaration, or `None` when there is none (an unknown
@@ -640,7 +646,7 @@ def _unclaimed_extension_point_names(
     """
     problems: list[str] = []
 
-    def check(kind: type[Any], label: str, name: object, loc: str) -> None:
+    def check(kind: type[Definition], label: str, name: object, loc: str) -> None:
         if isinstance(name, str) and scope.claimant(kind, name) is None:
             problems.append(f"{loc}: {name!r} names no {label} in the scope")
 
@@ -683,7 +689,7 @@ def _unclaimed_extension_point_names(
     return problems
 
 
-type ExtraFieldKind = type[ArrayExtraFieldDefinition[Any] | GroupExtraFieldDefinition[Any]]
+type ExtraFieldKind = type[ArrayExtraFieldDefinition | GroupExtraFieldDefinition]
 
 
 def _refused_extra_fields(
@@ -1066,7 +1072,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             raise ValueError(format_problems(e)) from e
 
     @model_serializer(mode="wrap")
-    def _serialize_document(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+    def _serialize_document(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
         """
         Omit `dimension_names` when it is `None`: the Zarr V3 spec allows the
         key to be absent, not null. This is a model serializer rather than a
@@ -1113,7 +1119,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
     @classmethod
     def from_array(
         cls,
-        array: npt.NDArray[Any] | zarr.Array,
+        array: npt.NDArray[np.generic] | zarr.Array,
         *,
         # TBaseAttr, not TAttr: covariant parameters may not appear in
         # argument positions. Validation enforces the class's attribute type.
@@ -1381,23 +1387,27 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             )
         else:
             meta_json = tuplify_json(array.metadata.to_dict())
-        meta_any = cast("dict[str, Any]", meta_json)
         # zarr-python 3.1 and later keep a document's extra fields, and
         # write them as top-level keys in `to_dict`
         extra_fields = {
-            key: value for key, value in meta_any.items() if key not in cls.model_fields
+            key: value for key, value in meta_json.items() if key not in cls.model_fields
         }
-        return cls(
-            attributes=meta_any["attributes"],
-            shape=array.shape,
-            data_type=meta_any["data_type"],
-            chunk_grid=meta_any["chunk_grid"],
-            chunk_key_encoding=meta_any["chunk_key_encoding"],
-            fill_value=meta_any["fill_value"],
-            codecs=meta_any["codecs"],
-            storage_transformers=meta_any["storage_transformers"],
-            dimension_names=meta_any.get("dimension_names", None),
-            extra_fields=extra_fields,
+        members = (
+            "attributes",
+            "data_type",
+            "chunk_grid",
+            "chunk_key_encoding",
+            "fill_value",
+            "codecs",
+            "storage_transformers",
+        )
+        return cls.model_validate(
+            {
+                **{member: meta_json[member] for member in members},
+                "shape": array.shape,
+                "dimension_names": meta_json.get("dimension_names"),
+                "extra_fields": extra_fields,
+            }
         )
 
     def to_zarr(
@@ -1659,7 +1669,7 @@ def _write_group_extra_fields(
     return Group(async_group)
 
 
-def ensure_member_names_v3(data: Mapping[str, Any]) -> Mapping[str, Any]:
+def ensure_member_names_v3(data: Mapping[str, object]) -> Mapping[str, object]:
     """
     Ensure that every key of a members mapping is a valid Zarr V3 node name.
 
@@ -2212,7 +2222,12 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
 
     @override
     def to_zarr(
-        self, store: Store, path: str, *, overwrite: bool = False, **kwargs: Any
+        self,
+        store: Store,
+        path: str,
+        *,
+        overwrite: bool = False,
+        **kwargs: Unpack[MemberToZarrOptions],
     ) -> zarr.Group:
         """
         Serialize a GroupSpec to a zarr group at a specific path in a zarr store.
@@ -2227,6 +2242,9 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
             Whether to overwrite an existing array or group at the path. If overwrite is
             False and an array or group already exists at the path, an exception will be
             raised. Defaults to False.
+        config : ArrayConfigParams | None, default = None
+            The runtime configuration of each array in the group, passed on to the
+            array members' `to_zarr`.
 
         Returns
         -------
@@ -2242,7 +2260,12 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
 
     @override
     def _to_zarr(
-        self, store: Store, path: str, *, overwrite: bool = False, **kwargs: Any
+        self,
+        store: Store,
+        path: str,
+        *,
+        overwrite: bool = False,
+        **kwargs: Unpack[MemberToZarrOptions],
     ) -> zarr.Group:
         """`to_zarr` without the deprecation warning."""
         try:
@@ -2751,6 +2774,35 @@ def auto_chunk_key_encoding(data: object) -> AnyNamedConfig:
     return {"name": "default", "configuration": {"separator": "/"}}
 
 
+def _checked_declaration(declaration: str | Mapping[str, object]) -> ZarrV3DeclarationJSON:
+    """
+    `declaration` as a Zarr V3 declaration: a name, or a named configuration
+    with no problem (an unknown key included).
+
+    Raises
+    ------
+    ValueError
+        If `declaration` is a mapping that is not a named configuration.
+    """
+    if isinstance(declaration, str):
+        return declaration
+    checked, problems = check_json(declaration, ZarrV3NamedConfigJSON)
+    if checked is None or problems:
+        msg = f"{declaration!r} is not a named configuration: " + "; ".join(
+            problem.message for problem in problems
+        )
+        raise ValueError(msg)
+    return checked
+
+
+class _DerivingMembers(TypedDict, total=False, closed=True):
+    """The members of an array document `zarr-metadata` derives other members from."""
+
+    shape: tuple[int, ...]
+    data_type: ZarrV3DeclarationJSON
+    fill_value: JSONValue
+
+
 def dtype_default_fill_value(
     dtype: npt.DTypeLike | Mapping[str, object], *, scope: ZarrV3Context | None = None
 ) -> FillValue:
@@ -2771,7 +2823,7 @@ def dtype_default_fill_value(
     context = CORE_AND_EXTENSIONS_CONTEXT if scope is None else scope
     try:
         document = ZarrV3ArrayMetadataModel.create_default(
-            context=context, data_type=cast("Any", parsed)
+            context=context, data_type=_checked_declaration(parsed)
         ).to_json()
     except (ValueError, TypeError) as e:
         msg = f"Cannot determine a default fill value for data type {parsed!r}: pass one."
@@ -2832,10 +2884,11 @@ def _derived_array_members(
     """
 
     def derive(given: Mapping[str, object], takes: frozenset[str]) -> dict[str, object] | None:
+        checked, problems = check_json(given, _DerivingMembers)
+        if checked is None or problems:
+            return None
         try:
-            derived = ZarrV3ArrayMetadataModel.create_default(
-                context=scope, **cast("Any", given)
-            ).to_json()
+            derived = ZarrV3ArrayMetadataModel.create_default(context=scope, **checked).to_json()
         except (ValueError, TypeError):
             return None
         return {
