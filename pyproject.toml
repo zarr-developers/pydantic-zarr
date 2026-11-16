@@ -256,6 +256,10 @@ implicit-any-type-argument = false
 implicit-any-lambda = false
 no-any-return-explicit = false
 no-any-return-implicit = false
+# a `# pyrefly: ignore[<kind>]` that no longer suppresses an error of its kind
+# fails the check; suppressions are written in that form, not as
+# `# type: ignore[...]`, whose bracketed codes pyrefly does not check
+unused-ignore = true
 
 [tool.pytest.ini_options]
 minversion = "7"
