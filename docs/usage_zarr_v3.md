@@ -384,12 +384,11 @@ They handle Zarr V2 specs the same way. Neither reads or writes array data:
 `write_hierarchy` creates the metadata documents, and the arrays are then
 filled through zarr-python as usual.
 
-The `to_zarr` and `from_zarr` methods of the specs, the module-level
-`to_zarr`, `from_zarr` and `from_zarr_flat`, and `like` or
-`ArraySpec.from_array` given a `zarr.Array` or `zarr.Group`, did this inside
-pydantic-zarr through zarr-python internals. They are deprecated and will be
-removed in pydantic-zarr 0.12; each warns once, naming its replacement. Until
-then they still work, and need the `zarr` extra: `pip install "pydantic-zarr[zarr]"`.
+Up to pydantic-zarr 0.11, the `to_zarr` and `from_zarr` methods of the specs,
+the module-level `to_zarr`, `from_zarr` and `from_zarr_flat`, and `like` or
+`ArraySpec.from_array` given a `zarr.Array` or `zarr.Group` did this inside
+pydantic-zarr through zarr-python internals. They were removed in 0.12: use
+the two functions above instead.
 
 ## Validation scopes
 
@@ -606,5 +605,4 @@ Whether a store written through `zarr-python` holds them depends on
 specs keep its contents as written, not read as members. A hierarchy written
 from a spec holding it would carry a record that need not match the members
 written, so drop it first and consolidate the written hierarchy with
-`zarr.consolidate_metadata`. The deprecated `to_zarr` refuses such a group,
-and `from_zarr` reads the members themselves and leaves the record out.
+`zarr.consolidate_metadata`.

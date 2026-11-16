@@ -36,12 +36,6 @@ if TYPE_CHECKING:
 
 ZARR_AVAILABLE = importlib.util.find_spec("zarr") is not None
 
-pytestmark = pytest.mark.filterwarnings(
-    # the zarr-python IO entry points still work, warning, until pydantic-zarr 0.12;
-    # `test_zarr_io_deprecated` checks the warnings themselves
-    "ignore:`[^`]+` is deprecated and will be removed in pydantic-zarr:DeprecationWarning"
-)
-
 PROPERTY_SETTINGS = settings(
     max_examples=75,
     deadline=None,
@@ -140,7 +134,7 @@ def test_zarr_generated_metadata_accepted(data: st.DataObject) -> None:
     meta = data.draw(array_metadata(zarr_formats=st.just(3)))
     if ZARR_PYTHON_VERSION < Version("3.1.0"):
         # zarr 3.0's to_dict returns non-JSON values (e.g. the DataType enum
-        # for data_type); encode through its JSON encoder, as from_zarr does
+        # for data_type); encode through its JSON encoder
         from zarr.core.metadata.v3 import V3JsonEncoder  # pyrefly: ignore[missing-module-attribute]
 
         document = tuplify_json(json.loads(json.dumps(meta.to_dict(), cls=V3JsonEncoder)))

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import math
 import operator
-import sys
-import warnings
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from functools import cache
 from types import MappingProxyType
@@ -14,7 +12,6 @@ from typing import (
     Literal,
     Protocol,
     Self,
-    TypedDict,
     TypeVar,
     cast,
     overload,
@@ -41,7 +38,6 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
-from typing_extensions import TypeIs
 
 # pydantic resolves the `extra_fields` annotation at runtime
 from zarr_metadata import JSONValue  # noqa: TC002
@@ -64,11 +60,8 @@ else:
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    import zarr
     from pydantic.json_schema import JsonSchemaValue
     from pydantic_core import CoreSchema, SchemaSerializer
-    from zarr.core.array_spec import ArrayConfigParams
-    from zarr.storage._common import StoreLike
 
 # the selection pydantic's `model_dump` takes as `include` / `exclude`
 # (`pydantic.main.IncEx`), plus `None` for "no selection"
@@ -79,18 +72,6 @@ type _IncExSelection = (
     | Mapping[str, _IncExSelection | bool]
 )
 type IncEx = _IncExSelection | None
-
-type AccessMode = Literal["w", "w+", "r", "a"]
-
-
-class MemberToZarrOptions(TypedDict, total=False):
-    """
-    The keyword arguments a group's deprecated `to_zarr` passes on to each
-    member's `to_zarr`: those an array's `to_zarr` takes.
-    """
-
-    config: ArrayConfigParams | None
-
 
 T = TypeVar("T")
 
@@ -601,24 +582,6 @@ def resolve_member_path(node: object, path: str) -> object:
     return node
 
 
-def is_zarr_array(obj: object) -> TypeIs[zarr.Array]:
-    """
-    Whether `obj` is a `zarr.Array`, without importing zarr: an instance cannot
-    exist unless zarr is imported, and zarr is an optional dependency.
-    """
-    zarr_module = sys.modules.get("zarr")
-    return zarr_module is not None and isinstance(obj, zarr_module.Array)
-
-
-def is_zarr_group(obj: object) -> TypeIs[zarr.Group]:
-    """
-    Whether `obj` is a `zarr.Group`, without importing zarr: an instance cannot
-    exist unless zarr is imported, and zarr is an optional dependency.
-    """
-    zarr_module = sys.modules.get("zarr")
-    return zarr_module is not None and isinstance(obj, zarr_module.Group)
-
-
 def read_attribute(data: object, name: str) -> object:
     """
     `data.<name>`, typed as the `object` it is. The `auto_*` readers of the v2
@@ -836,61 +799,6 @@ def model_like(a: BaseModel, b: BaseModel, exclude: IncEx = None, include: IncEx
     return json_eq(a_dict, b_dict)
 
 
-IO_REMOVAL_VERSION = "0.12"
-"""The pydantic-zarr release that removes the deprecated zarr-python IO entry points."""
-
-TO_ZARR_REPLACEMENT = (
-    "Write the documents `to_stored_metadata_json` gives with zarr-python, for instance "
-    "through `zarr.create_hierarchy`."
-)
-FROM_ZARR_REPLACEMENT = (
-    "Read the node's stored metadata documents with zarr-python and pass them to "
-    "`from_stored_metadata_json`."
-)
-IO_DOCS_URL = "https://pydantic-zarr.readthedocs.io/en/latest/usage_zarr_v3/#reading-and-writing-with-zarr-python"
-
-
-def warn_deprecated_io(name: str, replacement: str, *, stacklevel: int = 3) -> None:
-    """
-    Warn that `name`, an entry point that reads or writes zarr-python nodes,
-    is deprecated, pointing at `replacement`.
-
-    pydantic-zarr models metadata documents; reading them from a store and
-    writing them to one is zarr-python's job, so the entry points that take
-    or return zarr-python nodes go in `IO_REMOVAL_VERSION`. Every such entry
-    point warns through this helper, so the message has one shape:
-    ```<name>` is deprecated and will be removed in pydantic-zarr <version>: ...``.
-    The default `stacklevel` names the caller of the deprecated entry point.
-    """
-    msg = (
-        f"`{name}` is deprecated and will be removed in pydantic-zarr {IO_REMOVAL_VERSION}: "
-        "pydantic-zarr models metadata documents and leaves reading and writing them to "
-        f"zarr-python. {replacement} See {IO_DOCS_URL}"
-    )
-    warnings.warn(msg, DeprecationWarning, stacklevel=stacklevel)
-
-
-# TODO: expose contains_array and contains_group as public functions in zarr-python
-# and replace these custom implementations
-def maybe_node(
-    store: StoreLike, path: str, *, zarr_format: Literal[2, 3]
-) -> zarr.Array | zarr.Group | None:
-    """
-    Return the array or group found at the store / path, if an array or group exists there.
-    Otherwise return None.
-    """
-    from zarr.core.sync import sync
-    from zarr.core.sync_group import get_node
-    from zarr.storage._common import make_store_path
-
-    # convert the storelike store argument to a Zarr store
-    spath = sync(make_store_path(store, path=path))
-    try:
-        return get_node(spath.store, spath.path, zarr_format=zarr_format)
-    except FileNotFoundError:
-        return None
-
-
 def ensure_multiple(data: Sequence[T]) -> Sequence[T]:
     """
     Ensure that there is at least one element in the sequence
@@ -1026,54 +934,3 @@ def stored_flat[A: BaseModel, G: BaseModel](
                 )
                 raise ValueError(msg)
     return flat
-
-
-def walk_zarr_hierarchy(
-    node: zarr.Array | zarr.Group, *, depth: int = -1
-) -> Iterator[tuple[str, zarr.Array | zarr.Group]]:
-    """
-    Yield `(path, node)` for a zarr array or group and the members under it,
-    `depth` levels deep, with paths in the flat-hierarchy form `to_flat` uses:
-    `""` for `node` itself, then `"/a"`, `"/a/b"` and so on. A `depth` of -1
-    walks the whole hierarchy and 0 yields `node` alone.
-
-    .. deprecated:: 0.11
-        Removed in pydantic-zarr 0.12 with the rest of the zarr-python IO.
-        Walk the hierarchy with zarr-python (`zarr.Group.members`), and pass
-        the nodes' stored metadata documents to `from_stored_metadata_json`.
-
-    Raises
-    ------
-    ValueError
-        If `depth` is lower than -1.
-    """
-    warn_deprecated_io(
-        "walk_zarr_hierarchy",
-        "Walk the hierarchy with zarr-python (`zarr.Group.members`), and pass the nodes' "
-        "stored metadata documents to `from_stored_metadata_json`.",
-    )
-    return _walk_zarr_hierarchy(node, depth=depth)
-
-
-def _walk_zarr_hierarchy(
-    node: zarr.Array | zarr.Group, *, depth: int = -1
-) -> Iterator[tuple[str, zarr.Array | zarr.Group]]:
-    """`walk_zarr_hierarchy` without the deprecation warning: the engine of the v2 and v3 `from_zarr_flat`."""
-    if depth < -1:
-        msg = f"Invalid value for depth. Got {depth}, expected an integer greater than or equal to -1."
-        raise ValueError(msg)
-    yield "", node
-    yield from _walk_members(node, "", depth)
-
-
-def _walk_members(
-    node: zarr.Array | zarr.Group, prefix: str, depth: int
-) -> Iterator[tuple[str, zarr.Array | zarr.Group]]:
-    import zarr
-
-    if depth == 0 or not isinstance(node, zarr.Group):
-        return
-    for name, member in node.members():
-        path = f"{prefix}/{name}"
-        yield path, member
-        yield from _walk_members(member, path, max(depth - 1, -1))

@@ -4,7 +4,7 @@
 
 The `GroupSpec` and `ArraySpec` classes model Zarr v2 groups and arrays as their metadata documents. `pydantic-zarr` does no IO of its own: a spec gives the documents a store holds (`to_stored_metadata_json`) and reads such documents back (`from_stored_metadata_json`), and moving documents in and out of a store is the job of a Zarr implementation such as `zarr-python`. [Stored metadata documents](#stored-metadata-documents) describes the documents; [Reading and writing with zarr-python](#reading-and-writing-with-zarr-python) connects them to a `zarr-python` store. Neither direction reads or writes array data.
 
-> The `to_zarr` and `from_zarr` methods, the module-level `to_zarr`, `from_zarr` and `from_zarr_flat`, and `like` given a `zarr.Array` or `zarr.Group` are deprecated and will be removed in `pydantic-zarr` 0.12. Each warns once, naming its replacement.
+> Up to `pydantic-zarr` 0.11, the `to_zarr` and `from_zarr` methods, the module-level `to_zarr`, `from_zarr` and `from_zarr_flat`, and `like` given a `zarr.Array` or `zarr.Group` read and wrote `zarr-python` nodes. They were removed in 0.12.
 
 Reading a hierarchy `zarr-python` wrote means collecting the documents it stored. A `zarr.Group` lists the nodes under it, and each node's `metadata.to_buffer_dict` gives its documents as the store holds them (`.zarray` or `.zgroup`, and `.zattrs`):
 

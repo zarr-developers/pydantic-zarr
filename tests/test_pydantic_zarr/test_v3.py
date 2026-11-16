@@ -5,8 +5,6 @@ import importlib
 import importlib.util
 import json
 import re
-import warnings
-from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
@@ -26,7 +24,7 @@ from zarr_metadata.v3.chunk_key_encoding.default import (
 from zarr_metadata.v3.definition import ZARR_PYTHON_CONTEXT
 
 from pydantic_zarr._metadata import CORE_AND_EXTENSIONS_CONTEXT, CORE_CONTEXT
-from pydantic_zarr.core import AttributesBase, tuplify_json, walk_zarr_hierarchy
+from pydantic_zarr.core import AttributesBase, tuplify_json
 from pydantic_zarr.v3 import (
     _SINGLE_BYTE_DATA_TYPES,
     AnyArraySpec,
@@ -39,32 +37,20 @@ from pydantic_zarr.v3 import (
     GroupSpec,
     NamedConfig,
     auto_codecs,
-    from_flat,
-    from_zarr,
-    from_zarr_flat,
     is_array_spec,
     is_group_spec,
     parse_dtype_v3,
-    to_zarr,
 )
 
 from .conftest import DTYPE_EXAMPLES_V3, ZARR_PYTHON_VERSION, DTypeExample
+from .zarr_documents import read_documents, write_hierarchy
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    import zarr
-    from zarr.abc.store import Store
-    from zarr.core.array_spec import ArrayConfigParams
 
 ZARR_AVAILABLE = importlib.util.find_spec("zarr") is not None
-
-pytestmark = pytest.mark.filterwarnings(
-    # the zarr-python IO entry points still work, warning, until pydantic-zarr 0.12;
-    # `test_zarr_io_deprecated` checks the warnings themselves
-    "ignore:`[^`]+` is deprecated and will be removed in pydantic-zarr:DeprecationWarning"
-)
 
 
 @pytest.mark.parametrize("invalid_dimension_names", [[], "hi", ["1", 2, None]], ids=str)
@@ -136,11 +122,12 @@ def test_from_array() -> None:
             "dimension_names": None,
         }
     )
-    # check that we can write this array to zarr
-    # TODO: fix type of the store argument in to_zarr
+    # check that zarr-python can write this array's documents
     if not ZARR_AVAILABLE:
         return
-    array_spec.to_zarr(store={}, path="")  # pyrefly: ignore[bad-argument-type]
+    import zarr
+
+    write_hierarchy(array_spec, zarr.storage.MemoryStore())
 
 
 @pytest.mark.filterwarnings("ignore:The data type :FutureWarning")
@@ -196,7 +183,9 @@ def test_auto_codecs(dtype: np.dtype[Any], expected_codecs: tuple[CodecLike, ...
             "fill_value": zdt.to_json_scalar(zdt.default_scalar(), zarr_format=3),
         }
     )
-    spec.to_zarr(store={}, path="")  # pyrefly: ignore[bad-argument-type]
+    import zarr
+
+    write_hierarchy(spec, zarr.storage.MemoryStore())
 
 
 def test_arrayspec_no_empty_codecs() -> None:
@@ -222,9 +211,11 @@ def test_arrayspec_no_empty_codecs() -> None:
 @pytest.mark.filterwarnings("ignore:The data type:FutureWarning")
 @pytest.mark.filterwarnings("ignore:The codec:UserWarning")
 @pytest.mark.parametrize("dtype_example", DTYPE_EXAMPLES_V3, ids=str)
-def test_arrayspec_from_zarr(dtype_example: DTypeExample) -> None:
+def test_arrayspec_from_zarr_python_documents(dtype_example: DTypeExample) -> None:
     """
-    Test that deserializing an ArraySpec from a zarr python store works as expected.
+    The document zarr-python stores for an array of each data type reads back
+    as the spec of what the store holds, up to the codec spellings the spec
+    canonicalizes.
     """
     zarr = pytest.importorskip("zarr")
     store: dict[str, Any] = {}
@@ -238,7 +229,7 @@ def test_arrayspec_from_zarr(dtype_example: DTypeExample) -> None:
 
     arr = zarr.create_array(store=store, shape=(10,), dtype=data_type, zarr_format=3)
 
-    arr_spec: AnyArraySpec = ArraySpec.from_zarr(arr)
+    arr_spec: AnyArraySpec = ArraySpec.from_stored_metadata_json(read_documents(arr))
     expected = json.loads(store["zarr.json"].to_bytes(), object_hook=tuplify_json)
     # The spec canonicalizes two codec spellings zarr-python writes: an empty
     # configuration mapping (any codec), and the no-op endian configuration on
@@ -266,18 +257,14 @@ def test_arrayspec_from_zarr(dtype_example: DTypeExample) -> None:
     assert arr_spec.model_dump() == expected
 
 
-@pytest.mark.parametrize("path", ["", "foo"])
-@pytest.mark.parametrize("overwrite", [True, False])
 @pytest.mark.parametrize("dtype_example", DTYPE_EXAMPLES_V3, ids=str)
-@pytest.mark.parametrize("config", [{}, {"write_empty_chunks": True, "order": "F"}])
 @pytest.mark.filterwarnings("ignore:The codec `vlen-utf8`:UserWarning")
 @pytest.mark.filterwarnings("ignore:The codec `vlen-bytes`:UserWarning")
 @pytest.mark.filterwarnings("ignore:The data type :FutureWarning")
-def test_arrayspec_to_zarr(
-    path: str, overwrite: bool, config: dict[str, object], dtype_example: DTypeExample
-) -> None:
+def test_arrayspec_written_by_zarr_python(dtype_example: DTypeExample) -> None:
     """
-    Test that serializing an ArraySpec to a zarr python store works as expected.
+    An array spec of each data type zarr-python knows, with that data type's
+    default fill value, validates, and zarr-python writes its documents.
     """
     data_type = dtype_example.name
     fill_value = dtype_example.fill_value
@@ -288,8 +275,6 @@ def test_arrayspec_to_zarr(
 
     elif data_type in ("str", "string"):
         codecs = ({"name": "vlen-utf8"},)
-
-    store: dict[str, Any] = {}
 
     arr_spec: AnyArraySpec = ArraySpec(
         attributes={},
@@ -303,17 +288,9 @@ def test_arrayspec_to_zarr(
     )
     if not ZARR_AVAILABLE:
         return
-    # zarr accepts a plain dict as a store at runtime, and `config` is a loosely-typed
-    # parametrization of the `ArrayConfigParams` TypedDict.
-    arr = arr_spec.to_zarr(
-        store=cast("Store", store),
-        path=path,
-        overwrite=overwrite,
-        config=cast("ArrayConfigParams", config),
-    )
-    assert arr._async_array.metadata == arr._async_array.metadata
-    for key, value in config.items():
-        assert asdict(arr._async_array._config)[key] == value
+    import zarr
+
+    write_hierarchy(arr_spec, zarr.storage.MemoryStore())
 
 
 def get_flat_example() -> tuple[dict[str, AnyArraySpec | AnyBaseGroupSpec], AnyGroupSpec]:
@@ -361,59 +338,6 @@ class TestGroupSpec:
         assert GroupSpec.from_flat(members_flat) == root
 
 
-def _stored_hierarchy() -> tuple[zarr.Group, dict[str, AnyArraySpec | AnyBaseGroupSpec]]:
-    """Store a three-level hierarchy, and return it with its flat form as read back."""
-    zarr = pytest.importorskip("zarr")
-    codecs: tuple[CodecLike, ...] = ({"name": "bytes", "configuration": {"endian": "little"}},)
-    array: AnyArraySpec = ArraySpec.from_array(
-        np.arange(20), attributes={"level": 3}, codecs=codecs
-    )
-    tree: dict[str, AnyArraySpec | AnyBaseGroupSpec] = {
-        "": BaseGroupSpec(attributes={"level": 0}),
-        "/1": BaseGroupSpec(attributes={"level": 1}),
-        "/1/2": BaseGroupSpec(attributes={"level": 2}),
-        "/1/2/1": BaseGroupSpec(attributes={"level": 3}),
-        "/1/2/2": array,
-    }
-    stored = GroupSpec.from_flat(tree).to_zarr(zarr.storage.MemoryStore(), path="test")
-    array_read = ArraySpec.from_zarr(cast("zarr.Array", stored["1/2/2"]))
-    return stored, {**tree, "/1/2/2": array_read}
-
-
-@pytest.mark.parametrize(
-    ("path", "depth", "expected_keys"),
-    [
-        ("", 0, [""]),
-        ("", 1, ["", "/1"]),
-        ("", 2, ["", "/1", "/1/2"]),
-        ("", -1, ["", "/1", "/1/2", "/1/2/1", "/1/2/2"]),
-        ("1", 1, ["/1", "/1/2"]),
-        ("1/2/2", -1, ["/1/2/2"]),
-    ],
-)
-def test_from_zarr_flat(path: str, depth: int, expected_keys: list[str]) -> None:
-    """
-    `from_zarr_flat` reads a node and `depth` levels of members under it,
-    keyed by path relative to that node. Read in full, it is the flat form
-    of what `from_zarr` reads.
-    """
-    stored, flat = _stored_hierarchy()
-    node = stored[path] if path else stored
-    prefix = f"/{path}" if path else ""
-    expected = {key.removeprefix(prefix): flat[key] for key in expected_keys}
-    observed = from_zarr_flat(node, depth=depth)
-    assert observed == expected
-    if depth == -1:
-        assert from_flat(observed) == from_zarr(node)
-
-
-def test_from_zarr_flat_invalid_depth() -> None:
-    """`from_zarr_flat` refuses a depth below -1."""
-    stored, _ = _stored_hierarchy()
-    with pytest.raises(ValueError, match="Invalid value for depth"):
-        from_zarr_flat(stored, depth=-2)
-
-
 def test_members_none_refused() -> None:
     """`members` may not be `None`: a group without members is a `BaseGroupSpec`."""
     with pytest.raises(ValidationError, match="members"):
@@ -452,7 +376,7 @@ def test_dim_names_from_zarr_array(
     zarr = pytest.importorskip("zarr")
 
     arr = zarr.zeros(*args, **kwargs)
-    spec: AnyArraySpec = ArraySpec.from_zarr(arr)
+    spec: AnyArraySpec = ArraySpec.from_stored_metadata_json(read_documents(arr))
     assert spec.dimension_names == expected_names
 
 
@@ -494,42 +418,6 @@ def test_arrayspec_like_spec_vs_spec() -> None:
     """
     spec = _make_array_spec()
     assert spec.like(spec)
-
-
-def test_arrayspec_like_spec_vs_zarr_array() -> None:
-    """
-    Regression test: ArraySpec.like(zarr_array) must not raise NameError.
-    Previously zarr was only imported under TYPE_CHECKING so isinstance check crashed.
-    """
-    zarr = pytest.importorskip("zarr")
-    arr = zarr.create_array(store={}, shape=(4,), dtype="uint8", zarr_format=3)
-    spec: AnyArraySpec = ArraySpec.from_zarr(arr)
-    assert spec.like(arr)
-
-
-def test_from_zarr_array() -> None:
-    """
-    Regression test: module-level from_zarr on a zarr array must not raise NameError.
-    Previously the function body referenced `zarr.Array` without a runtime import.
-    """
-    zarr = pytest.importorskip("zarr")
-    from pydantic_zarr.v3 import from_zarr
-
-    arr = zarr.create_array(store={}, shape=(4,), dtype="uint8", zarr_format=3)
-    result = from_zarr(arr)
-    assert isinstance(result, ArraySpec)
-
-
-def test_from_zarr_group() -> None:
-    """
-    Regression test: module-level from_zarr on a zarr group must not raise NameError.
-    """
-    zarr = pytest.importorskip("zarr")
-    from pydantic_zarr.v3 import from_zarr
-
-    grp = zarr.open_group(store={}, mode="w", zarr_format=3)
-    result = from_zarr(grp)
-    assert isinstance(result, GroupSpec)
 
 
 def test_model_dump_exclude_dimension_names() -> None:
@@ -738,8 +626,9 @@ def test_complex_fill_value_stored(data_type: str, fill_value: object, expected:
     assert spec.fill_value == expected
     zarr = pytest.importorskip("zarr")
     store = zarr.storage.MemoryStore()
-    spec.to_zarr(store, path="a")
-    assert ArraySpec.from_zarr(zarr.open_array(store, path="a")) == spec
+    write_hierarchy(spec, store, path="a")
+    documents = read_documents(zarr.open_array(store, path="a"))
+    assert ArraySpec.from_stored_metadata_json(documents) == spec
 
 
 def test_metadata_document_validation_chunk_grid_rank_mismatch() -> None:
@@ -1319,16 +1208,19 @@ def test_base_group_spec() -> None:
 
 @pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr is required for this test")
 def test_base_group_spec_zarr_round_trip() -> None:
-    """`BaseGroupSpec.to_zarr` writes only the group's own metadata, and `from_zarr` reads it back."""
+    """
+    A `BaseGroupSpec`'s documents, written by zarr-python as the group's own
+    metadata, read back as the spec.
+    """
     import zarr.storage
 
     from pydantic_zarr.v3 import BaseGroupSpec
 
     store = zarr.storage.MemoryStore()
     base = BaseGroupSpec(attributes={"a": 1})
-    group = base.to_zarr(store, path="g")
+    group = write_hierarchy(base, store, path="g")
     assert group.attrs.asdict() == {"a": 1}
-    assert BaseGroupSpec.from_zarr(group) == base
+    assert BaseGroupSpec.from_stored_metadata_json(read_documents(group)) == base
 
 
 def test_narrowing_helpers() -> None:
@@ -1435,45 +1327,6 @@ def test_group_like_canonical_unalike(other_members: dict[str, object]) -> None:
     )
     assert not group.like(other)
     assert not other.like(group)
-
-
-@pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr is required for this test")
-def test_from_array_zarr_array_fidelity() -> None:
-    """
-    `from_array` on a `zarr.Array` reads the array's whole stored metadata
-    document, so the chunk grid, chunk key encoding and attributes survive,
-    and an explicit (non-"auto") keyword argument overrides the stored value.
-    """
-    import zarr
-
-    arr = zarr.create_array(
-        store={},
-        shape=(64, 64),
-        dtype="float32",
-        chunks=(16, 16),
-        chunk_key_encoding={"name": "v2", "separator": "."},
-        zarr_format=3,
-    )
-    arr.attrs.put({"a": 1})
-    spec: AnyArraySpec = ArraySpec.from_array(arr)
-    assert spec == ArraySpec.from_zarr(arr)
-    assert spec.chunk_grid == {"name": "regular", "configuration": {"chunk_shape": (16, 16)}}
-    assert spec.chunk_key_encoding == {"name": "v2", "configuration": {"separator": "."}}
-    assert spec.attributes == {"a": 1}
-    overridden: AnyArraySpec = ArraySpec.from_array(arr, attributes={"b": 2}, fill_value=1.5)
-    assert overridden.attributes == {"b": 2}
-    assert overridden.fill_value == 1.5
-    assert overridden.chunk_grid == spec.chunk_grid
-
-
-@pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr is required for this test")
-def test_from_array_zarr_v2_array_rejected() -> None:
-    """A Zarr V2 `zarr.Array` is refused by the v3 `from_array`."""
-    import zarr
-
-    arr = zarr.create_array(store={}, shape=(4,), dtype="uint8", chunks=(2,), zarr_format=2)
-    with pytest.raises(ValueError, match="Only zarr v3 arrays"):
-        ArraySpec.from_array(arr)
 
 
 def test_attributes_default() -> None:
@@ -2316,8 +2169,8 @@ def test_variable_length_round_trip(data_type: str) -> None:
     if data_type == "variable_length_bytes" and ZARR_PYTHON_VERSION < Version("3.1.0"):
         pytest.skip("zarr-python < 3.1 does not know the variable_length_bytes data type")
     spec = _ZarrPythonArraySpec.create_default(shape=(4,), data_type=data_type)
-    arr = spec.to_zarr(zarr.storage.MemoryStore(), path="x")
-    assert _ZarrPythonArraySpec.from_zarr(arr) == spec
+    arr = write_hierarchy(spec, zarr.storage.MemoryStore(), path="x")
+    assert _ZarrPythonArraySpec.from_stored_metadata_json(read_documents(arr)) == spec
 
 
 def test_with_sharding_codec() -> None:
@@ -2392,8 +2245,8 @@ def test_with_sharding_codec_round_trip() -> None:
         data_type="uint16",
         chunk_grid={"name": "regular", "configuration": {"chunk_shape": (8, 8)}},
     ).with_sharding_codec((4, 4))
-    arr = sharded.to_zarr(zarr.storage.MemoryStore(), path="x")
-    assert ArraySpec.from_zarr(arr) == sharded
+    arr = write_hierarchy(sharded, zarr.storage.MemoryStore(), path="x")
+    assert ArraySpec.from_stored_metadata_json(read_documents(arr)) == sharded
 
 
 class _AliasedAttrs(BaseModel):
@@ -2562,9 +2415,10 @@ def test_to_stored_metadata_json(
     node and, for a `GroupSpec`, of each member at any depth, each at its
     `zarr.json` key prefixed by the member's path. Read back from JSON, each
     document is what `zarr-metadata`'s `to_key_value` writes for the node,
-    and the keys are the ones `to_zarr` writes. `from_stored_metadata_json`
-    reads the layout back as the same spec, and so does `from_zarr` once the
-    documents are written to a directory as JSON.
+    and the keys are the ones zarr-python writes from the documents.
+    `from_stored_metadata_json` reads the layout back as the same spec, and
+    so it reads the documents zarr-python finds once the layout is written
+    to a directory as JSON.
     """
     stored = spec.to_stored_metadata_json()
     assert stored == expected
@@ -2577,12 +2431,13 @@ def test_to_stored_metadata_json(
     if is_array_spec(spec) and spec.extra_fields and ZARR_PYTHON_VERSION < Version("3.1.0"):
         pytest.skip("zarr-python stores an array's extra fields from 3.1")
     store = zarr.storage.MemoryStore()
-    spec.to_zarr(store, path="")
+    write_hierarchy(spec, store)
     assert store._store_dict.keys() == stored.keys()
     for key, document in stored.items():
         (tmp_path / key).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / key).write_text(json.dumps(document))
-    assert type(spec).from_zarr(zarr.open(tmp_path, mode="r", zarr_format=3)) == spec
+    documents = read_documents(zarr.open(tmp_path, mode="r", zarr_format=3))
+    assert type(spec).from_stored_metadata_json(documents) == spec
 
 
 def test_from_stored_metadata_json_base_group_reads_root() -> None:
@@ -2766,88 +2621,3 @@ def test_chunk_grid_invalid_configuration_refused() -> None:
                 "chunk_grid": {"name": "rectilinear", "configuration": {"kind": "inline"}},
             }
         )
-
-
-_DEPRECATED_IO_V3: list[
-    tuple[str, Callable[[AnyGroupSpec, zarr.Group, zarr.Array, Any], object]]
-] = [
-    ("GroupSpec.to_zarr", lambda spec, group, array, store: spec.to_zarr(store, path="w")),
-    (
-        "BaseGroupSpec.to_zarr",
-        lambda spec, group, array, store: BaseGroupSpec().to_zarr(store, path="w"),
-    ),
-    (
-        "ArraySpec.to_zarr",
-        lambda spec, group, array, store: cast("AnyArraySpec", spec.members["x"]).to_zarr(
-            store, path="w"
-        ),
-    ),
-    ("to_zarr", lambda spec, group, array, store: to_zarr(spec, store, "w")),
-    # over an existing node, `to_zarr` compares with it: still one warning
-    (
-        "GroupSpec.to_zarr",
-        lambda spec, group, array, store: spec.to_zarr(store, path="g", overwrite=True),
-    ),
-    (
-        "BaseGroupSpec.to_zarr",
-        lambda spec, group, array, store: BaseGroupSpec().to_zarr(store, path="g", overwrite=True),
-    ),
-    (
-        "ArraySpec.to_zarr",
-        lambda spec, group, array, store: cast("AnyArraySpec", spec.members["x"]).to_zarr(
-            store, path="g/x", overwrite=True
-        ),
-    ),
-    ("GroupSpec.from_zarr", lambda spec, group, array, store: GroupSpec.from_zarr(group)),
-    ("BaseGroupSpec.from_zarr", lambda spec, group, array, store: BaseGroupSpec.from_zarr(group)),
-    ("ArraySpec.from_zarr", lambda spec, group, array, store: ArraySpec.from_zarr(array)),
-    ("from_zarr", lambda spec, group, array, store: from_zarr(group)),
-    ("from_zarr_flat", lambda spec, group, array, store: from_zarr_flat(group)),
-    ("GroupSpec.like with a zarr.Group", lambda spec, group, array, store: spec.like(group)),
-    (
-        "BaseGroupSpec.like with a zarr.Group",
-        lambda spec, group, array, store: BaseGroupSpec().like(group),
-    ),
-    (
-        "ArraySpec.like with a zarr.Array",
-        lambda spec, group, array, store: cast("AnyArraySpec", spec.members["x"]).like(array),
-    ),
-    (
-        "ArraySpec.from_array with a zarr.Array",
-        lambda spec, group, array, store: ArraySpec.from_array(array),
-    ),
-    ("walk_zarr_hierarchy", lambda spec, group, array, store: list(walk_zarr_hierarchy(group))),
-]
-
-
-@pytest.mark.skipif(not ZARR_AVAILABLE, reason="zarr is required for this test")
-@pytest.mark.parametrize(
-    ("name", "entry_point"), _DEPRECATED_IO_V3, ids=[n for n, _ in _DEPRECATED_IO_V3]
-)
-def test_zarr_io_deprecated(
-    name: str, entry_point: Callable[[AnyGroupSpec, zarr.Group, zarr.Array, Any], object]
-) -> None:
-    """
-    Every entry point that reads or writes zarr-python nodes warns that it is
-    deprecated, exactly once, naming itself: a group's hierarchy is handled
-    through private paths, so its members add no warnings of their own.
-    """
-    import zarr
-
-    store = zarr.storage.MemoryStore()
-    group = zarr.create_group(store, path="g", zarr_format=3)
-    array_node = group.create_array("x", shape=(2,), dtype="uint8")
-    group.create_group("sub").create_array("y", shape=(2,), dtype="uint8")
-    array = ArraySpec.create_default(shape=(2,), data_type="uint8")
-    spec = GroupSpec(members={"x": array, "sub": GroupSpec(members={"y": array})})
-
-    with warnings.catch_warnings(record=True) as record:
-        warnings.simplefilter("always")
-        entry_point(spec, group, array_node, store)
-    deprecations = [
-        str(w.message)
-        for w in record
-        if issubclass(w.category, DeprecationWarning) and "pydantic-zarr 0.12" in str(w.message)
-    ]
-    assert [message.split("`")[1] for message in deprecations] == [name]
-    assert "from_stored_metadata_json" in deprecations[0] or "create_hierarchy" in deprecations[0]
