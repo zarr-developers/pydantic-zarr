@@ -1,20 +1,22 @@
 from __future__ import annotations
 
 import math
+import operator
+import sys
 import warnings
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from functools import cache
 from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Annotated,
-    Any,
     Final,
     Literal,
     Protocol,
     Self,
     TypedDict,
     TypeVar,
+    cast,
     overload,
     override,
     runtime_checkable,
@@ -28,15 +30,18 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    GetJsonSchemaHandler,
     ModelWrapValidatorHandler,
     PrivateAttr,
     SerializationInfo,
     SerializerFunctionWrapHandler,
     TypeAdapter,
+    field_serializer,
     field_validator,
     model_serializer,
     model_validator,
 )
+from typing_extensions import TypeIs
 
 # pydantic resolves the `extra_fields` annotation at runtime
 from zarr_metadata import JSONValue  # noqa: TC002
@@ -60,6 +65,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     import zarr
+    from pydantic.json_schema import JsonSchemaValue
+    from pydantic_core import CoreSchema, SchemaSerializer
     from zarr.core.array_spec import ArrayConfigParams
     from zarr.storage._common import StoreLike
 
@@ -108,32 +115,78 @@ def tuplify_json(obj: object) -> object:
         return obj
 
 
+@cache
+def _attributes_serializer(spec: type[BaseModel]) -> SchemaSerializer:
+    """
+    A serializer for the `attributes` field of `spec`, built from the field's
+    annotation alone, so it serializes as the field does but without the
+    field serializer that calls it. Cached per class.
+    """
+    return TypeAdapter(spec.model_fields["attributes"].rebuild_annotation()).serializer
+
+
+def serialize_attributes(
+    spec: type[BaseModel],
+    value: object,
+    handler: SerializerFunctionWrapHandler,
+    info: SerializationInfo,
+) -> object:
+    """
+    Serialize the attributes of a node of class `spec` with their aliases
+    unless the dump says `by_alias=False`.
+
+    The aliases of an attribute model spell stored metadata keys that are not
+    Python identifiers (`_FillValue`, `image-label`, `proj:code`), so without
+    this default a hierarchy would be written under the Python field names. A
+    spec's own fields declare no aliases, so the default only reaches the
+    attributes: an attribute model, or the models in an attributes mapping.
+    It lives in the serializer, not in `model_dump`, so that every way of
+    dumping a spec applies it: `model_dump`, `model_dump_json`, a
+    `TypeAdapter`, and a spec held by another model. The dump's other
+    settings carry over, including the part of `include` and `exclude` that
+    selects within the attributes.
+
+    An attribute model is serialized with its own schema, as `SerializeAsAny`
+    would; anything else as the `attributes` field declares.
+    """
+    if info.by_alias is not None:
+        return handler(value)
+    serializer = (
+        value.__pydantic_serializer__
+        if isinstance(value, BaseModel)
+        else _attributes_serializer(spec)
+    )
+    # the casts bridge pydantic-core's stubs, which type the selection a dump
+    # hands on (`set[int | str] | dict[int | str, ...]`) wider than the
+    # selection `to_python` takes (`set[int] | set[str] | Mapping[...]`),
+    # though both are the same value at runtime
+    return serializer.to_python(
+        value,
+        mode=info.mode,
+        by_alias=True,
+        include=cast("IncEx", info.include),
+        exclude=cast("IncEx", info.exclude),
+        context=info.context,
+        exclude_unset=info.exclude_unset,
+        exclude_defaults=info.exclude_defaults,
+        exclude_none=info.exclude_none,
+        exclude_computed_fields=info.exclude_computed_fields,
+        round_trip=info.round_trip,
+        serialize_as_any=info.serialize_as_any,
+    )
+
+
 class StrictBase(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    # `Any`, as in `BaseModel.model_dump`: the keyword arguments are passed on
-    # to pydantic, whose signature changes across the supported pydantic
-    # versions, and the dumped values are whatever the fields hold, which
-    # callers index as they do any other model's dump
-    @override
-    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
-        """
-        Serialize with `by_alias=True` unless told otherwise: a spec's own
-        fields declare no aliases, so this only affects attribute models,
-        whose aliases spell stored metadata keys that are not Python
-        identifiers (`_FillValue`, `image-label`, `proj:code`). Without this
-        default, a hierarchy would be silently written to storage under the
-        Python field names.
-        """
-        kwargs.setdefault("by_alias", True)
-        return super().model_dump(**kwargs)
-
-    # `Any`: the keyword arguments are passed on to pydantic; see `model_dump`
-    @override
-    def model_dump_json(self, **kwargs: Any) -> str:
-        """Serialize to JSON with `by_alias=True` unless told otherwise; see `model_dump`."""
-        kwargs.setdefault("by_alias", True)
-        return super().model_dump_json(**kwargs)
+    # unannotated: pydantic takes a wrap serializer's return annotation as the
+    # field's serialization schema, which would replace the attributes' own
+    @field_serializer("attributes", mode="wrap", check_fields=False)
+    def _serialize_attributes(  # noqa: ANN202
+        self, value: object, handler: SerializerFunctionWrapHandler, info: SerializationInfo
+    ):
+        """Dump an attribute model with its aliases by default; see `serialize_attributes`."""
+        return serialize_attributes(type(self), value, handler, info)
 
 
 EXTRA_FIELDS = "extra_fields"
@@ -213,10 +266,35 @@ class ExtraFieldsBase(StrictBase):
             raise ValueError(msg)
         return value
 
+    # No return annotation: pydantic takes a wrap serializer's return annotation
+    # as the serialization schema, which would replace the fields' schema in
+    # `model_json_schema(mode="serialization")` with an open object.
     @model_serializer(mode="wrap")
-    def _serialize_document(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
+    def _serialize_document(self, handler: SerializerFunctionWrapHandler):  # noqa: ANN202
         """Write the extra fields as top-level members of the dumped document."""
         return flatten_extra_fields(handler(self))
+
+    @override
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler, /
+    ) -> JsonSchemaValue:
+        """
+        Describe the document, not the model: a document holds its extra
+        fields as top-level members and has no `extra_fields` member, so the
+        schema (in either mode, matching what validation reads and what
+        `model_dump` writes) types the members it does not declare as an
+        extra field's value, in place of the `extra_fields` property, and
+        admits no member named `extra_fields`. A declared field is a property,
+        which `additionalProperties` does not reach.
+        """
+        json_schema = handler(core_schema)
+        definition = handler.resolve_ref_schema(json_schema)
+        container = definition.get("properties", {}).pop(EXTRA_FIELDS, None)
+        if container is not None:
+            definition["additionalProperties"] = container["additionalProperties"]
+            definition["propertyNames"] = {"not": {"const": EXTRA_FIELDS}}
+        return json_schema
 
     def __repr_args__(self) -> Iterator[tuple[str | None, object]]:
         """Show `extra_fields` last, and only when the document holds some."""
@@ -339,10 +417,13 @@ class _OpenModel(BaseModel):
         model._extra_fields = extra
         return model
 
+    # No return annotation, as on `ExtraFieldsBase`: pydantic takes a wrap serializer's return annotation
+    # as the serialization schema, which would replace the fields' schema in
+    # `model_json_schema(mode="serialization")` with an open object.
     @model_serializer(mode="wrap")
-    def _serialize_document(
+    def _serialize_document(  # noqa: ANN202
         self, handler: SerializerFunctionWrapHandler, info: SerializationInfo
-    ) -> dict[str, object]:
+    ):
         """Write the extra fields the dump selects as top-level keys of the dumped document."""
         extra = {
             key: value
@@ -518,6 +599,62 @@ def resolve_member_path(node: object, path: str) -> object:
         node = node.members[segment]
         resolved.append(segment)
     return node
+
+
+def is_zarr_array(obj: object) -> TypeIs[zarr.Array]:
+    """
+    Whether `obj` is a `zarr.Array`, without importing zarr: an instance cannot
+    exist unless zarr is imported, and zarr is an optional dependency.
+    """
+    zarr_module = sys.modules.get("zarr")
+    return zarr_module is not None and isinstance(obj, zarr_module.Array)
+
+
+def is_zarr_group(obj: object) -> TypeIs[zarr.Group]:
+    """
+    Whether `obj` is a `zarr.Group`, without importing zarr: an instance cannot
+    exist unless zarr is imported, and zarr is an optional dependency.
+    """
+    zarr_module = sys.modules.get("zarr")
+    return zarr_module is not None and isinstance(obj, zarr_module.Group)
+
+
+def read_attribute(data: object, name: str) -> object:
+    """
+    `data.<name>`, typed as the `object` it is. The `auto_*` readers of the v2
+    and v3 `from_array` probe a duck-typed array (numpy, dask, zarr, a spec)
+    with `hasattr` and read what they find through this function, then check
+    the value before returning it as the type they promise.
+    """
+    return getattr(data, name)
+
+
+def as_shape(value: object) -> tuple[int, ...]:
+    """
+    `value`, an array's shape or chunk shape read from a duck-typed array, as
+    a tuple of ints. Each element is converted with `operator.index`, which
+    takes Python and numpy integers alike.
+
+    Raises
+    ------
+    TypeError
+        If `value` is not an iterable of integers.
+    """
+    if not isinstance(value, Iterable) or isinstance(value, str | bytes):
+        msg = f"Expected an iterable of integers, got {value!r}."
+        raise TypeError(msg)
+    return tuple(operator.index(n) for n in value)
+
+
+def as_dtype_like(value: object) -> npt.DTypeLike:
+    """
+    `value`, the `dtype` read from a duck-typed array, as numpy's `DTypeLike`.
+    `DTypeLike` cannot be checked with `isinstance`, and every consumer of the
+    result (`np.dtype` and the `parse_dtype_*` functions it backs) validates
+    it and raises `TypeError` on a value numpy cannot read as a data type, so
+    the value passes through unchanged.
+    """
+    return cast("npt.DTypeLike", value)
 
 
 def guess_chunks(shape: tuple[int, ...], typesize: int) -> tuple[int, ...]:

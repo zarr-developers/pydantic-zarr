@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from importlib.metadata import version
 from typing import (
     TYPE_CHECKING,
@@ -61,14 +61,19 @@ from pydantic_zarr.core import (
     StoredNodeType,
     StrictBase,
     _walk_zarr_hierarchy,
+    as_dtype_like,
+    as_shape,
     canonicalize_fill_value,
     copy_members,
     ensure_key_no_path,
     ensure_members_mapping,
     guess_chunks,
+    is_zarr_array,
+    is_zarr_group,
     maybe_node,
     model_like,
     parse_dtype_v2,
+    read_attribute,
     resolve_member_path,
     split_store_key,
     stored_array,
@@ -176,10 +181,18 @@ def dictify_codec(value: object) -> object:
         object is returned. This should be a dict with string keys. All other values pass
         through unaltered.
     """
-    # a Codec instance cannot exist unless numcodecs is imported
-    if (numcodecs := sys.modules.get("numcodecs")) and isinstance(value, numcodecs.abc.Codec):
+    if _is_codec(value):
         return value.get_config()
     return value
+
+
+def _is_codec(obj: object) -> TypeIs[Codec]:
+    """
+    Whether `obj` is a `numcodecs.abc.Codec`, without importing numcodecs: an
+    instance cannot exist unless numcodecs is imported.
+    """
+    numcodecs = sys.modules.get("numcodecs")
+    return numcodecs is not None and isinstance(obj, numcodecs.abc.Codec)
 
 
 def parse_dimension_separator(data: object) -> DimensionSeparator:
@@ -198,10 +211,10 @@ def parse_dimension_separator(data: object) -> DimensionSeparator:
     -------
     Literal["/", "."]
     """
-    if data is None:
+    if data is None or data == ".":
         return "."
-    if data == "/" or data == ".":
-        return data
+    if data == "/":
+        return "/"
     raise ValueError(f'Invalid data, expected one of ("/", ".", None), got {data}')
 
 
@@ -233,7 +246,7 @@ class NodeSpec(StrictBase):
         return cast("Any", self).replace(**changes)
 
 
-class ArraySpecUpdate(TypedDict, total=False):
+class ArraySpecUpdate(TypedDict, total=False, closed=True):
     """
     The fields an `ArraySpec.replace` call may replace, of the types an input
     takes: validation writes them as the types the spec holds (a numpy dtype as
@@ -253,13 +266,13 @@ class ArraySpecUpdate(TypedDict, total=False):
     extra_fields: Mapping[str, JSONValue]
 
 
-class BaseGroupSpecUpdate(TypedDict, total=False):
+class BaseGroupSpecUpdate(TypedDict, total=False, closed=True):
     """The fields a `BaseGroupSpec.replace` call may replace."""
 
     attributes: TBaseAttr
 
 
-class GroupSpecUpdate(TypedDict, total=False):
+class GroupSpecUpdate(TypedDict, total=False, closed=True):
     """The fields a `GroupSpec.replace` call may replace."""
 
     attributes: TBaseAttr
@@ -745,7 +758,7 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         >>> print(x.like(y, exclude={'attributes'}))
         True
         """
-        if (zarr := sys.modules.get("zarr")) is not None and isinstance(other, zarr.Array):
+        if is_zarr_array(other):
             warn_deprecated_io("ArraySpec.like with a zarr.Array", LIKE_REPLACEMENT)
         return self._like(other, include=include, exclude=exclude)
 
@@ -759,10 +772,10 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         """`like` without the deprecation warning, for the deprecated IO paths to call."""
 
         other_parsed: ArraySpec
-        if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Array):
-            other_parsed = ArraySpec._from_zarr(other)
+        if isinstance(other, ArraySpec):
+            other_parsed = other
         else:
-            other_parsed = other  # type: ignore[assignment]
+            other_parsed = ArraySpec._from_zarr(other)
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
@@ -859,7 +872,8 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
     @classmethod
     def _from_zarr(cls, group: zarr.Group) -> Self:
         """`from_zarr` without the deprecation warning."""
-        return cls(attributes=group.attrs.asdict())
+        # validation enforces the class's attributes type
+        return cls.model_validate({"attributes": group.attrs.asdict()})
 
     def to_zarr(self, store: Store, path: str, *, overwrite: bool = False) -> zarr.Group:
         """
@@ -910,7 +924,7 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         participate in the comparison: a `GroupSpec` or `zarr.Group` is reduced
         to its own metadata first.
         """
-        if (zarr := sys.modules.get("zarr")) is not None and isinstance(other, zarr.Group):
+        if is_zarr_group(other):
             warn_deprecated_io("BaseGroupSpec.like with a zarr.Group", LIKE_REPLACEMENT)
         return self._like(other, include=include, exclude=exclude)
 
@@ -923,12 +937,12 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
     ) -> bool:
         """`like` without the deprecation warning, for the deprecated IO paths to call."""
         other_parsed: AnyBaseGroupSpec
-        if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
-            other_parsed = BaseGroupSpec._from_zarr(other)
-        elif isinstance(other, GroupSpec):
+        if isinstance(other, GroupSpec):
             other_parsed = BaseGroupSpec(attributes=other.attributes)
+        elif isinstance(other, BaseGroupSpec):
+            other_parsed = other
         else:
-            other_parsed = cast("AnyBaseGroupSpec", other)
+            other_parsed = BaseGroupSpec._from_zarr(other)
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
@@ -965,10 +979,14 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
     # an unparameterized GroupSpec() then has the default members type
     members: TMembers = Field(default=cast("TMembers", {}), validate_default=True)
 
-    @field_validator("members", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def _copy_members(cls, value: object) -> object:
-        return copy_members(value)
+    def _copy_members(cls, data: object) -> object:
+        # a model validator, not a field one: pyrefly and ty widen the
+        # `__init__` parameter of a field with a before validator to `Any`
+        if isinstance(data, Mapping) and "members" in data:
+            return {**data, "members": copy_members(data["members"])}
+        return data
 
     @model_validator(mode="after")
     def validate_member_names(self) -> Self:
@@ -984,7 +1002,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
         return self
 
     @override
-    def replace(self, **changes: Unpack[GroupSpecUpdate]) -> Self:  # type: ignore[override]
+    def replace(self, **changes: Unpack[GroupSpecUpdate]) -> Self:
         """
         Return a revalidated copy of this model with `changes` applied.
 
@@ -1083,7 +1101,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
                 # convert to dict before the final typed GroupSpec construction
                 item_out = GroupSpec._from_zarr(item).model_dump()
             else:
-                msg = (  # type: ignore[unreachable]
+                msg = (
                     f"Unparsable object encountered: {type(item)}. Expected zarr.Array"
                     " or zarr.Group."
                 )
@@ -1091,7 +1109,8 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
                 raise ValueError(msg)  # noqa: TRY004
             members[name] = item_out
 
-        return cls(attributes=attributes, members=members)
+        # validation enforces the class's attributes and members types
+        return cls.model_validate({"attributes": attributes, "members": members})
 
     @override
     def to_zarr(
@@ -1237,7 +1256,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
         >>> print(z1.like(z2, exclude={'attributes'}))
         True
         """
-        if (zarr := sys.modules.get("zarr")) is not None and isinstance(other, zarr.Group):
+        if is_zarr_group(other):
             warn_deprecated_io("GroupSpec.like with a zarr.Group", LIKE_REPLACEMENT)
         return self._like(other, include=include, exclude=exclude)
 
@@ -1251,17 +1270,17 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
     ) -> bool:
         """`like` without the deprecation warning, for the deprecated IO paths to call."""
 
-        if isinstance(other, BaseGroupSpec) and not isinstance(other, GroupSpec):
+        other_parsed: AnyGroupSpec
+        if isinstance(other, GroupSpec):
+            other_parsed = other
+        elif isinstance(other, BaseGroupSpec):
             # a group without members compares by the group's own metadata;
             # this side projects to its own metadata too, or the comparison
             # would always fail on the members field itself
             projection = BaseGroupSpec(attributes=self.attributes)
             return projection.like(other, include=include, exclude=exclude)
-        other_parsed: GroupSpec
-        if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
-            other_parsed = GroupSpec._from_zarr(other)
         else:
-            other_parsed = other  # type: ignore[assignment]
+            other_parsed = GroupSpec._from_zarr(other)
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
@@ -1803,26 +1822,33 @@ def auto_chunks(data: object) -> tuple[int, ...]:
       input with `shape` and `dtype` attributes
     """
     if hasattr(data, "chunksize"):
-        return data.chunksize
+        return as_shape(read_attribute(data, "chunksize"))
     if hasattr(data, "chunks"):
-        return data.chunks
+        return as_shape(read_attribute(data, "chunks"))
     if hasattr(data, "shape") and hasattr(data, "dtype"):
-        return guess_chunks(data.shape, np.dtype(data.dtype).itemsize)
+        return guess_chunks(
+            as_shape(read_attribute(data, "shape")),
+            np.dtype(as_dtype_like(read_attribute(data, "dtype"))).itemsize,
+        )
     msg = "Cannot guess chunks for an object without `chunksize`, `chunks`, or `shape` and `dtype`"
     raise ValueError(msg)
 
 
-def auto_attributes(data: object) -> Mapping[str, object]:
+def auto_attributes(data: object) -> Mapping[str, object] | BaseModel:
     """
     Guess attributes from:
         input with an `attrs` attribute, or
         input with an `attributes` attribute,
         or anything (returning {})
+
+    The attributes found are a mapping, or a pydantic model (the attributes of
+    a spec). Any other value is skipped.
     """
-    if hasattr(data, "attrs"):
-        return data.attrs
-    if hasattr(data, "attributes"):
-        return data.attributes
+    for name in ("attrs", "attributes"):
+        if hasattr(data, name):
+            attributes = read_attribute(data, name)
+            if isinstance(attributes, Mapping | BaseModel):
+                return attributes
     return {}
 
 
@@ -1855,27 +1881,62 @@ def auto_fill_value(data: object) -> object:
     or 0 for an input with no dtype.
     """
     if hasattr(data, "fill_value"):
-        return data.fill_value
+        return read_attribute(data, "fill_value")
     if hasattr(data, "dtype"):
-        return dtype_default_fill_value(data.dtype)
+        return dtype_default_fill_value(as_dtype_like(read_attribute(data, "dtype")))
     return 0
 
 
-def auto_compresser(data: object) -> Codec | None:
+def _as_codec(value: object) -> Mapping[str, object] | Codec:
+    """
+    `value`, a codec read from a duck-typed array: a `numcodecs` codec, or the
+    JSON form of one (as a spec holds it).
+
+    Raises
+    ------
+    TypeError
+        If `value` is neither.
+    """
+    if _is_codec(value) or isinstance(value, Mapping):
+        return value
+    msg = f"Expected a numcodecs codec or a mapping, got {value!r}."
+    raise TypeError(msg)
+
+
+def auto_compresser(data: object) -> Mapping[str, object] | Codec | None:
     """
     Guess compressor from an input with a `compressor` attribute, returning `None` otherwise.
+    The compressor found is a `numcodecs` codec or the JSON form of one.
+
+    Raises
+    ------
+    TypeError
+        If the `compressor` attribute holds anything else.
     """
     if hasattr(data, "compressor"):
-        return data.compressor
+        compressor = read_attribute(data, "compressor")
+        return None if compressor is None else _as_codec(compressor)
     return None
 
 
-def auto_filters(data: object) -> list[Codec] | None:
+def auto_filters(data: object) -> list[Mapping[str, object] | Codec] | None:
     """
     Guess filters from an input with a `filters` attribute, returning `None` otherwise.
+    Each filter found is a `numcodecs` codec or the JSON form of one.
+
+    Raises
+    ------
+    TypeError
+        If the `filters` attribute is not `None` or an iterable of those.
     """
     if hasattr(data, "filters"):
-        return data.filters
+        filters = read_attribute(data, "filters")
+        if filters is None:
+            return None
+        if not isinstance(filters, Iterable) or isinstance(filters, str | Mapping):
+            msg = f"Expected an iterable of codecs, got {filters!r}."
+            raise TypeError(msg)
+        return [_as_codec(f) for f in filters]
     return None
 
 
@@ -1884,8 +1945,9 @@ def auto_order(data: object) -> MemoryOrder:
     Guess array order from an input with an `order` attribute, returning "C" otherwise.
     """
     if hasattr(data, "order"):
-        if data.order in get_args(MemoryOrder):
-            return cast("MemoryOrder", data.order)
+        order = read_attribute(data, "order")
+        if order in get_args(MemoryOrder):
+            return cast("MemoryOrder", order)
         else:
             raise ValueError(f"Order attribute not in {get_args(MemoryOrder)}")
     return "C"
@@ -1896,8 +1958,9 @@ def auto_dimension_separator(data: object) -> DimensionSeparator:
     Guess dimension separator from an input with a `dimension_separator` attribute, returning "/" otherwise.
     """
     if hasattr(data, "dimension_separator"):
-        if data.dimension_separator in get_args(DimensionSeparator):
-            return cast("DimensionSeparator", data.dimension_separator)
+        separator = read_attribute(data, "dimension_separator")
+        if separator in get_args(DimensionSeparator):
+            return cast("DimensionSeparator", separator)
         else:
             raise ValueError(f"Dimension separator attribute not in {get_args(DimensionSeparator)}")
     return "/"

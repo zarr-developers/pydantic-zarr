@@ -29,11 +29,13 @@ setup:
 lint:
     prek run --all-files --show-diff-on-failure
 
+# `experimental` is excluded from pyright in [tool.pyright], since the pyright
+# CLI takes no --exclude.
 # Run the type checkers (pyrefly, ty and pyright; see the `types` group)
 typecheck:
     {{ run }} --group types pyrefly check
-    {{ run }} --group types ty check src/pydantic_zarr/core.py src/pydantic_zarr/_metadata.py tests/typing_conformance.py
-    {{ run }} --group types pyright tests/typing_conformance.py
+    {{ run }} --group types ty check src/pydantic_zarr tests/typing_conformance.py --exclude src/pydantic_zarr/experimental
+    {{ run }} --group types pyright src/pydantic_zarr tests/typing_conformance.py
 
 # The zarr-python a test cell runs on: the locked one, replaced by `zarr~=<zarr>`
 _zarr := "--with zarr~=" + zarr

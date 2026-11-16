@@ -21,8 +21,8 @@ repos:
     hooks:
     - id: check-yaml
     - id: trailing-whitespace
-  # NOTE: the type checker (pyrefly) is deliberately not a pre-commit hook. Type checking
-  # runs via the `types` hatch environment (`hatch run types:check`, or `just typecheck`),
+  # NOTE: the type checkers are deliberately not pre-commit hooks. Type checking
+  # runs via `just typecheck` (the `types` dependency group, installed from uv.lock),
   # which is also what the `typecheck` CI job runs. Keeping a single entry point means the
   # type checker version and the dependencies being checked against cannot drift from what
   # the tests actually use.
@@ -35,6 +35,16 @@ repos:
     hooks:
       - id: rst-directive-colons
       - id: rst-inline-touching-normal
+  - repo: local
+    hooks:
+      # pyrefly does not check the codes of a `# type: ignore[...]`, nor report
+      # one that is no longer needed; a `# pyrefly: ignore[<kind>]` is checked
+      # by the `unused-ignore` error in pyproject.toml
+      - id: no-type-ignore
+        name: "use `# pyrefly: ignore[<kind>]`, not `# type: ignore`"
+        language: pygrep
+        entry: '#\s*type:\s*ignore'
+        types: [python]
   - repo: https://github.com/numpy/numpydoc
     rev: v1.8.0
     hooks:

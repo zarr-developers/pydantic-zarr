@@ -245,7 +245,7 @@ reference = xr.Dataset(
 ref_store = zarr.storage.MemoryStore()
 # suppress xarray's CF _FillValue attribute on the float coordinates; the
 # zarr-level fill_value ("NaN") is still written
-reference.to_zarr(  # type: ignore[no-matching-overload]
+reference.to_zarr(
     ref_store,
     zarr_format=3,
     consolidated=False,

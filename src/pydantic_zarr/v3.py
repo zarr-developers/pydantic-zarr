@@ -3,8 +3,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import json
-import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from importlib.metadata import version
 from typing import (
     TYPE_CHECKING,
@@ -34,7 +33,6 @@ from pydantic import (
     SerializerFunctionWrapHandler,
     ValidationError,
     ValidationInfo,
-    field_validator,
     model_serializer,
     model_validator,
 )
@@ -84,14 +82,19 @@ from pydantic_zarr.core import (
     MemberToZarrOptions,
     StoredNodes,
     _walk_zarr_hierarchy,
+    as_dtype_like,
+    as_shape,
     canonicalize_fill_value,
     copy_members,
     ensure_members_mapping,
     ensure_multiple,
     flatten_extra_fields,
     guess_chunks,
+    is_zarr_array,
+    is_zarr_group,
     maybe_node,
     model_like,
+    read_attribute,
     resolve_member_path,
     split_store_key,
     stored_array,
@@ -814,20 +817,20 @@ class ArraySpecCreate(TypedDict, total=False):
     extra_fields: Mapping[str, ZarrV3ExtensionField]
 
 
-class ArraySpecUpdate(ArraySpecCreate, total=False):
+class ArraySpecUpdate(ArraySpecCreate, total=False, closed=True):
     """The fields an `ArraySpec.replace` call may replace."""
 
     chunk_grid: ChunkGridLike
 
 
-class BaseGroupSpecUpdate(TypedDict, total=False):
+class BaseGroupSpecUpdate(TypedDict, total=False, closed=True):
     """The fields a `BaseGroupSpec.replace` call may replace."""
 
     attributes: TBaseAttr
     extra_fields: Mapping[str, ZarrV3ExtensionField]
 
 
-class GroupSpecUpdate(TypedDict, total=False):
+class GroupSpecUpdate(TypedDict, total=False, closed=True):
     """The fields a `GroupSpec.replace` call may replace."""
 
     attributes: TBaseAttr
@@ -1071,8 +1074,10 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         except MetadataValidationError as e:
             raise ValueError(format_problems(e)) from e
 
+    # No return annotation, as on `ExtraFieldsBase`: pydantic would take it as
+    # the serialization schema in place of the fields' schema.
     @model_serializer(mode="wrap")
-    def _serialize_document(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
+    def _serialize_document(self, handler: SerializerFunctionWrapHandler):  # noqa: ANN202
         """
         Omit `dimension_names` when it is `None`: the Zarr V3 spec allows the
         key to be absent, not null. This is a model serializer rather than a
@@ -1152,7 +1157,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         An instance of ArraySpec with properties derived from the provided array.
 
         """
-        if (zarr_mod := sys.modules.get("zarr")) is not None and isinstance(array, zarr_mod.Array):
+        if is_zarr_array(array):
             warn_deprecated_io(
                 "ArraySpec.from_array with a zarr.Array",
                 "Pass the array's stored metadata document to `from_stored_metadata_json`.",
@@ -1221,11 +1226,11 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         if fill_value != "auto":
             document["fill_value"] = fill_value
         elif hasattr(array, "fill_value"):
-            document["fill_value"] = array.fill_value
+            document["fill_value"] = read_attribute(array, "fill_value")
         if codecs != "auto":
             document["codecs"] = tuple(codecs)
         elif hasattr(array, "codecs"):
-            document["codecs"] = tuple(array.codecs)
+            document["codecs"] = auto_codecs(array)
         scope = CORE_AND_EXTENSIONS_CONTEXT if cls.zarr_scope is None else cls.zarr_scope
         derived = _derived_array_members(document, scope)
         # the inputs above are of the types an input takes, which validation
@@ -1380,7 +1385,10 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             raise ValueError("Only zarr v3 arrays are supported")  # noqa: TRY004
         if Version(version("zarr")) < Version("3.1.0"):
             # this class was removed from zarr python 3.1.0
-            from zarr.core.metadata.v3 import V3JsonEncoder  # type: ignore[attr-defined]
+            # the checkers see zarr-python 3.1 or later, which lacks the class
+            from zarr.core.metadata.v3 import (
+                V3JsonEncoder,  # pyrefly: ignore[missing-module-attribute]  # ty: ignore[unresolved-import]  # pyright: ignore[reportAttributeAccessIssue]
+            )
 
             meta_json = tuplify_json(
                 json.loads(json.dumps(array.metadata.to_dict(), cls=V3JsonEncoder))
@@ -1591,7 +1599,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         >>> print(x.like(y, exclude={'attributes'}))
         True
         """
-        if (zarr := sys.modules.get("zarr")) is not None and isinstance(other, zarr.Array):
+        if is_zarr_array(other):
             warn_deprecated_io("ArraySpec.like with a zarr.Array", LIKE_REPLACEMENT)
         return self._like(other, include=include, exclude=exclude)
 
@@ -1605,15 +1613,15 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         """`like` without the deprecation warning, for the deprecated IO paths to call."""
 
         other_parsed: ArraySpec
-        if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Array):
+        if isinstance(other, ArraySpec):
+            other_parsed = other
+        else:
             try:
                 other_parsed = ArraySpec._from_zarr(other)
             except ValidationError:
                 # a stored array that does not validate as a spec (one holding
                 # an extra field the spec's rules refuse, say) is like no spec
                 return False
-        else:
-            other_parsed = other  # type: ignore[assignment]
 
         if include is None and exclude is None:
             # Compare the metadata documents by meaning rather than spelling:
@@ -1633,7 +1641,9 @@ def _stores_extra_fields(metadata_class: type) -> bool:
     Whether a zarr-python metadata class keeps a document's extra fields:
     ``ArrayV3Metadata`` does from zarr-python 3.1, ``GroupMetadata`` from 3.4.
     """
-    return any(field.name == "extra_fields" for field in dataclasses.fields(metadata_class))
+    return dataclasses.is_dataclass(metadata_class) and any(
+        field.name == "extra_fields" for field in dataclasses.fields(metadata_class)
+    )
 
 
 def _stored_group_extra_fields(group: zarr.Group) -> dict[str, object]:
@@ -1900,7 +1910,7 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         validate as a spec (one holding an extra field the spec's rules refuse,
         say) is like no spec.
         """
-        if (zarr := sys.modules.get("zarr")) is not None and isinstance(other, zarr.Group):
+        if is_zarr_group(other):
             warn_deprecated_io("BaseGroupSpec.like with a zarr.Group", LIKE_REPLACEMENT)
         return self._like(other, include=include, exclude=exclude)
 
@@ -1913,16 +1923,16 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
     ) -> bool:
         """`like` without the deprecation warning, for the deprecated IO paths to call."""
         other_parsed: AnyBaseGroupSpec
-        if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
+        if isinstance(other, GroupSpec):
+            other_parsed = other._own_metadata()
+        elif isinstance(other, BaseGroupSpec):
+            other_parsed = other
+        else:
             try:
                 other_parsed = BaseGroupSpec._from_zarr(other)
             except ValidationError:
                 # a stored group that does not validate as a spec is like no spec
                 return False
-        elif isinstance(other, GroupSpec):
-            other_parsed = other._own_metadata()
-        else:
-            other_parsed = cast("AnyBaseGroupSpec", other)
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
@@ -1958,10 +1968,14 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
     # an unparameterized GroupSpec() then has the default members type
     members: TMembers = Field(default=cast("TMembers", {}), validate_default=True)
 
-    @field_validator("members", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def _copy_members(cls, value: object) -> object:
-        return copy_members(value)
+    def _copy_members(cls, data: object) -> object:
+        # a model validator, not a field one: pyrefly and ty widen the
+        # `__init__` parameter of a field with a before validator to `Any`
+        if isinstance(data, Mapping) and "members" in data:
+            return {**data, "members": copy_members(data["members"])}
+        return data
 
     @model_validator(mode="after")
     def validate_member_names(self) -> Self:
@@ -1977,7 +1991,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
         return self
 
     @override
-    def replace(self, **changes: Unpack[GroupSpecUpdate]) -> Self:  # type: ignore[override]
+    def replace(self, **changes: Unpack[GroupSpecUpdate]) -> Self:
         """
         Return a revalidated copy of this model with `changes` applied.
 
@@ -2210,7 +2224,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
                 # convert to dict before the final typed GroupSpec construction
                 item_out = GroupSpec._from_zarr(item).model_dump()
             else:
-                msg = (  # type: ignore[unreachable]
+                msg = (
                     f"Unparsable object encountered: {type(item)}. Expected zarr.Array"
                     " or zarr.Group."
                 )
@@ -2376,7 +2390,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
         >>> print(z1.like(z2, exclude={'attributes'}))
         True
         """
-        if (zarr := sys.modules.get("zarr")) is not None and isinstance(other, zarr.Group):
+        if is_zarr_group(other):
             warn_deprecated_io("GroupSpec.like with a zarr.Group", LIKE_REPLACEMENT)
         return self._like(other, include=include, exclude=exclude)
 
@@ -2390,20 +2404,20 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
     ) -> bool:
         """`like` without the deprecation warning, for the deprecated IO paths to call."""
 
-        if isinstance(other, BaseGroupSpec) and not isinstance(other, GroupSpec):
+        other_parsed: AnyGroupSpec
+        if isinstance(other, GroupSpec):
+            other_parsed = other
+        elif isinstance(other, BaseGroupSpec):
             # a group without members compares by the group's own metadata;
             # this side projects to its own metadata too, or the comparison
             # would always fail on the members field itself
             return self._own_metadata().like(other, include=include, exclude=exclude)
-        other_parsed: AnyGroupSpec
-        if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
+        else:
             try:
                 other_parsed = GroupSpec._from_zarr(other)
             except ValidationError:
                 # a stored hierarchy that does not validate as a spec is like no spec
                 return False
-        else:
-            other_parsed = other  # type: ignore[assignment]
 
         if include is None and exclude is None:
             # Compare the groups' own metadata as plain fields and each member
@@ -2754,23 +2768,77 @@ def from_flat_group(
     )
 
 
+def _is_named_config(value: object) -> TypeIs[AnyNamedConfig]:
+    """
+    Whether `value` has the shape of `AnyNamedConfig`: a mapping with a string
+    `name` and, when present, a mapping `configuration`.
+    """
+    return (
+        isinstance(value, Mapping)
+        and isinstance(value.get("name"), str)
+        and isinstance(value.get("configuration", {}), Mapping)
+    )
+
+
+def _as_named_config(value: object) -> AnyNamedConfig:
+    """
+    `value`, a named configuration read from a duck-typed array, unchanged.
+
+    Raises
+    ------
+    TypeError
+        If `value` does not have the shape of `AnyNamedConfig`.
+    """
+    if _is_named_config(value):
+        return value
+    msg = f"Expected a named configuration ({{'name': ..., 'configuration': ...}}), got {value!r}."
+    raise TypeError(msg)
+
+
+def _as_tuple(value: object) -> tuple[object, ...]:
+    """
+    `value`, a sequence read from a duck-typed array, as a tuple.
+
+    Raises
+    ------
+    TypeError
+        If `value` is not an iterable, or is a string or a mapping.
+    """
+    if not isinstance(value, Iterable) or isinstance(value, str | bytes | Mapping):
+        msg = f"Expected an iterable, got {value!r}."
+        raise TypeError(msg)
+    return tuple(value)
+
+
 def auto_attributes(data: object) -> Mapping[str, object]:
-    if hasattr(data, "attributes") and isinstance(data.attributes, Mapping):
-        return data.attributes
+    if hasattr(data, "attributes"):
+        attributes = read_attribute(data, "attributes")
+        if isinstance(attributes, Mapping):
+            return attributes
     return {}
 
 
 def auto_chunk_grid(data: object) -> AnyNamedConfig:
     if hasattr(data, "chunk_shape"):
-        return {"name": "regular", "configuration": {"chunk_shape": tuple(data.chunk_shape)}}
+        chunk_shape = as_shape(read_attribute(data, "chunk_shape"))
+        return {"name": "regular", "configuration": {"chunk_shape": chunk_shape}}
     elif hasattr(data, "shape"):
-        return {"name": "regular", "configuration": {"chunk_shape": tuple(data.shape)}}
+        chunk_shape = as_shape(read_attribute(data, "shape"))
+        return {"name": "regular", "configuration": {"chunk_shape": chunk_shape}}
     raise ValueError("Cannot get chunk grid from object without .shape or .chunk_shape attribute")
 
 
 def auto_chunk_key_encoding(data: object) -> AnyNamedConfig:
-    if hasattr(data, "metadata") and hasattr(data.metadata, "chunk_key_encoding"):
-        return data.metadata.to_dict()["chunk_key_encoding"]
+    if hasattr(data, "metadata"):
+        metadata = read_attribute(data, "metadata")
+        if hasattr(metadata, "chunk_key_encoding"):
+            # zarr-python's array metadata, whose `to_dict` gives the JSON form
+            to_dict = read_attribute(metadata, "to_dict")
+            document = to_dict() if callable(to_dict) else None
+            if not isinstance(document, Mapping):
+                msg = f"Cannot read the chunk key encoding of {metadata!r}."
+                raise TypeError(msg)
+            return _as_named_config(document["chunk_key_encoding"])
     return {"name": "default", "configuration": {"separator": "/"}}
 
 
@@ -2828,7 +2896,7 @@ def dtype_default_fill_value(
     except (ValueError, TypeError) as e:
         msg = f"Cannot determine a default fill value for data type {parsed!r}: pass one."
         raise ValueError(msg) from e
-    return cast("FillValue", document["fill_value"])
+    return document["fill_value"]
 
 
 def auto_fill_value(data: object) -> FillValue:
@@ -2837,9 +2905,10 @@ def auto_fill_value(data: object) -> FillValue:
     `zarr-metadata` derives for its `dtype` (see `dtype_default_fill_value`).
     """
     if hasattr(data, "fill_value"):
-        return cast("FillValue", data.fill_value)
+        # validation of the spec judges the value against its data type
+        return cast("FillValue", read_attribute(data, "fill_value"))
     if hasattr(data, "dtype"):
-        return dtype_default_fill_value(np.dtype(data.dtype))
+        return dtype_default_fill_value(np.dtype(as_dtype_like(read_attribute(data, "dtype"))))
     raise ValueError("Cannot determine a default fill value for an object without a dtype.")
 
 
@@ -2958,18 +3027,23 @@ def auto_codecs(data: object) -> tuple[CodecLike, ...]:
     type, or `vlen-utf8` for numpy's variable-length strings.
     """
     if hasattr(data, "codecs"):
-        # todo: type check
-        return tuple(data.codecs)
-    if hasattr(data, "dtype"):
+        return tuple(
+            codec if isinstance(codec, str) else _as_named_config(codec)
+            for codec in _as_tuple(read_attribute(data, "codecs"))
+        )
+    dtype = (
+        np.dtype(as_dtype_like(read_attribute(data, "dtype"))) if hasattr(data, "dtype") else None
+    )
+    if dtype is not None:
         # the codecs a spec of this data type holds once validated (which drops
         # the no-op endian of a single-byte type)
         try:
-            spec = ArraySpec.create_default(data_type=parse_dtype_v3(np.dtype(data.dtype)))
+            spec = ArraySpec.create_default(data_type=parse_dtype_v3(dtype))
         except ValueError:
             pass
         else:
             return tuple(spec.codecs)
-    if hasattr(data, "dtype") and np.dtype(data.dtype).itemsize > 1:
+    if dtype is not None and dtype.itemsize > 1:
         # the zarr v3 spec requires the ``endian`` configuration for multi-byte data types
         return ({"name": "bytes", "configuration": {"endian": "little"}},)
     return ({"name": "bytes"},)
@@ -2977,16 +3051,36 @@ def auto_codecs(data: object) -> tuple[CodecLike, ...]:
 
 def auto_storage_transformers(data: object) -> tuple[AnyNamedConfig, ...]:
     if hasattr(data, "storage_transformers"):
-        return tuple(data.storage_transformers)
+        return tuple(
+            _as_named_config(transformer)
+            for transformer in _as_tuple(read_attribute(data, "storage_transformers"))
+        )
     return ()
 
 
+def _as_dimension_name(value: object) -> str | None:
+    """
+    `value`, a dimension name read from a duck-typed array, unchanged.
+
+    Raises
+    ------
+    TypeError
+        If `value` is not a string or `None`.
+    """
+    if value is None or isinstance(value, str):
+        return value
+    msg = f"Expected a dimension name (a string or None), got {value!r}."
+    raise TypeError(msg)
+
+
 def auto_dimension_names(data: object) -> tuple[str | None, ...] | None:
-    if hasattr(data, "metadata") and hasattr(data.metadata, "dimension_names"):
-        if data.metadata.dimension_names is None:
-            return None
-        else:
-            return tuple(data.metadata.dimension_names)
+    if hasattr(data, "metadata"):
+        metadata = read_attribute(data, "metadata")
+        if hasattr(metadata, "dimension_names"):
+            names = read_attribute(metadata, "dimension_names")
+            if names is None:
+                return None
+            return tuple(_as_dimension_name(name) for name in _as_tuple(names))
     return None
 
 

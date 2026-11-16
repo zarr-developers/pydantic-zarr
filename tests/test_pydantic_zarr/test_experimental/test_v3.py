@@ -144,7 +144,7 @@ def test_from_array() -> None:
     # TODO: fix type of the store argument in to_zarr
     if not ZARR_AVAILABLE:
         return
-    arr_out = array_spec.to_zarr(store={}, path="")  # type: ignore[arg-type]
+    arr_out = array_spec.to_zarr(store={}, path="")  # pyrefly: ignore[bad-argument-type]
     arr_out[:] = array
     assert np.array_equal(arr_out[:], array)
 
@@ -200,7 +200,7 @@ def test_auto_codecs(dtype: np.dtype[Any], expected_codecs: tuple[CodecLike, ...
         codecs=auto_codecs(array),
         fill_value=zdt.to_json_scalar(zdt.default_scalar(), zarr_format=3),
     )
-    spec.to_zarr(store={}, path="")  # type: ignore[arg-type]
+    spec.to_zarr(store={}, path="")  # pyrefly: ignore[bad-argument-type]
 
 
 def test_arrayspec_no_empty_codecs(arrayspec: ArraySpec) -> None:
@@ -392,14 +392,14 @@ def test_typed_members(arrayspec: ArraySpec) -> None:
     class DatasetGroup(GroupSpec):
         # Narrowing `members` to a TypedDict is the point of this test; mypy treats it as an
         # incompatible override of the base `Mapping[str, ArraySpec | GroupSpec]` field.
-        members: DatasetMembers  # type: ignore[assignment]
+        members: DatasetMembers  # pyrefly: ignore[bad-override]
 
     class ExpectedMembers(TypedDict):
         r10m: DatasetGroup
         r20m: DatasetGroup
 
     class ExpectedGroup(GroupSpec):
-        members: ExpectedMembers  # type: ignore[assignment]
+        members: ExpectedMembers  # pyrefly: ignore[bad-override]
 
     flat: dict[str, ArraySpec | BaseGroupSpec] = {
         "": BaseGroupSpec(attributes={}),

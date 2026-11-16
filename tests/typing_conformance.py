@@ -9,13 +9,18 @@ project checker) is variance-lenient, so a bound refusing a narrowed spec,
 or covariance regressing to invariance, would pass it unseen — the former
 reached a release candidate once (zarr-developers/pydantic-zarr#190).
 
-It is not a pytest module; it only needs to type-check.
+It is not a pytest module; it only needs to type-check. Calls a checker
+must refuse carry that checker's suppression comment, and an unused one fails
+the check (pyright through the file-level setting below, ty through an
+override in pyproject.toml), so each refusal is asserted, not only allowed.
 """
+
+# pyright: reportUnnecessaryTypeIgnoreComment=error
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Generic, NotRequired
+from typing import TYPE_CHECKING, Any, Generic, NotRequired, Protocol, Unpack
 
 import numpy as np
 from pydantic import BaseModel
@@ -318,3 +323,47 @@ def input_paths_accept_input_types_v2(spec: v2.AnyArraySpec, codec: Codec) -> v2
     return spec.replace(
         shape=[8], chunks=[4], fill_value=np.float32(0), compressor=codec, filters=[codec]
     )
+
+
+# `GroupSpec.replace` overrides `BaseGroupSpec.replace` and adds `members`. That
+# override is sound only while `BaseGroupSpecUpdate` is closed: an open one
+# could carry `members` of any type, which `GroupSpecUpdate` narrows. pyright
+# checks the override only where the class is defined, which no CI checker
+# covers in the library source, so these assign a group to a protocol holding
+# the base signature.
+
+
+class ReplacesLikeBaseGroupV3(Protocol):
+    def replace(self, **changes: Unpack[v3.BaseGroupSpecUpdate]) -> object: ...
+
+
+class ReplacesLikeBaseGroupV2(Protocol):
+    def replace(self, **changes: Unpack[v2.BaseGroupSpecUpdate]) -> object: ...
+
+
+def group_replaces_like_a_base_group_v3(group: v3.AnyGroupSpec) -> ReplacesLikeBaseGroupV3:
+    return group
+
+
+def group_replaces_like_a_base_group_v2(group: v2.AnyGroupSpec) -> ReplacesLikeBaseGroupV2:
+    return group
+
+
+# A GroupSpec's members must be a mapping of GroupSpec and ArraySpec members,
+# whatever TMembers is solved to: the TypeVar's bound refuses None (a group
+# without members is a BaseGroupSpec), a BaseGroupSpec member, and a member
+# that is not a spec. pyrefly 1.4 accepts these calls (in pydantic's lax mode
+# it reads a field typed with a bare TypeVar as Any); add its suppression,
+# `# pyrefly: ignore[bad-specialization]`, once it refuses them.
+
+
+def refused_members_v3() -> None:
+    v3.GroupSpec(members=None)  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+    v3.GroupSpec(members={"a": v3.BaseGroupSpec()})  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+    v3.GroupSpec(members={"a": 1})  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+
+
+def refused_members_v2() -> None:
+    v2.GroupSpec(members=None)  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+    v2.GroupSpec(members={"a": v2.BaseGroupSpec()})  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+    v2.GroupSpec(members={"a": 1})  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
