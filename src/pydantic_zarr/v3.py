@@ -90,6 +90,7 @@ from pydantic_zarr.core import (
     StoredNodes,
     _walk_zarr_hierarchy,
     canonicalize_fill_value,
+    ensure_members_mapping,
     ensure_multiple,
     flatten_extra_fields,
     guess_chunks,
@@ -1980,6 +1981,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
         subclass narrowing the `members` annotation (for example to a closed
         `TypedDict` of members) cannot drop it.
         """
+        ensure_members_mapping(self.members)
         ensure_member_names_v3(self.members)
         return self
 

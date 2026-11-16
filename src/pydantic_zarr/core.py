@@ -634,6 +634,23 @@ def ensure_key_no_path(data: Any) -> Any:
     return data
 
 
+def ensure_members_mapping(members: object) -> None:
+    """
+    Raise `ValueError` unless `members` is a mapping with string keys.
+
+    `GroupSpec` checks this itself because its members type is a type
+    parameter: pydantic does not enforce a parameter's bound, so under
+    `GroupSpec[Any, Any]` the annotation alone would let any value through.
+    """
+    if not isinstance(members, Mapping):
+        msg = f"members must be a mapping of member names to specs, got {type(members).__name__}"
+        raise ValueError(msg)  # noqa: TRY004 (pydantic reports ValueError as a validation error)
+    not_names = [key for key in members if not isinstance(key, str)]
+    if not_names:
+        msg = f"member names must be strings, got {not_names!r}"
+        raise ValueError(msg)
+
+
 def refuse_member_type_as_members(
     class_name: str, members_type: object, spec_types: tuple[type, ...]
 ) -> None:

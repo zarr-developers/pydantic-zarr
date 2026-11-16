@@ -106,6 +106,20 @@ def test_mapping_members_refuse_a_member_of_another_type(module: ModuleType, nam
         module.GroupSpec[Any, Mapping[str, module.ArraySpec]](members={"g": module.GroupSpec()})
 
 
+@VERSIONS
+@pytest.mark.parametrize("members", [["a"], None, {1: "a"}], ids=["list", "none", "integer name"])
+def test_members_are_a_mapping_under_any_members_type(
+    module: ModuleType, named: type, members: object
+) -> None:
+    """
+    `members` is a mapping with string keys whatever the members type is.
+    pydantic does not enforce a type parameter's bound, so `GroupSpec[Any, Any]`
+    would otherwise accept any value.
+    """
+    with pytest.raises(ValidationError, match="member"):
+        module.GroupSpec[Any, Any](members=members)
+
+
 @pytest.mark.parametrize(("module", "name"), [(v2, "a/b"), (v3, "__reserved")], ids=["v2", "v3"])
 def test_member_names_are_validated_under_a_members_type(module: ModuleType, name: str) -> None:
     """Narrowing the members type keeps the member-name rules of the format."""
