@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pickle
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Generic, NotRequired
 
 import pytest
@@ -175,6 +176,23 @@ def test_parameterized_group_pickles(module: ModuleType, named: type) -> None:
     """A group class parameterized at module level round-trips through pickle."""
     spec = NAMED_GROUP[module](members={"a": _array(module), "g": module.GroupSpec()})
     assert pickle.loads(pickle.dumps(spec)) == spec
+
+
+@VERSIONS
+def test_group_holds_its_own_members_dict(module: ModuleType, named: type) -> None:
+    """
+    A group holds a `dict` copy of the mapping it is given, also under `Any`,
+    where pydantic would otherwise keep the caller's object: a later change to
+    that mapping does not reach the frozen spec, and a mapping type pydantic
+    cannot serialize still dumps to JSON.
+    """
+    given = {"a": _array(module)}
+    spec = module.GroupSpec[Any, Any](members=MappingProxyType(given))
+    given["b"] = _array(module)
+
+    assert type(spec.members) is dict
+    assert list(spec.members) == ["a"]
+    assert '"a"' in spec.model_dump_json()
 
 
 @VERSIONS

@@ -34,6 +34,7 @@ from pydantic import (
     SerializerFunctionWrapHandler,
     ValidationError,
     ValidationInfo,
+    field_validator,
     model_serializer,
     model_validator,
 )
@@ -90,6 +91,7 @@ from pydantic_zarr.core import (
     StoredNodes,
     _walk_zarr_hierarchy,
     canonicalize_fill_value,
+    copy_members,
     ensure_members_mapping,
     ensure_multiple,
     flatten_extra_fields,
@@ -1949,17 +1951,24 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
     attributes: TAttr
         The user-defined attributes of this group.
     members: TMembers, default = {}
-        The members of this group: a `Mapping` with string keys and values that are
-        `ArraySpec` or `GroupSpec`. A `GroupSpec` is a complete hierarchy, so an empty
-        mapping means the group has no members. A group whose members are unknown is a
-        `BaseGroupSpec`, which has no `members` field and is never a member. The
-        default is validated against `TMembers`, so a group whose members type
-        requires a member still requires `members`.
+        The members of this group: a mapping from member name to member, of the
+        type `TMembers`. With the default `TMembers` every member is validated as an
+        `ArraySpec` or a `GroupSpec`; under `Any` the values are not validated. The
+        spec holds its own `dict` copy of the mapping it is given. A `GroupSpec` is a
+        complete hierarchy, so an empty mapping means the group has no members. A
+        group whose members are unknown is a `BaseGroupSpec`, which has no `members`
+        field and is never a member. The default is validated against `TMembers`, so
+        a group whose members type requires a member still requires `members`.
     """
 
     # the default is cast so that a checker does not solve TMembers from it:
     # an unparameterized GroupSpec() then has the default members type
     members: TMembers = Field(default=cast("TMembers", {}), validate_default=True)
+
+    @field_validator("members", mode="before")
+    @classmethod
+    def _copy_members(cls, value: object) -> object:
+        return copy_members(value)
 
     @model_validator(mode="after")
     def validate_member_names(self) -> Self:

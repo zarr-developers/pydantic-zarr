@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, Generic, NotRequired
 
 import numpy as np
 from pydantic import BaseModel
-from typing_extensions import TypedDict
+from typing_extensions import ReadOnly, TypedDict
 
 from pydantic_zarr import v2, v3
 
@@ -83,6 +83,19 @@ class LevelsV3(TypedDict, extra_items=NarrowArrayV3):
 GroupOfNamedV3 = v3.GroupSpec[Attrs, NamedMembersV3]
 GroupOfNamedV2 = v2.GroupSpec[Attrs, NamedMembersV2]
 GroupOfLevelsV3 = v3.GroupSpec[Attrs, LevelsV3]
+
+
+# read-only items, so that checkers refuse assignment to a frozen spec's members
+class ReadOnlyMembersV3(TypedDict, closed=True):
+    band: ReadOnly[NarrowArrayV3]
+
+
+GroupOfReadOnlyV3 = v3.GroupSpec[Attrs, ReadOnlyMembersV3]
+
+
+def read_only_member_v3(group: GroupOfReadOnlyV3) -> tuple[NarrowArrayV3, v3.AnyGroupSpec]:
+    """A read-only member reads back at its declared type, and the group widens."""
+    return group.members["band"], group
 
 
 class DatasetV3(v3.GroupSpec[Attrs, v3.TMembers], Generic[v3.TMembers]):

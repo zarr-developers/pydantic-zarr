@@ -218,7 +218,7 @@ class ImageAttributes(OmeBase):
     ome: OmeAttrs
 
 
-class Image(GroupSpec[ImageAttributes, Mapping[str, Union[ArraySpec[Any], GroupSpec[Any, Any]]]]):
+class Image(GroupSpec[ImageAttributes, Mapping[str, Union[ArraySpec[Any], GroupSpec]]]):
     """A 0.6 image group: the metadata must match the member arrays."""
 
     @model_validator(mode="after")

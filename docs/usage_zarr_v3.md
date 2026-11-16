@@ -157,8 +157,13 @@ Notes for type checkers and for `TypedDict` members:
   `__pydantic_config__ = ConfigDict()` in its body. Without it pydantic warns
   that the group's `extra="forbid"` setting does not apply to the
   `TypedDict`.
-- **`Any`.** `GroupSpec[Any, Any]` holds any mapping with string keys, and
-  does not validate the members themselves. Leave the parameter out, or give
+- **Read-only members.** A spec is frozen, but type checkers let code assign
+  to a key of a `TypedDict`, so `group.members["band"] = other` type-checks.
+  Declare the items `ReadOnly[...]` (from `typing_extensions`) for checkers to
+  refuse that assignment. pydantic accepts `ReadOnly` items, with a warning
+  that it does not enforce them at runtime.
+- **`Any`.** `GroupSpec[Any, Any]` holds a `dict` copy of any mapping with
+  string keys, and does not validate the members themselves. Leave the parameter out, or give
   `TBaseMembers`, for members validated as arrays and groups.
 - **Building a group without a members type.** A checker infers the members
   type from the `members` argument. With arrays and groups mixed in one dict
@@ -168,7 +173,10 @@ Notes for type checkers and for `TypedDict` members:
   member. `GroupSpec[Attrs, MyArraySpec]` is now written
   `GroupSpec[Attrs, Mapping[str, MyArraySpec]]`. A class still written the old
   way validates its whole members mapping as one member, so validation
-  fails; type checkers refuse it where it is written.
+  fails; type checkers refuse it where it is written. The validation errors
+  name the member type's fields under `members` (`members.shape  Field
+  required` for an array type), or, for a group type with no members, say
+  that `members` must be a mapping.
 
 ## Creating array specs
 

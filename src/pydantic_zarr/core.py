@@ -621,7 +621,9 @@ def ensure_member_name(data: Any) -> str:
         if data in ("", ".", ".."):
             raise ValueError(f"The string {data} is not a valid member name.")
         return data
-    raise TypeError(f"Expected a str, got {type(data)}.")
+    # ValueError, so that a validator calling this reports a validation error
+    msg = f"Expected a str, got {type(data)}."
+    raise ValueError(msg)
 
 
 def ensure_key_no_path(data: Any) -> Any:
@@ -629,6 +631,20 @@ def ensure_key_no_path(data: Any) -> Any:
         for key in data:
             ensure_member_name(key)
     return data
+
+
+def copy_members(members: object) -> object:
+    """
+    Return a `dict` copy of `members` if it is a mapping, or `members` unchanged.
+
+    `GroupSpec` runs this before it validates `members`. Under `GroupSpec[Any, Any]`
+    pydantic keeps the object it is given, so without the copy a frozen spec
+    would share the caller's mapping, and later changes to that mapping would
+    skip validation. A mapping type pydantic cannot serialize, such as
+    `MappingProxyType`, would also make `model_dump_json` fail. A value that is
+    not a mapping is left for validation to refuse.
+    """
+    return dict(members) if isinstance(members, Mapping) else members
 
 
 def ensure_members_mapping(members: object) -> None:
