@@ -2242,9 +2242,9 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
             Whether to overwrite an existing array or group at the path. If overwrite is
             False and an array or group already exists at the path, an exception will be
             raised. Defaults to False.
-        config : ArrayConfigParams | None, default = None
-            The runtime configuration of each array in the group, passed on to the
-            array members' `to_zarr`.
+        **kwargs : Unpack[MemberToZarrOptions]
+            Passed on to each member's `to_zarr`: `config`, an `ArrayConfigParams`
+            or `None`, the runtime configuration of each array in the group.
 
         Returns
         -------

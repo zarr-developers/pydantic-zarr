@@ -1114,9 +1114,9 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
             The location of the group inside the store.
         overwrite : bool, default = False
             Whether to overwrite existing objects in storage to create the Zarr group.
-        config : ArrayConfigParams | None, default = None
-            The runtime configuration of each array in the group, passed on to the
-            array members' `to_zarr`.
+        **kwargs : Unpack[MemberToZarrOptions]
+            Passed on to each member's `to_zarr`: `config`, an `ArrayConfigParams`
+            or `None`, the runtime configuration of each array in the group.
 
         Returns
         -------
@@ -1592,8 +1592,9 @@ def to_zarr(
         The location of the Zarr group or array inside the store.
     overwrite : bool, default = False
         Whether to overwrite existing objects in storage to create the Zarr group or array.
-    config : ArrayConfigParams | None, default = None
-        The runtime configuration of the array, or of each array in the group.
+    **kwargs : Unpack[MemberToZarrOptions]
+        Passed on to the spec's `to_zarr`: `config`, an `ArrayConfigParams` or `None`,
+        the runtime configuration of the array, or of each array in the group.
 
     Returns
     -------
