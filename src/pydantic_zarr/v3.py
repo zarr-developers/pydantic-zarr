@@ -1388,7 +1388,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
             # this class was removed from zarr python 3.1.0
             # the checkers see zarr-python 3.1 or later, which lacks the class
             from zarr.core.metadata.v3 import (
-                V3JsonEncoder,  # type: ignore[attr-defined]  # ty: ignore[unresolved-import]
+                V3JsonEncoder,  # pyrefly: ignore[missing-module-attribute]  # ty: ignore[unresolved-import]  # pyright: ignore[reportAttributeAccessIssue]
             )
 
             meta_json = tuplify_json(
@@ -1614,15 +1614,15 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         """`like` without the deprecation warning, for the deprecated IO paths to call."""
 
         other_parsed: ArraySpec
-        if is_zarr_array(other):
+        if isinstance(other, ArraySpec):
+            other_parsed = other
+        else:
             try:
                 other_parsed = ArraySpec._from_zarr(other)
             except ValidationError:
                 # a stored array that does not validate as a spec (one holding
                 # an extra field the spec's rules refuse, say) is like no spec
                 return False
-        else:
-            other_parsed = other
 
         if include is None and exclude is None:
             # Compare the metadata documents by meaning rather than spelling:
@@ -1924,16 +1924,16 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
     ) -> bool:
         """`like` without the deprecation warning, for the deprecated IO paths to call."""
         other_parsed: AnyBaseGroupSpec
-        if is_zarr_group(other):
+        if isinstance(other, GroupSpec):
+            other_parsed = other._own_metadata()
+        elif isinstance(other, BaseGroupSpec):
+            other_parsed = other
+        else:
             try:
                 other_parsed = BaseGroupSpec._from_zarr(other)
             except ValidationError:
                 # a stored group that does not validate as a spec is like no spec
                 return False
-        elif isinstance(other, GroupSpec):
-            other_parsed = other._own_metadata()
-        else:
-            other_parsed = other
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
@@ -2221,7 +2221,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
                 # convert to dict before the final typed GroupSpec construction
                 item_out = GroupSpec._from_zarr(item).model_dump()
             else:
-                msg = (  # type: ignore[unreachable]
+                msg = (
                     f"Unparsable object encountered: {type(item)}. Expected zarr.Array"
                     " or zarr.Group."
                 )
@@ -2401,20 +2401,20 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
     ) -> bool:
         """`like` without the deprecation warning, for the deprecated IO paths to call."""
 
-        if isinstance(other, BaseGroupSpec) and not isinstance(other, GroupSpec):
+        other_parsed: AnyGroupSpec
+        if isinstance(other, GroupSpec):
+            other_parsed = other
+        elif isinstance(other, BaseGroupSpec):
             # a group without members compares by the group's own metadata;
             # this side projects to its own metadata too, or the comparison
             # would always fail on the members field itself
             return self._own_metadata().like(other, include=include, exclude=exclude)
-        other_parsed: AnyGroupSpec
-        if is_zarr_group(other):
+        else:
             try:
                 other_parsed = GroupSpec._from_zarr(other)
             except ValidationError:
                 # a stored hierarchy that does not validate as a spec is like no spec
                 return False
-        else:
-            other_parsed = other
 
         if include is None and exclude is None:
             # Compare the groups' own metadata as plain fields and each member

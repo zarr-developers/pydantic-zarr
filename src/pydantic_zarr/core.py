@@ -10,7 +10,6 @@ from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Annotated,
-    Any,
     Final,
     Literal,
     Protocol,
@@ -36,6 +35,7 @@ from pydantic import (
     SerializationInfo,
     SerializerFunctionWrapHandler,
     TypeAdapter,
+    field_serializer,
     field_validator,
     model_serializer,
     model_validator,
@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     import zarr
+    from pydantic_core import SchemaSerializer
     from zarr.core.array_spec import ArrayConfigParams
     from zarr.storage._common import StoreLike
 
@@ -112,32 +113,78 @@ def tuplify_json(obj: object) -> object:
         return obj
 
 
+@cache
+def _attributes_serializer(spec: type[BaseModel]) -> SchemaSerializer:
+    """
+    A serializer for the `attributes` field of `spec`, built from the field's
+    annotation alone, so it serializes as the field does but without the
+    field serializer that calls it. Cached per class.
+    """
+    return TypeAdapter(spec.model_fields["attributes"].rebuild_annotation()).serializer
+
+
+def serialize_attributes(
+    spec: type[BaseModel],
+    value: object,
+    handler: SerializerFunctionWrapHandler,
+    info: SerializationInfo,
+) -> object:
+    """
+    Serialize the attributes of a node of class `spec` with their aliases
+    unless the dump says `by_alias=False`.
+
+    The aliases of an attribute model spell stored metadata keys that are not
+    Python identifiers (`_FillValue`, `image-label`, `proj:code`), so without
+    this default a hierarchy would be written under the Python field names. A
+    spec's own fields declare no aliases, so the default only reaches the
+    attributes: an attribute model, or the models in an attributes mapping.
+    It lives in the serializer, not in `model_dump`, so that every way of
+    dumping a spec applies it: `model_dump`, `model_dump_json`, a
+    `TypeAdapter`, and a spec held by another model. The dump's other
+    settings carry over, including the part of `include` and `exclude` that
+    selects within the attributes.
+
+    An attribute model is serialized with its own schema, as `SerializeAsAny`
+    would; anything else as the `attributes` field declares.
+    """
+    if info.by_alias is not None:
+        return handler(value)
+    serializer = (
+        value.__pydantic_serializer__
+        if isinstance(value, BaseModel)
+        else _attributes_serializer(spec)
+    )
+    # the casts bridge pydantic-core's stubs, which type the selection a dump
+    # hands on (`set[int | str] | dict[int | str, ...]`) wider than the
+    # selection `to_python` takes (`set[int] | set[str] | Mapping[...]`),
+    # though both are the same value at runtime
+    return serializer.to_python(
+        value,
+        mode=info.mode,
+        by_alias=True,
+        include=cast("IncEx", info.include),
+        exclude=cast("IncEx", info.exclude),
+        context=info.context,
+        exclude_unset=info.exclude_unset,
+        exclude_defaults=info.exclude_defaults,
+        exclude_none=info.exclude_none,
+        exclude_computed_fields=info.exclude_computed_fields,
+        round_trip=info.round_trip,
+        serialize_as_any=info.serialize_as_any,
+    )
+
+
 class StrictBase(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    # `Any`, as in `BaseModel.model_dump`: the keyword arguments are passed on
-    # to pydantic, whose signature changes across the supported pydantic
-    # versions, and the dumped values are whatever the fields hold, which
-    # callers index as they do any other model's dump
-    @override
-    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
-        """
-        Serialize with `by_alias=True` unless told otherwise: a spec's own
-        fields declare no aliases, so this only affects attribute models,
-        whose aliases spell stored metadata keys that are not Python
-        identifiers (`_FillValue`, `image-label`, `proj:code`). Without this
-        default, a hierarchy would be silently written to storage under the
-        Python field names.
-        """
-        kwargs.setdefault("by_alias", True)
-        return super().model_dump(**kwargs)
-
-    # `Any`: the keyword arguments are passed on to pydantic; see `model_dump`
-    @override
-    def model_dump_json(self, **kwargs: Any) -> str:
-        """Serialize to JSON with `by_alias=True` unless told otherwise; see `model_dump`."""
-        kwargs.setdefault("by_alias", True)
-        return super().model_dump_json(**kwargs)
+    # unannotated: pydantic takes a wrap serializer's return annotation as the
+    # field's serialization schema, which would replace the attributes' own
+    @field_serializer("attributes", mode="wrap", check_fields=False)
+    def _serialize_attributes(  # noqa: ANN202
+        self, value: object, handler: SerializerFunctionWrapHandler, info: SerializationInfo
+    ):
+        """Dump an attribute model with its aliases by default; see `serialize_attributes`."""
+        return serialize_attributes(type(self), value, handler, info)
 
 
 EXTRA_FIELDS = "extra_fields"

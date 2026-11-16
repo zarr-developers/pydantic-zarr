@@ -305,7 +305,7 @@ class ArraySpec(NodeSpec):
         if attributes == "auto":
             attributes_actual = auto_attributes(array)
         else:
-            attributes_actual = attributes  # type: ignore[assignment]
+            attributes_actual = attributes
 
         if chunk_grid == "auto":
             chunk_grid_actual = auto_chunk_grid(array)
@@ -386,7 +386,9 @@ class ArraySpec(NodeSpec):
             raise ValueError("Only zarr v3 arrays are supported")  # noqa: TRY004
         if Version(version("zarr")) < Version("3.1.0"):
             # this class was removed from zarr python 3.1.0
-            from zarr.core.metadata.v3 import V3JsonEncoder  # type: ignore[attr-defined]
+            from zarr.core.metadata.v3 import (
+                V3JsonEncoder,  # pyrefly: ignore[missing-module-attribute]
+            )
 
             meta_json = json.loads(json.dumps(array.metadata.to_dict(), cls=V3JsonEncoder))
         else:
@@ -516,7 +518,7 @@ class ArraySpec(NodeSpec):
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Array):
             other_parsed = ArraySpec.from_zarr(other)
         else:
-            other_parsed = other  # type: ignore[assignment]
+            other_parsed = other  # pyrefly: ignore[bad-assignment]
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
@@ -878,7 +880,7 @@ class GroupSpec(BaseGroupSpec):
             elif isinstance(item, zarr.Group):
                 members[name] = GroupSpec.from_zarr(item, depth=new_depth).model_dump()
             else:
-                msg = (  # type: ignore[unreachable]
+                msg = (
                     f"Unparsable object encountered: {type(item)}. Expected zarr.Array"
                     " or zarr.Group."
                 )
@@ -974,7 +976,7 @@ class GroupSpec(BaseGroupSpec):
                 subpath = f"{path.rstrip('/')}/{name.lstrip('/')}"
                 member.to_zarr(store, subpath, overwrite=overwrite, **kwargs)
 
-        return result  # type: ignore[return-value]
+        return result  # pyrefly: ignore[bad-return]
 
     def like(
         self,
@@ -1035,7 +1037,7 @@ class GroupSpec(BaseGroupSpec):
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
             other_parsed = GroupSpec.from_zarr(other)
         else:
-            other_parsed = other  # type: ignore[assignment]
+            other_parsed = other  # pyrefly: ignore[bad-assignment]
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 

@@ -151,10 +151,12 @@ Notes for type checkers and for `TypedDict` members:
   an array or a group ([PEP 728](https://peps.python.org/pep-0728/)). mypy
   does not implement that rule yet and reports the argument as outside the
   parameter's bound.
-- **`extra_items` and pydantic.** A `TypedDict` with `extra_items` should set
-  `__pydantic_config__ = ConfigDict()` in its body. Without it pydantic warns
-  that the group's `extra="forbid"` setting does not apply to the
-  `TypedDict`.
+- **`extra_items` and pydantic.** Decorate a `TypedDict` that has
+  `extra_items` with `@with_config(ConfigDict())` (both from `pydantic`).
+  Without its own configuration pydantic warns that the group's
+  `extra="forbid"` setting does not apply to the `TypedDict`. Type checkers
+  accept the decorator, where they refuse a `__pydantic_config__` assignment
+  in the `TypedDict` body.
 - **Read-only members.** A spec is frozen, but type checkers let code assign
   to a key of a `TypedDict`, so `group.members["band"] = other` type-checks.
   Declare the items `ReadOnly[...]` (from `typing_extensions`) for checkers to

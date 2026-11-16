@@ -11,7 +11,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Generic, NotRequired
 
 import pytest
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, with_config
 from typing_extensions import TypedDict, TypeVar
 
 from pydantic_zarr import v2, v3
@@ -59,19 +59,17 @@ class OptionalNamesV3(TypedDict, closed=True, total=False):
     g: v3.GroupSpec
 
 
+# its own configuration, so that the group's `extra="forbid"` is not offered
+# to a TypedDict that allows extra items (pydantic warns of that)
+@with_config(ConfigDict())
 class NamedAndExtraV2(TypedDict, extra_items=v2.ArraySpec):
-    # its own configuration, so that the group's `extra="forbid"` is not
-    # offered to a TypedDict that allows extra items (pydantic warns of that)
-    __pydantic_config__ = ConfigDict()  # type: ignore[misc]
-
     g: NotRequired[v2.GroupSpec]
 
 
+# its own configuration, so that the group's `extra="forbid"` is not offered
+# to a TypedDict that allows extra items (pydantic warns of that)
+@with_config(ConfigDict())
 class NamedAndExtraV3(TypedDict, extra_items=v3.ArraySpec):
-    # its own configuration, so that the group's `extra="forbid"` is not
-    # offered to a TypedDict that allows extra items (pydantic warns of that)
-    __pydantic_config__ = ConfigDict()  # type: ignore[misc]
-
     g: NotRequired[v3.GroupSpec]
 
 
