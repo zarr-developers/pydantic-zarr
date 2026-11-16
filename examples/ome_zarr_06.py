@@ -22,7 +22,8 @@ zarr-python): uv run --no-project --with ngff-zarr --with zarr --with . \
 # for the final reference-comparison section, which skips when it is absent.
 
 # --8<-- [start:transforms]
-from typing import Annotated, Any, Literal, Self, Union
+from collections.abc import Mapping
+from typing import Annotated, Literal, Self, Union
 
 from pydantic import ConfigDict, Field, ValidationError, model_validator
 
@@ -217,7 +218,7 @@ class ImageAttributes(OmeBase):
     ome: OmeAttrs
 
 
-class Image(GroupSpec[ImageAttributes, Union[ArraySpec[Any], GroupSpec[Any, Any]]]):
+class Image(GroupSpec[ImageAttributes, Mapping[str, Union[ArraySpec, GroupSpec]]]):
     """A 0.6 image group: the metadata must match the member arrays."""
 
     @model_validator(mode="after")
@@ -369,7 +370,7 @@ else:
             }
         )
 
-        def ref_array(shape: tuple[int, ...]) -> ArraySpec[Any]:
+        def ref_array(shape: tuple[int, ...]) -> ArraySpec:
             return ArraySpec.create_default(
                 shape=shape,
                 data_type="uint16",
@@ -381,7 +382,7 @@ else:
                 dimension_names=("y", "x"),
             )
 
-        def ref_group(shape: tuple[int, ...]) -> GroupSpec[Any, Any]:
+        def ref_group(shape: tuple[int, ...]) -> GroupSpec:
             # ngff-zarr nests each level's array as <level>/image and labels
             # the level group with xarray-style _ARRAY_DIMENSIONS
             return GroupSpec(

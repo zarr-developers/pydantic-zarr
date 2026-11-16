@@ -93,6 +93,96 @@ at validation, matching the spelling `zarr-python` stores. Which data types are
 single-byte is what their definitions in the spec's scope declare, so in
 `zarr-python`'s scope this covers its fixed-length and raw bytes types too.
 
+## Typing a group's members
+
+`GroupSpec` takes two type parameters: the type of its attributes, and the type
+of its whole `members` mapping. The members type states what a group may hold:
+
+- Left out, the group holds any arrays and groups.
+- A `Mapping` constrains the type of every member:
+  `GroupSpec[Attrs, Mapping[str, MyArraySpec]]`.
+- A closed `TypedDict` fixes the member names, each with its own type. An
+  undeclared member is refused, and so is a missing one.
+
+```python
+from pydantic import ValidationError
+from typing_extensions import TypedDict
+
+from pydantic_zarr.v3 import ArraySpec, GroupSpec, TBaseAttr
+
+
+class LevelMembers(TypedDict, closed=True):
+    x: ArraySpec
+    y: ArraySpec
+    band: ArraySpec
+
+
+Level = GroupSpec[TBaseAttr, LevelMembers]
+
+axis = ArraySpec.create_default(shape=(4,), data_type="float64")
+band = ArraySpec.create_default(shape=(4, 4), data_type="uint16")
+
+level = Level(members={"x": axis, "y": axis, "band": band})
+print(level.members["band"].shape)
+#> (4, 4)
+
+try:
+    Level(members={"x": axis, "y": axis})
+except ValidationError as e:
+    print(e.errors()[0]["loc"], e.errors()[0]["type"])
+    #> ('members', 'band') missing
+
+try:
+    Level(members={"x": axis, "y": axis, "band": band, "extra": band})
+except ValidationError as e:
+    print(e.errors()[0]["loc"], e.errors()[0]["type"])
+    #> ('members', 'extra') extra_forbidden
+```
+
+A group subclass that adds validators can leave the members type as a
+parameter, with `class Dataset(GroupSpec[TBaseAttr, TMembers], Generic[TMembers])`,
+so that each concrete group names its own members: `Dataset[LevelMembers]`.
+
+Notes for type checkers and for `TypedDict` members:
+
+- **Closed `TypedDict`s only.** pyright, ty and pyrefly accept a `TypedDict`
+  as the members type when it is closed (`closed=True`) or types its other
+  members (`extra_items=...`), because only then is every member known to be
+  an array or a group ([PEP 728](https://peps.python.org/pep-0728/)). mypy
+  does not implement that rule yet and reports the argument as outside the
+  parameter's bound.
+- **`extra_items` and pydantic.** Decorate a `TypedDict` that has
+  `extra_items` with `@with_config(ConfigDict())` (both from `pydantic`).
+  Without its own configuration pydantic warns that the group's
+  `extra="forbid"` setting does not apply to the `TypedDict`. Type checkers
+  accept the decorator, where they refuse a `__pydantic_config__` assignment
+  in the `TypedDict` body.
+- **Read-only members.** A spec is frozen, but type checkers let code assign
+  to a key of a `TypedDict`, so `group.members["band"] = other` type-checks.
+  Declare the items `ReadOnly[...]` (from `typing_extensions`) for checkers to
+  refuse that assignment. pydantic accepts `ReadOnly` items, with a warning
+  that it does not enforce them at runtime.
+- **Avoid `Any`.** `Any` as the members type turns off member validation:
+  `GroupSpec[Any, Any]` accepts any mapping with string keys, does not check
+  that its values are specs, and its JSON schema leaves `members`
+  unconstrained. For a group
+  of any arrays and groups, write `GroupSpec` (or `AnyGroupSpec`), whose
+  members type defaults to `TBaseMembers`; for any attributes, give
+  `TBaseAttr`, as in `GroupSpec[TBaseAttr, LevelMembers]`.
+- **Building a group without a members type.** A checker infers the members
+  type from the `members` argument. With arrays and groups mixed in one dict
+  literal, pyright infers `dict[str, Unknown]`, and from `members={}` it
+  infers `dict[Unknown, Unknown]`; annotate the result, as in
+  `group: AnyGroupSpec = GroupSpec(members={...})`, to keep the members typed.
+- **The type of one member.** Up to 0.11 the parameter was the type of one
+  member. `GroupSpec[Attrs, MyArraySpec]` is now written
+  `GroupSpec[Attrs, Mapping[str, MyArraySpec]]`. A class still written the old
+  way validates its whole members mapping as one member, so validation
+  fails; type checkers refuse it where it is written. The validation errors
+  describe the members mapping as if it were one member, for example
+  `members.shape  Field required` for an array type, so they do not mention
+  the change of parameter.
+
 ## Creating array specs
 
 `ArraySpec.create_default` builds a valid array spec from whichever fields are
@@ -297,6 +387,12 @@ Together they round-trip a hierarchy through any zarr-python store:
 --8<-- "examples/zarr_io.py:round_trip"
 ```
 
+Consolidated metadata (`zarr.consolidate_metadata`) is a copy of the
+documents below a group: `.zmetadata` in Zarr V2, and the
+`consolidated_metadata` member of a V3 group's `zarr.json`. `read_documents`
+reads every node's own documents, so it leaves the copy out, and a
+consolidated hierarchy reads back as the spec that was written.
+
 Both live in
 [`examples/zarr_io.py`](https://github.com/zarr-developers/pydantic-zarr/blob/main/examples/zarr_io.py),
 which the example scripts import; copy them into a project that needs them.
@@ -304,12 +400,11 @@ They handle Zarr V2 specs the same way. Neither reads or writes array data:
 `write_hierarchy` creates the metadata documents, and the arrays are then
 filled through zarr-python as usual.
 
-The `to_zarr` and `from_zarr` methods of the specs, the module-level
-`to_zarr`, `from_zarr` and `from_zarr_flat`, and `like` or
-`ArraySpec.from_array` given a `zarr.Array` or `zarr.Group`, did this inside
-pydantic-zarr through zarr-python internals. They are deprecated and will be
-removed in pydantic-zarr 0.12; each warns once, naming its replacement. Until
-then they still work, and need the `zarr` extra: `pip install "pydantic-zarr[zarr]"`.
+Up to pydantic-zarr 0.11, the `to_zarr` and `from_zarr` methods of the specs,
+the module-level `to_zarr`, `from_zarr` and `from_zarr_flat`, and `like` or
+`ArraySpec.from_array` given a `zarr.Array` or `zarr.Group` did this inside
+pydantic-zarr through zarr-python internals. They were removed in 0.12: use
+the two functions above instead.
 
 ## Validation scopes
 
@@ -526,5 +621,6 @@ Whether a store written through `zarr-python` holds them depends on
 specs keep its contents as written, not read as members. A hierarchy written
 from a spec holding it would carry a record that need not match the members
 written, so drop it first and consolidate the written hierarchy with
-`zarr.consolidate_metadata`. The deprecated `to_zarr` refuses such a group,
-and `from_zarr` reads the members themselves and leaves the record out.
+`zarr.consolidate_metadata`. For the same reason, `read_documents` leaves it
+out when it reads a stored hierarchy (see [Reading and writing with
+zarr-python](#reading-and-writing-with-zarr-python)).

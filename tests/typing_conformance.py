@@ -9,19 +9,24 @@ project checker) is variance-lenient, so a bound refusing a narrowed spec,
 or covariance regressing to invariance, would pass it unseen — the former
 reached a release candidate once (zarr-developers/pydantic-zarr#190).
 
-It is not a pytest module; it only needs to type-check.
+It is not a pytest module; it only needs to type-check. Calls a checker
+must refuse carry that checker's suppression comment, and an unused one fails
+the check (pyright through the file-level setting below, ty through an
+override in pyproject.toml), so each refusal is asserted, not only allowed.
 """
+
+# pyright: reportUnnecessaryTypeIgnoreComment=error
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic, NotRequired, Protocol, Unpack
 
 import numpy as np
 from pydantic import BaseModel
+from typing_extensions import ReadOnly, TypedDict
 
-import pydantic_zarr.v2 as v2
-import pydantic_zarr.v3 as v3
+from pydantic_zarr import v2, v3
 
 if TYPE_CHECKING:
     import numpy.typing as npt
@@ -55,12 +60,89 @@ class NarrowArrayV2(v2.ArraySpec[Attrs]):
     """A narrowed v2 array spec."""
 
 
-# a group may be parameterized with narrowed member specs, alone or in unions
-# with the Any-parameterized classes
-GroupOfNarrowV3 = v3.GroupSpec[Mapping[str, object], NarrowArrayV3]
-GroupOfUnionV3 = v3.GroupSpec[Attrs, v3.GroupSpec[Any, Any] | NarrowArrayV3]
-GroupOfNarrowV2 = v2.GroupSpec[Mapping[str, object], NarrowArrayV2]
-GroupOfUnionV2 = v2.GroupSpec[Attrs, v2.GroupSpec[Any, Any] | NarrowArrayV2]
+# a group's second parameter is its whole members mapping. A Mapping narrows
+# the type of every member, to a narrowed spec alone or in a union with the
+# unparameterized classes
+GroupOfNarrowV3 = v3.GroupSpec[Mapping[str, object], Mapping[str, NarrowArrayV3]]
+GroupOfUnionV3 = v3.GroupSpec[Attrs, Mapping[str, v3.GroupSpec | NarrowArrayV3]]
+GroupOfNarrowV2 = v2.GroupSpec[Mapping[str, object], Mapping[str, NarrowArrayV2]]
+GroupOfUnionV2 = v2.GroupSpec[Attrs, Mapping[str, v2.GroupSpec | NarrowArrayV2]]
+
+
+# a closed TypedDict fixes the member names, each with its own type; one with
+# `extra_items` names some members and types the rest
+class NamedMembersV3(TypedDict, closed=True):
+    band: NarrowArrayV3
+    aux: v3.GroupSpec
+
+
+class NamedMembersV2(TypedDict, closed=True):
+    band: NarrowArrayV2
+    aux: v2.GroupSpec
+
+
+class LevelsV3(TypedDict, extra_items=NarrowArrayV3):
+    labels: NotRequired[v3.GroupSpec]
+
+
+GroupOfNamedV3 = v3.GroupSpec[Attrs, NamedMembersV3]
+GroupOfNamedV2 = v2.GroupSpec[Attrs, NamedMembersV2]
+GroupOfLevelsV3 = v3.GroupSpec[Attrs, LevelsV3]
+
+
+# read-only items, so that checkers refuse assignment to a frozen spec's members
+class ReadOnlyMembersV3(TypedDict, closed=True):
+    band: ReadOnly[NarrowArrayV3]
+
+
+GroupOfReadOnlyV3 = v3.GroupSpec[Attrs, ReadOnlyMembersV3]
+
+
+def read_only_member_v3(group: GroupOfReadOnlyV3) -> tuple[NarrowArrayV3, v3.AnyGroupSpec]:
+    """A read-only member reads back at its declared type, and the group widens."""
+    return group.members["band"], group
+
+
+class DatasetV3(v3.GroupSpec[Attrs, v3.TMembers], Generic[v3.TMembers]):
+    """A group subclass that leaves its members type to its own subclasses."""
+
+
+class NamedDatasetV3(DatasetV3[NamedMembersV3]):
+    """A subclass that fixes the members of its generic parent."""
+
+
+def named_member_v3(group: GroupOfNamedV3) -> NarrowArrayV3:
+    """A named member reads back at the type its TypedDict declares."""
+    return group.members["band"]
+
+
+def named_member_v2(group: GroupOfNamedV2) -> NarrowArrayV2:
+    """Same contract on the v2 side."""
+    return group.members["band"]
+
+
+def named_member_through_a_generic_subclass_v3(group: NamedDatasetV3) -> NarrowArrayV3:
+    """The members type passes through a generic subclass."""
+    return group.members["band"]
+
+
+def widened_named_group_v3(
+    group: GroupOfNamedV3, levels: GroupOfLevelsV3
+) -> tuple[v3.AnyGroupSpec, v3.AnyGroupSpec]:
+    """A group with named members widens to the widest group, like any other."""
+    return group, levels
+
+
+def widened_named_group_v2(group: GroupOfNamedV2) -> v2.AnyGroupSpec:
+    """Same contract on the v2 side."""
+    return group
+
+
+def annotated_mixed_members_v3(array: v3.AnyArraySpec) -> v3.AnyArraySpec | v3.AnyGroupSpec:
+    """Arrays and groups mixed in one literal stay typed when the result is
+    annotated with the wide group type."""
+    group: v3.AnyGroupSpec = v3.GroupSpec(members={"a": array, "g": v3.GroupSpec()})
+    return group.members["a"]
 
 
 def narrowed_members_v3(group: GroupOfNarrowV3) -> Mapping[str, NarrowArrayV3]:
@@ -241,3 +323,48 @@ def input_paths_accept_input_types_v2(spec: v2.AnyArraySpec, codec: Codec) -> v2
     return spec.replace(
         shape=[8], chunks=[4], fill_value=np.float32(0), compressor=codec, filters=[codec]
     )
+
+
+# `GroupSpec.replace` overrides `BaseGroupSpec.replace` and adds `members`. That
+# override is sound only while `BaseGroupSpecUpdate` is closed: an open one
+# could carry `members` of any type, which `GroupSpecUpdate` narrows. pyright
+# checks the override only where the class is defined, which no CI checker
+# covers in the library source, so these assign a group to a protocol holding
+# the base signature.
+
+
+class ReplacesLikeBaseGroupV3(Protocol):
+    def replace(self, **changes: Unpack[v3.BaseGroupSpecUpdate]) -> object: ...
+
+
+class ReplacesLikeBaseGroupV2(Protocol):
+    def replace(self, **changes: Unpack[v2.BaseGroupSpecUpdate]) -> object: ...
+
+
+def group_replaces_like_a_base_group_v3(group: v3.AnyGroupSpec) -> ReplacesLikeBaseGroupV3:
+    return group
+
+
+def group_replaces_like_a_base_group_v2(group: v2.AnyGroupSpec) -> ReplacesLikeBaseGroupV2:
+    return group
+
+
+# A GroupSpec's members must be a mapping of GroupSpec and ArraySpec members,
+# whatever TMembers is solved to: the TypeVar's bound refuses None (a group
+# without members is a BaseGroupSpec), a BaseGroupSpec member, and a member
+# that is not a spec. pyrefly 1.4 accepts these calls (in pydantic's lax mode
+# it reads a field typed with a bare TypeVar as Any); add its suppression
+# for the `bad-specialization` error once it refuses them. (Written out
+# here, that suppression comment would itself count as an unused one.)
+
+
+def refused_members_v3() -> None:
+    v3.GroupSpec(members=None)  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+    v3.GroupSpec(members={"a": v3.BaseGroupSpec()})  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+    v3.GroupSpec(members={"a": 1})  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+
+
+def refused_members_v2() -> None:
+    v2.GroupSpec(members=None)  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+    v2.GroupSpec(members={"a": v2.BaseGroupSpec()})  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+    v2.GroupSpec(members={"a": 1})  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]

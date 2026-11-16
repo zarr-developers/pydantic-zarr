@@ -1,5 +1,12 @@
 # experimental features
 
+!!! warning "Deprecated"
+    The `pydantic_zarr.experimental` module is deprecated and will be removed in
+    pydantic-zarr 0.13; importing it emits a `DeprecationWarning`. Use
+    `pydantic_zarr.v2` and `pydantic_zarr.v3` instead: they define `BaseGroupSpec`,
+    and a subclass of their `ArraySpec` or `GroupSpec` can annotate `attributes` and
+    `members` directly, as the experimental classes do.
+
 ## Improved `GroupSpec` and `ArraySpec` classes
 
 We are developing a redesign of the `GroupSpec` and `ArraySpec` classes. These new classes can be found in the `experimental.v2` and `experimental.v3` modules for Zarr V2 and V3, respectively. Our
@@ -9,7 +16,7 @@ Here's how we are doing that:
 
 ### Removing generic type parameters
 
-In `pydantic_zarr`, the `GroupSpec` and `ArraySpec` classes take generic type parameters. `GroupSpec[A, B]` models a Zarr group with attributes that must be instances of `A` and child nodes that must be instances of `B`. The generic type parameters offer concise class definitions but complicate type checking for pydantic, and they are also not strictly necessary for the `GroupSpec` and `ArraySpec`
+In `pydantic_zarr`, the `GroupSpec` and `ArraySpec` classes take generic type parameters. `GroupSpec[A, B]` models a Zarr group with attributes that must be instances of `A` and a `members` mapping that must be an instance of `B`, such as `Mapping[str, ArraySpec]` for a group of arrays. The generic type parameters offer concise class definitions but complicate type checking for pydantic, and they are also not strictly necessary for the `GroupSpec` and `ArraySpec`
 classes to do their jobs. So in `pydantic_zarr.experimental.v2` and `pydantic_zarr.experimental.v3` the `GroupSpec` and `ArraySpec` classes are not generic any more. They are just regular classes.
 
 Code like this:

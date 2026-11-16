@@ -75,9 +75,11 @@ def read_documents(node: zarr.Array | zarr.Group) -> dict[str, object]:
 
     `to_buffer_dict` gives a node's documents as zarr-python writes them
     (`zarr.json`, or `.zarray`/`.zgroup` and `.zattrs`), so this reads what the
-    store holds, not zarr-python's in-memory view of it, each document passed
-    through `pydantic_zarr.v3.normalize_group_metadata`, which repairs the null
-    `consolidated_metadata` zarr-python 3.0 writes.
+    store holds, not zarr-python's in-memory view of it, except for
+    consolidated metadata. That is a copy of the documents below a group
+    (`.zmetadata` in Zarr V2, `consolidated_metadata` in a V3 group's
+    `zarr.json`), and since every node's own documents are read here, the
+    copy is left out, as the removed `from_zarr` left it out.
     """
     prototype = default_buffer_prototype()
     nodes: list[tuple[str, zarr.Array | zarr.Group]] = [("", node)]
@@ -86,9 +88,14 @@ def read_documents(node: zarr.Array | zarr.Group) -> dict[str, object]:
     documents: dict[str, object] = {}
     for member_path, member in nodes:
         for name, buffer in member.metadata.to_buffer_dict(prototype).items():
-            documents[f"{member_path}/{name}" if member_path else name] = (
-                v3.normalize_group_metadata(json.loads(buffer.to_bytes()))
-            )
+            if name == ".zmetadata":
+                continue
+            document = json.loads(buffer.to_bytes())
+            if isinstance(document, dict):
+                # with the copy goes the null zarr-python before 3.4 writes, which
+                # `v3.normalize_group_metadata` repairs for readers that keep it
+                document.pop("consolidated_metadata", None)
+            documents[f"{member_path}/{name}" if member_path else name] = document
     return documents
 
 
@@ -108,6 +115,11 @@ if __name__ == "__main__":
     assert v3.GroupSpec.from_stored_metadata_json(documents) == group
     print(sorted(documents))
     # > ['sub/y/zarr.json', 'sub/zarr.json', 'x/zarr.json', 'zarr.json']
+
+    # consolidating adds a copy of the documents, which read_documents leaves out
+    zarr.consolidate_metadata(store, path="root")
+    consolidated = zarr.open_group(store, path="root", mode="r")
+    assert read_documents(consolidated) == documents
     # --8<-- [end:round_trip]
 
     array_v2 = v2.ArraySpec(shape=(4, 4), chunks=(2, 2), dtype="uint8", attributes={"k": 1})
@@ -118,7 +130,10 @@ if __name__ == "__main__":
     write_hierarchy(group_v2, store, "root")
     documents = read_documents(zarr.open_group(store, path="root", mode="r", zarr_format=2))
     assert v2.GroupSpec.from_stored_metadata_json(documents) == group_v2
+    zarr.consolidate_metadata(store, path="root", zarr_format=2)
+    consolidated = zarr.open_group(store, path="root", mode="r", zarr_format=2)
+    assert v2.GroupSpec.from_stored_metadata_json(read_documents(consolidated)) == group_v2
     written = write_hierarchy(array_v2, store, "alone")
     assert isinstance(written, zarr.Array)
     assert v2.ArraySpec.from_stored_metadata_json(read_documents(written)) == array_v2
-    print("zarr_io.py: round trips hold for Zarr V2 and V3")
+    print("zarr_io.py: round trips hold for Zarr V2 and V3, plain and consolidated")

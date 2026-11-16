@@ -23,7 +23,7 @@ from typing import Annotated, Literal, NotRequired, Self, Union
 
 import zarr
 import zarr.storage
-from pydantic import ConfigDict, Field, ValidationError, model_validator
+from pydantic import ConfigDict, Field, ValidationError, model_validator, with_config
 from typing_extensions import TypedDict
 from zarr_io import read_documents, write_hierarchy
 
@@ -142,22 +142,17 @@ class ImageAttributes(AttributesBase):
     ome: OmeImageBlock
 
 
+# its own configuration keeps the enclosing model's extra="forbid" off this
+# TypedDict, which allows extra items
+@with_config(ConfigDict())
 class MultiscaleImageMembers(TypedDict, extra_items=ArraySpec):
     """Dynamically named resolution arrays, plus at most one "labels" group."""
-
-    # keep the enclosing model's extra="forbid" config off this TypedDict;
-    # checkers reject assignments in TypedDict bodies, but pydantic documents
-    # this configuration mechanism, hence the ignore
-    __pydantic_config__ = ConfigDict()  # type: ignore[misc]
 
     labels: NotRequired[GroupSpec]
 
 
-class MultiscaleImage(GroupSpec):
+class MultiscaleImage(GroupSpec[ImageAttributes, MultiscaleImageMembers]):
     """An OME-Zarr 0.5 multiscale image group (sections 1.1 and 2.4)."""
-
-    attributes: ImageAttributes
-    members: MultiscaleImageMembers
 
     @model_validator(mode="after")
     def _datasets_resolve_to_arrays(self) -> Self:

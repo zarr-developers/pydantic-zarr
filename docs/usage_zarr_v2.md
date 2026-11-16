@@ -4,7 +4,7 @@
 
 The `GroupSpec` and `ArraySpec` classes model Zarr v2 groups and arrays as their metadata documents. `pydantic-zarr` does no IO of its own: a spec gives the documents a store holds (`to_stored_metadata_json`) and reads such documents back (`from_stored_metadata_json`), and moving documents in and out of a store is the job of a Zarr implementation such as `zarr-python`. [Stored metadata documents](#stored-metadata-documents) describes the documents; [Reading and writing with zarr-python](#reading-and-writing-with-zarr-python) connects them to a `zarr-python` store. Neither direction reads or writes array data.
 
-> The `to_zarr` and `from_zarr` methods, the module-level `to_zarr`, `from_zarr` and `from_zarr_flat`, and `like` given a `zarr.Array` or `zarr.Group` are deprecated and will be removed in `pydantic-zarr` 0.12. Each warns once, naming its replacement.
+> Up to `pydantic-zarr` 0.11, the `to_zarr` and `from_zarr` methods, the module-level `to_zarr`, `from_zarr` and `from_zarr_flat`, and `like` given a `zarr.Array` or `zarr.Group` read and wrote `zarr-python` nodes. They were removed in 0.12.
 
 Reading a hierarchy `zarr-python` wrote means collecting the documents it stored. A `zarr.Group` lists the nodes under it, and each node's `metadata.to_buffer_dict` gives its documents as the store holds them (`.zarray` or `.zgroup`, and `.zattrs`):
 
@@ -322,6 +322,15 @@ except ValidationError as e:
     #> fill_value: expected an integer or null, got 1.5
 ```
 
+### Typing a group's members
+
+The second type parameter of `GroupSpec` is the type of its whole `members`
+mapping, in v2 as in v3: a `Mapping` constrains the type of every member, and a
+closed `TypedDict` fixes the member names. See
+[Typing a group's members](usage_zarr_v3.md#typing-a-groups-members) in the
+v3 guide. The parameter works the same way with `pydantic_zarr.v2.GroupSpec`
+and v2 array specs.
+
 ## Stored metadata documents
 
 `to_stored_metadata_json` returns a node's metadata the way a Zarr store holds
@@ -399,8 +408,10 @@ The two functions below write a spec's documents to a `zarr-python` store with
 documents back, for Zarr V2 and V3 specs alike. They live in
 [`examples/zarr_io.py`](https://github.com/zarr-developers/pydantic-zarr/blob/main/examples/zarr_io.py),
 which the example scripts import; copy them into a project that needs them.
-The [Zarr V3 guide](usage_zarr_v3.md#reading-and-writing-with-zarr-python)
-discusses them.
+`read_documents` leaves out a consolidated group's `.zmetadata`, the copy of
+the documents below it that `zarr.consolidate_metadata` writes, since it reads
+every node's own documents. The [Zarr V3
+guide](usage_zarr_v3.md#reading-and-writing-with-zarr-python) discusses them.
 
 ```python
 --8<-- "examples/zarr_io.py:write"

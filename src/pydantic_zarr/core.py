@@ -1,19 +1,19 @@
 from __future__ import annotations
 
 import math
-import warnings
-from collections.abc import Iterator, Mapping, Sequence
+import operator
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from functools import cache
 from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Annotated,
-    Any,
     Final,
     Literal,
     Protocol,
     Self,
     TypeVar,
+    cast,
     overload,
     override,
     runtime_checkable,
@@ -27,11 +27,13 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    GetJsonSchemaHandler,
     ModelWrapValidatorHandler,
     PrivateAttr,
     SerializationInfo,
     SerializerFunctionWrapHandler,
     TypeAdapter,
+    field_serializer,
     field_validator,
     model_serializer,
     model_validator,
@@ -58,12 +60,18 @@ else:
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    import zarr
-    from zarr.storage._common import StoreLike
+    from pydantic.json_schema import JsonSchemaValue
+    from pydantic_core import CoreSchema, SchemaSerializer
 
-type IncEx = set[int] | set[str] | dict[int, Any] | dict[str, Any] | None
-
-type AccessMode = Literal["w", "w+", "r", "a"]
+# the selection pydantic's `model_dump` takes as `include` / `exclude`
+# (`pydantic.main.IncEx`), plus `None` for "no selection"
+type _IncExSelection = (
+    set[int]
+    | set[str]
+    | Mapping[int, _IncExSelection | bool]
+    | Mapping[str, _IncExSelection | bool]
+)
+type IncEx = _IncExSelection | None
 
 T = TypeVar("T")
 
@@ -88,40 +96,91 @@ def tuplify_json(obj: object) -> object:
         return obj
 
 
+@cache
+def _attributes_serializer(spec: type[BaseModel]) -> SchemaSerializer:
+    """
+    A serializer for the `attributes` field of `spec`, built from the field's
+    annotation alone, so it serializes as the field does but without the
+    field serializer that calls it. Cached per class.
+    """
+    return TypeAdapter(spec.model_fields["attributes"].rebuild_annotation()).serializer
+
+
+def serialize_attributes(
+    spec: type[BaseModel],
+    value: object,
+    handler: SerializerFunctionWrapHandler,
+    info: SerializationInfo,
+) -> object:
+    """
+    Serialize the attributes of a node of class `spec` with their aliases
+    unless the dump says `by_alias=False`.
+
+    The aliases of an attribute model spell stored metadata keys that are not
+    Python identifiers (`_FillValue`, `image-label`, `proj:code`), so without
+    this default a hierarchy would be written under the Python field names. A
+    spec's own fields declare no aliases, so the default only reaches the
+    attributes: an attribute model, or the models in an attributes mapping.
+    It lives in the serializer, not in `model_dump`, so that every way of
+    dumping a spec applies it: `model_dump`, `model_dump_json`, a
+    `TypeAdapter`, and a spec held by another model. The dump's other
+    settings carry over, including the part of `include` and `exclude` that
+    selects within the attributes.
+
+    An attribute model is serialized with its own schema, as `SerializeAsAny`
+    would; anything else as the `attributes` field declares.
+    """
+    if info.by_alias is not None:
+        return handler(value)
+    serializer = (
+        value.__pydantic_serializer__
+        if isinstance(value, BaseModel)
+        else _attributes_serializer(spec)
+    )
+    # the casts bridge pydantic-core's stubs, which type the selection a dump
+    # hands on (`set[int | str] | dict[int | str, ...]`) wider than the
+    # selection `to_python` takes (`set[int] | set[str] | Mapping[...]`),
+    # though both are the same value at runtime
+    return serializer.to_python(
+        value,
+        mode=info.mode,
+        by_alias=True,
+        include=cast("IncEx", info.include),
+        exclude=cast("IncEx", info.exclude),
+        context=info.context,
+        exclude_unset=info.exclude_unset,
+        exclude_defaults=info.exclude_defaults,
+        exclude_none=info.exclude_none,
+        exclude_computed_fields=info.exclude_computed_fields,
+        round_trip=info.round_trip,
+        serialize_as_any=info.serialize_as_any,
+    )
+
+
 class StrictBase(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    @override
-    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
-        """
-        Serialize with `by_alias=True` unless told otherwise: a spec's own
-        fields declare no aliases, so this only affects attribute models,
-        whose aliases spell stored metadata keys that are not Python
-        identifiers (`_FillValue`, `image-label`, `proj:code`). Without this
-        default, a hierarchy would be silently written to storage under the
-        Python field names.
-        """
-        kwargs.setdefault("by_alias", True)
-        return super().model_dump(**kwargs)
-
-    @override
-    def model_dump_json(self, **kwargs: Any) -> str:
-        """Serialize to JSON with `by_alias=True` unless told otherwise; see `model_dump`."""
-        kwargs.setdefault("by_alias", True)
-        return super().model_dump_json(**kwargs)
+    # unannotated: pydantic takes a wrap serializer's return annotation as the
+    # field's serialization schema, which would replace the attributes' own
+    @field_serializer("attributes", mode="wrap", check_fields=False)
+    def _serialize_attributes(  # noqa: ANN202
+        self, value: object, handler: SerializerFunctionWrapHandler, info: SerializationInfo
+    ):
+        """Dump an attribute model with its aliases by default; see `serialize_attributes`."""
+        return serialize_attributes(type(self), value, handler, info)
 
 
 EXTRA_FIELDS = "extra_fields"
 """The name of the field in which `ExtraFieldsBase` keeps a document's extra fields."""
 
 
-def flatten_extra_fields(document: dict[str, Any]) -> dict[str, Any]:
+def flatten_extra_fields(document: dict[str, object]) -> dict[str, object]:
     """
     Turn a dumped spec's `extra_fields` mapping back into top-level members
     of the document, where the metadata document holds them.
     """
     extra = document.pop(EXTRA_FIELDS, None)
-    if extra:
+    if isinstance(extra, Mapping):
         document.update(extra)
     return document
 
@@ -188,12 +247,37 @@ class ExtraFieldsBase(StrictBase):
             raise ValueError(msg)
         return value
 
+    # No return annotation: pydantic takes a wrap serializer's return annotation
+    # as the serialization schema, which would replace the fields' schema in
+    # `model_json_schema(mode="serialization")` with an open object.
     @model_serializer(mode="wrap")
-    def _serialize_document(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+    def _serialize_document(self, handler: SerializerFunctionWrapHandler):  # noqa: ANN202
         """Write the extra fields as top-level members of the dumped document."""
         return flatten_extra_fields(handler(self))
 
-    def __repr_args__(self) -> Iterator[tuple[str | None, Any]]:
+    @override
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler, /
+    ) -> JsonSchemaValue:
+        """
+        Describe the document, not the model: a document holds its extra
+        fields as top-level members and has no `extra_fields` member, so the
+        schema (in either mode, matching what validation reads and what
+        `model_dump` writes) types the members it does not declare as an
+        extra field's value, in place of the `extra_fields` property, and
+        admits no member named `extra_fields`. A declared field is a property,
+        which `additionalProperties` does not reach.
+        """
+        json_schema = handler(core_schema)
+        definition = handler.resolve_ref_schema(json_schema)
+        container = definition.get("properties", {}).pop(EXTRA_FIELDS, None)
+        if container is not None:
+            definition["additionalProperties"] = container["additionalProperties"]
+            definition["propertyNames"] = {"not": {"const": EXTRA_FIELDS}}
+        return json_schema
+
+    def __repr_args__(self) -> Iterator[tuple[str | None, object]]:
         """Show `extra_fields` last, and only when the document holds some."""
         extra: object = None
         for name, value in super().__repr_args__():
@@ -239,7 +323,7 @@ def _declared_keys(model: type[BaseModel]) -> frozenset[str]:
     return frozenset(keys)
 
 
-_EXTRA_FIELDS_ADAPTER: Final = TypeAdapter(dict[str, Any])
+_EXTRA_FIELDS_ADAPTER: Final = TypeAdapter(dict[str, object])
 
 
 def _dumps_extra_field(key: str, value: object, info: SerializationInfo) -> bool:
@@ -279,11 +363,11 @@ class _OpenModel(BaseModel):
     fields; setting `"allow"` is refused, since it would reach the TypedDicts.
     """
 
-    _extra_fields: dict[str, Any] = PrivateAttr(default_factory=dict)
+    _extra_fields: dict[str, object] = PrivateAttr(default_factory=dict)
 
     @override
     @classmethod
-    def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
+    def __pydantic_init_subclass__(cls, **kwargs: object) -> None:
         super().__pydantic_init_subclass__(**kwargs)
         if cls.model_config.get("extra") == "allow":
             msg = (
@@ -294,7 +378,7 @@ class _OpenModel(BaseModel):
             raise TypeError(msg)
 
     @property
-    def extra_fields(self) -> Mapping[str, Any]:
+    def extra_fields(self) -> Mapping[str, object]:
         """The keys of the input this model does not declare, with their values as given."""
         return MappingProxyType(self._extra_fields)
 
@@ -314,10 +398,13 @@ class _OpenModel(BaseModel):
         model._extra_fields = extra
         return model
 
+    # No return annotation, as on `ExtraFieldsBase`: pydantic takes a wrap serializer's return annotation
+    # as the serialization schema, which would replace the fields' schema in
+    # `model_json_schema(mode="serialization")` with an open object.
     @model_serializer(mode="wrap")
-    def _serialize_document(
+    def _serialize_document(  # noqa: ANN202
         self, handler: SerializerFunctionWrapHandler, info: SerializationInfo
-    ) -> dict[str, Any]:
+    ):
         """Write the extra fields the dump selects as top-level keys of the dumped document."""
         extra = {
             key: value
@@ -335,7 +422,7 @@ class _OpenModel(BaseModel):
         }
 
     @override
-    def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
+    def model_copy(self, *, update: Mapping[str, object] | None = None, deep: bool = False) -> Self:
         """
         Copy this model as pydantic does; a key of `update` that names no
         field is set as an extra field.
@@ -351,7 +438,7 @@ class _OpenModel(BaseModel):
         }
         return copied
 
-    def __repr_args__(self) -> Iterator[tuple[str | None, Any]]:
+    def __repr_args__(self) -> Iterator[tuple[str | None, object]]:
         """Show `extra_fields` last, and only when the model holds some."""
         yield from super().__repr_args__()
         if self._extra_fields:
@@ -401,7 +488,7 @@ class AttributesBase(_OpenModel):
 
     Attributes
     ----------
-    extra_fields: Mapping[str, Any]
+    extra_fields: Mapping[str, object]
         The keys this model does not declare, with their values as given.
     """
 
@@ -495,6 +582,44 @@ def resolve_member_path(node: object, path: str) -> object:
     return node
 
 
+def read_attribute(data: object, name: str) -> object:
+    """
+    `data.<name>`, typed as the `object` it is. The `auto_*` readers of the v2
+    and v3 `from_array` probe a duck-typed array (numpy, dask, zarr, a spec)
+    with `hasattr` and read what they find through this function, then check
+    the value before returning it as the type they promise.
+    """
+    return getattr(data, name)
+
+
+def as_shape(value: object) -> tuple[int, ...]:
+    """
+    `value`, an array's shape or chunk shape read from a duck-typed array, as
+    a tuple of ints. Each element is converted with `operator.index`, which
+    takes Python and numpy integers alike.
+
+    Raises
+    ------
+    TypeError
+        If `value` is not an iterable of integers.
+    """
+    if not isinstance(value, Iterable) or isinstance(value, str | bytes):
+        msg = f"Expected an iterable of integers, got {value!r}."
+        raise TypeError(msg)
+    return tuple(operator.index(n) for n in value)
+
+
+def as_dtype_like(value: object) -> npt.DTypeLike:
+    """
+    `value`, the `dtype` read from a duck-typed array, as numpy's `DTypeLike`.
+    `DTypeLike` cannot be checked with `isinstance`, and every consumer of the
+    result (`np.dtype` and the `parse_dtype_*` functions it backs) validates
+    it and raises `TypeError` on a value numpy cannot read as a data type, so
+    the value passes through unchanged.
+    """
+    return cast("npt.DTypeLike", value)
+
+
 def guess_chunks(shape: tuple[int, ...], typesize: int) -> tuple[int, ...]:
     """
     Vendored from zarr-python v2.
@@ -547,7 +672,7 @@ def guess_chunks(shape: tuple[int, ...], typesize: int) -> tuple[int, ...]:
     return tuple(int(x) for x in chunks)
 
 
-def parse_dtype_v2(value: npt.DTypeLike) -> str | list[tuple[Any, ...]]:
+def parse_dtype_v2(value: npt.DTypeLike) -> str | list[tuple[object, ...]]:
     """
     Convert the input to a NumPy dtype and either return the ``str`` attribute of that
     object or, if the dtype is a structured dtype, return the fields of that dtype as a list
@@ -608,7 +733,7 @@ def canonicalize_fill_value(fill_value: object) -> object:
     return fill_value
 
 
-def ensure_member_name(data: Any) -> str:
+def ensure_member_name(data: object) -> str:
     """
     If the input is a string, then ensure that it is a valid
     name for a subnode in a zarr group
@@ -624,11 +749,42 @@ def ensure_member_name(data: Any) -> str:
     raise TypeError(f"Expected a str, got {type(data)}.")
 
 
-def ensure_key_no_path(data: Any) -> Any:
+def ensure_key_no_path(data: T) -> T:
     if isinstance(data, Mapping):
         for key in data:
             ensure_member_name(key)
     return data
+
+
+def copy_members(members: object) -> object:
+    """
+    Return a `dict` copy of `members` if it is a mapping, or `members` unchanged.
+
+    `GroupSpec` runs this before it validates `members`. Under `GroupSpec[Any, Any]`
+    pydantic keeps the object it is given, so without the copy a frozen spec
+    would share the caller's mapping, and later changes to that mapping would
+    skip validation. A mapping type pydantic cannot serialize, such as
+    `MappingProxyType`, would also make `model_dump_json` fail. A value that is
+    not a mapping is left for validation to refuse.
+    """
+    return dict(members) if isinstance(members, Mapping) else members
+
+
+def ensure_members_mapping(members: object) -> None:
+    """
+    Raise `ValueError` unless `members` is a mapping with string keys.
+
+    `GroupSpec` checks this itself because its members type is a type
+    parameter: pydantic does not enforce a parameter's bound, so under
+    `GroupSpec[Any, Any]` the annotation alone would let any value through.
+    """
+    if not isinstance(members, Mapping):
+        msg = f"members must be a mapping of member names to specs, got {type(members).__name__}"
+        raise ValueError(msg)  # noqa: TRY004 (pydantic reports ValueError as a validation error)
+    not_names = [key for key in members if not isinstance(key, str)]
+    if not_names:
+        msg = f"member names must be strings, got {not_names!r}"
+        raise ValueError(msg)
 
 
 def model_like(a: BaseModel, b: BaseModel, exclude: IncEx = None, include: IncEx = None) -> bool:
@@ -641,61 +797,6 @@ def model_like(a: BaseModel, b: BaseModel, exclude: IncEx = None, include: IncEx
     a_dict = a.model_dump(exclude=exclude, include=include)
     b_dict = b.model_dump(exclude=exclude, include=include)
     return json_eq(a_dict, b_dict)
-
-
-IO_REMOVAL_VERSION = "0.12"
-"""The pydantic-zarr release that removes the deprecated zarr-python IO entry points."""
-
-TO_ZARR_REPLACEMENT = (
-    "Write the documents `to_stored_metadata_json` gives with zarr-python, for instance "
-    "through `zarr.create_hierarchy`."
-)
-FROM_ZARR_REPLACEMENT = (
-    "Read the node's stored metadata documents with zarr-python and pass them to "
-    "`from_stored_metadata_json`."
-)
-IO_DOCS_URL = "https://pydantic-zarr.readthedocs.io/en/latest/usage_zarr_v3/#reading-and-writing-with-zarr-python"
-
-
-def warn_deprecated_io(name: str, replacement: str, *, stacklevel: int = 3) -> None:
-    """
-    Warn that `name`, an entry point that reads or writes zarr-python nodes,
-    is deprecated, pointing at `replacement`.
-
-    pydantic-zarr models metadata documents; reading them from a store and
-    writing them to one is zarr-python's job, so the entry points that take
-    or return zarr-python nodes go in `IO_REMOVAL_VERSION`. Every such entry
-    point warns through this helper, so the message has one shape:
-    ```<name>` is deprecated and will be removed in pydantic-zarr <version>: ...``.
-    The default `stacklevel` names the caller of the deprecated entry point.
-    """
-    msg = (
-        f"`{name}` is deprecated and will be removed in pydantic-zarr {IO_REMOVAL_VERSION}: "
-        "pydantic-zarr models metadata documents and leaves reading and writing them to "
-        f"zarr-python. {replacement} See {IO_DOCS_URL}"
-    )
-    warnings.warn(msg, DeprecationWarning, stacklevel=stacklevel)
-
-
-# TODO: expose contains_array and contains_group as public functions in zarr-python
-# and replace these custom implementations
-def maybe_node(
-    store: StoreLike, path: str, *, zarr_format: Literal[2, 3]
-) -> zarr.Array | zarr.Group | None:
-    """
-    Return the array or group found at the store / path, if an array or group exists there.
-    Otherwise return None.
-    """
-    from zarr.core.sync import sync
-    from zarr.core.sync_group import get_node
-    from zarr.storage._common import make_store_path
-
-    # convert the storelike store argument to a Zarr store
-    spath = sync(make_store_path(store, path=path))
-    try:
-        return get_node(spath.store, spath.path, zarr_format=zarr_format)
-    except FileNotFoundError:
-        return None
 
 
 def ensure_multiple(data: Sequence[T]) -> Sequence[T]:
@@ -833,54 +934,3 @@ def stored_flat[A: BaseModel, G: BaseModel](
                 )
                 raise ValueError(msg)
     return flat
-
-
-def walk_zarr_hierarchy(
-    node: zarr.Array | zarr.Group, *, depth: int = -1
-) -> Iterator[tuple[str, zarr.Array | zarr.Group]]:
-    """
-    Yield `(path, node)` for a zarr array or group and the members under it,
-    `depth` levels deep, with paths in the flat-hierarchy form `to_flat` uses:
-    `""` for `node` itself, then `"/a"`, `"/a/b"` and so on. A `depth` of -1
-    walks the whole hierarchy and 0 yields `node` alone.
-
-    .. deprecated:: 0.11
-        Removed in pydantic-zarr 0.12 with the rest of the zarr-python IO.
-        Walk the hierarchy with zarr-python (`zarr.Group.members`), and pass
-        the nodes' stored metadata documents to `from_stored_metadata_json`.
-
-    Raises
-    ------
-    ValueError
-        If `depth` is lower than -1.
-    """
-    warn_deprecated_io(
-        "walk_zarr_hierarchy",
-        "Walk the hierarchy with zarr-python (`zarr.Group.members`), and pass the nodes' "
-        "stored metadata documents to `from_stored_metadata_json`.",
-    )
-    return _walk_zarr_hierarchy(node, depth=depth)
-
-
-def _walk_zarr_hierarchy(
-    node: zarr.Array | zarr.Group, *, depth: int = -1
-) -> Iterator[tuple[str, zarr.Array | zarr.Group]]:
-    """`walk_zarr_hierarchy` without the deprecation warning: the engine of the v2 and v3 `from_zarr_flat`."""
-    if depth < -1:
-        msg = f"Invalid value for depth. Got {depth}, expected an integer greater than or equal to -1."
-        raise ValueError(msg)
-    yield "", node
-    yield from _walk_members(node, "", depth)
-
-
-def _walk_members(
-    node: zarr.Array | zarr.Group, prefix: str, depth: int
-) -> Iterator[tuple[str, zarr.Array | zarr.Group]]:
-    import zarr
-
-    if depth == 0 or not isinstance(node, zarr.Group):
-        return
-    for name, member in node.members():
-        path = f"{prefix}/{name}"
-        yield path, member
-        yield from _walk_members(member, path, max(depth - 1, -1))
