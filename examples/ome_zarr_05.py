@@ -147,11 +147,8 @@ class MultiscaleImageMembers(TypedDict, extra_items=ArraySpec):
     labels: NotRequired[GroupSpec]
 
 
-class MultiscaleImage(GroupSpec):
+class MultiscaleImage(GroupSpec[ImageAttributes, MultiscaleImageMembers]):
     """An OME-Zarr 0.5 multiscale image group (sections 1.1 and 2.4)."""
-
-    attributes: ImageAttributes
-    members: MultiscaleImageMembers
 
     @model_validator(mode="after")
     def _datasets_resolve_to_arrays(self) -> Self:

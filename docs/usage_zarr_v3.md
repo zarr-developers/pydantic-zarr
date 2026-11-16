@@ -93,6 +93,94 @@ at validation, matching the spelling `zarr-python` stores. Which data types are
 single-byte is what their definitions in the spec's scope declare, so in
 `zarr-python`'s scope this covers its fixed-length and raw bytes types too.
 
+## Typing a group's members
+
+`GroupSpec` takes two type parameters: the type of its attributes, and the type
+of its whole `members` mapping. The members type states what a group may hold:
+
+- Left out, the group holds any arrays and groups.
+- A `Mapping` constrains the type of every member:
+  `GroupSpec[Attrs, Mapping[str, MyArraySpec]]`.
+- A closed `TypedDict` fixes the member names, each with its own type. An
+  undeclared member is refused, and so is a missing one.
+
+```python
+from pydantic import ValidationError
+from typing_extensions import TypedDict
+
+from pydantic_zarr.v3 import ArraySpec, GroupSpec, TBaseAttr
+
+
+class LevelMembers(TypedDict, closed=True):
+    x: ArraySpec
+    y: ArraySpec
+    band: ArraySpec
+
+
+Level = GroupSpec[TBaseAttr, LevelMembers]
+
+axis = ArraySpec.create_default(shape=(4,), data_type="float64")
+band = ArraySpec.create_default(shape=(4, 4), data_type="uint16")
+
+level = Level(members={"x": axis, "y": axis, "band": band})
+print(level.members["band"].shape)
+#> (4, 4)
+
+try:
+    Level(members={"x": axis, "y": axis})
+except ValidationError as e:
+    print(e.errors()[0]["loc"], e.errors()[0]["type"])
+    #> ('members', 'band') missing
+
+try:
+    Level(members={"x": axis, "y": axis, "band": band, "extra": band})
+except ValidationError as e:
+    print(e.errors()[0]["loc"], e.errors()[0]["type"])
+    #> ('members', 'extra') extra_forbidden
+```
+
+A group subclass that adds validators can leave the members type as a
+parameter, with `class Dataset(GroupSpec[TBaseAttr, TMembers], Generic[TMembers])`,
+so that each concrete group names its own members: `Dataset[LevelMembers]`.
+
+Notes for type checkers and for `TypedDict` members:
+
+- **Closed `TypedDict`s only.** pyright, ty and pyrefly accept a `TypedDict`
+  as the members type when it is closed (`closed=True`) or types its other
+  members (`extra_items=...`), because only then is every member known to be
+  an array or a group ([PEP 728](https://peps.python.org/pep-0728/)). mypy
+  does not implement that rule yet and reports the argument as outside the
+  parameter's bound.
+- **`extra_items` and pydantic.** A `TypedDict` with `extra_items` should set
+  `__pydantic_config__ = ConfigDict()` in its body. Without it pydantic warns
+  that the group's `extra="forbid"` setting does not apply to the
+  `TypedDict`.
+- **Read-only members.** A spec is frozen, but type checkers let code assign
+  to a key of a `TypedDict`, so `group.members["band"] = other` type-checks.
+  Declare the items `ReadOnly[...]` (from `typing_extensions`) for checkers to
+  refuse that assignment. pydantic accepts `ReadOnly` items, with a warning
+  that it does not enforce them at runtime.
+- **Avoid `Any`.** `Any` as the members type turns off member validation:
+  `GroupSpec[Any, Any]` accepts any mapping with string keys, does not check
+  that its values are specs, and its JSON schema leaves `members`
+  unconstrained. For a group
+  of any arrays and groups, write `GroupSpec` (or `AnyGroupSpec`), whose
+  members type defaults to `TBaseMembers`; for any attributes, give
+  `TBaseAttr`, as in `GroupSpec[TBaseAttr, LevelMembers]`.
+- **Building a group without a members type.** A checker infers the members
+  type from the `members` argument. With arrays and groups mixed in one dict
+  literal, pyright infers `dict[str, Unknown]`, and from `members={}` it
+  infers `dict[Unknown, Unknown]`; annotate the result, as in
+  `group: AnyGroupSpec = GroupSpec(members={...})`, to keep the members typed.
+- **The type of one member.** Up to 0.11 the parameter was the type of one
+  member. `GroupSpec[Attrs, MyArraySpec]` is now written
+  `GroupSpec[Attrs, Mapping[str, MyArraySpec]]`. A class still written the old
+  way validates its whole members mapping as one member, so validation
+  fails; type checkers refuse it where it is written. The validation errors
+  describe the members mapping as if it were one member, for example
+  `members.shape  Field required` for an array type, so they do not mention
+  the change of parameter.
+
 ## Creating array specs
 
 `ArraySpec.create_default` builds a valid array spec from whichever fields are

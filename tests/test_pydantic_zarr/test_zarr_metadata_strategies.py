@@ -72,7 +72,7 @@ def test_array_documents_agree(document: Mapping[str, Any]) -> None:
     reads without a problem, as the same array; and the spec round-trips
     through its own document.
     """
-    spec: ArraySpec[Any] = ArraySpec.model_validate(document)
+    spec: ArraySpec = ArraySpec.model_validate(document)
     drawn = read_array_metadata_v3(document)
     assert drawn.metadata is not None
     assert ArraySpec.model_validate(drawn.metadata.to_json()) == spec
@@ -97,7 +97,7 @@ def test_group_documents_agree(document: Mapping[str, Any]) -> None:
     zarr-metadata reads without a problem; and the spec round-trips through
     its own document.
     """
-    spec: BaseGroupSpec[Any] = BaseGroupSpec.model_validate(document)
+    spec: BaseGroupSpec = BaseGroupSpec.model_validate(document)
     assert spec.attributes == document.get("attributes", {})
     assert set(spec.extra_fields) == set(document) - GROUP_FIELDS
     written = spec.to_metadata_json()
@@ -113,7 +113,7 @@ def test_consolidated_group_documents_kept_as_written(document: Mapping[str, Any
     `BaseGroupSpec` that keeps the record as written, in its extra fields,
     and writes it back unchanged.
     """
-    spec: BaseGroupSpec[Any] = BaseGroupSpec.model_validate(document)
+    spec: BaseGroupSpec = BaseGroupSpec.model_validate(document)
     assert "consolidated_metadata" in spec.extra_fields
     written = spec.to_metadata_json()
     assert read_group_metadata_v3(written).problems == ()

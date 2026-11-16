@@ -61,7 +61,7 @@ else:
 print("CF attributes: alias round trip and unset-key omission hold")
 
 # --8<-- [start:dataset]
-from typing import Self
+from typing import Generic, Self
 
 from pydantic import Field, ValidationError, model_validator
 from typing_extensions import TypedDict
@@ -69,7 +69,14 @@ from zarr.storage import MemoryStore
 from zarr_io import read_documents, repaired, write_hierarchy
 
 from pydantic_zarr.core import MISSING, AttributesBase, get_attribute
-from pydantic_zarr.v3 import ArraySpec, CodecLike, GroupSpec, is_array_spec
+from pydantic_zarr.v3 import (
+    ArraySpec,
+    CodecLike,
+    GroupSpec,
+    TBaseAttr,
+    TMembers,
+    is_array_spec,
+)
 
 
 class CFAttrs(AttributesBase):
@@ -96,8 +103,11 @@ class DimensionCoordinateSpec(VariableSpec):
     dimension_names: tuple[str]
 
 
-class DatasetSpec(GroupSpec):
-    """A Dataset-like group: members with consistent dimensions."""
+class DatasetSpec(GroupSpec[TBaseAttr, TMembers], Generic[TMembers]):
+    """A Dataset-like group: members with consistent dimensions.
+
+    The members type stays a parameter, so a concrete dataset names its members.
+    """
 
     @model_validator(mode="after")
     def check_dimensions(self) -> Self:
@@ -144,10 +154,8 @@ class ClimateMembers(TypedDict, closed=True):
     temperature: VariableSpec
 
 
-class ClimateDataset(DatasetSpec):
-    # sound at runtime: pydantic validates members against the TypedDict;
-    # the ignore is for checkers that treat the field override as unsound
-    members: ClimateMembers  # type: ignore[assignment]
+class ClimateDataset(DatasetSpec[ClimateMembers]):
+    """A dataset with exactly the `ClimateMembers`."""
 
 
 # xarray's default Zarr V3 codec pipeline

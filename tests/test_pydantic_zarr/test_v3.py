@@ -867,7 +867,7 @@ def test_zarr_scope_class_default() -> None:
     )
     assert derived.codecs[-1]["name"] == "scale_offset"
     # a group's members are validated as their own classes, scope included
-    group = GroupSpec[Mapping[str, object], CoreArraySpec].model_validate(
+    group = GroupSpec[Mapping[str, object], Mapping[str, CoreArraySpec]].model_validate(
         {"attributes": {}, "members": {"x": _scale_offset_kwargs()}}
     )
     assert isinstance(group.members["x"], CoreArraySpec)  # type: ignore[index]
