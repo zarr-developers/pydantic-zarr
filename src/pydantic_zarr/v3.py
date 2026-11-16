@@ -34,6 +34,7 @@ from pydantic import (
     SerializerFunctionWrapHandler,
     ValidationError,
     ValidationInfo,
+    field_validator,
     model_serializer,
     model_validator,
 )
@@ -90,13 +91,13 @@ from pydantic_zarr.core import (
     StoredNodes,
     _walk_zarr_hierarchy,
     canonicalize_fill_value,
+    check_members_type,
     ensure_members_mapping,
     ensure_multiple,
     flatten_extra_fields,
     guess_chunks,
     maybe_node,
     model_like,
-    normalize_members_annotation,
     resolve_member_path,
     split_store_key,
     stored_array,
@@ -1962,14 +1963,15 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
     # an unparameterized GroupSpec() then has the default members type
     members: TMembers = Field(default=cast("TMembers", {}), validate_default=True)
 
+    @field_validator("members", mode="before")
     @classmethod
-    def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
-        super().__pydantic_init_subclass__(**kwargs)
-        # the members type is checked when the class is created: `Any` becomes
-        # any mapping, the type of one member (the parameter's meaning up to
-        # 0.11) becomes a mapping of it with a deprecation warning, and any
-        # other type that is not a mapping is refused
-        normalize_members_annotation(cls, (ArraySpec, BaseGroupSpec))
+    def _check_and_copy_members(cls, value: object) -> object:
+        # a class written for the 0.11 meaning of the second type parameter
+        # (the type of one member) is refused here with a message that says so
+        check_members_type(cls)
+        # the spec holds its own copy of the mapping, whatever the members
+        # type: under `Any`, pydantic would keep the caller's object
+        return dict(value) if isinstance(value, Mapping) else value
 
     @model_validator(mode="after")
     def validate_member_names(self) -> Self:

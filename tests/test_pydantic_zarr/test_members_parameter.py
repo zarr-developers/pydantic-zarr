@@ -5,7 +5,6 @@ parameter is the type of the whole `members` mapping.
 
 from __future__ import annotations
 
-import gc
 import pickle
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Annotated, Any, Generic, NotRequired, Union
@@ -36,17 +35,6 @@ class NamedV3(TypedDict, closed=True):
 
 class Attrs(BaseModel):
     units: str = "1"
-
-
-@pytest.fixture(autouse=True)
-def _fresh_parameterizations() -> None:
-    """
-    Drop the parameterized classes earlier tests left behind. pydantic caches
-    a parameterization for as long as the class is alive, and the check under
-    test runs when a class is created, so a class surviving from another test
-    would not be checked (or warned about) again.
-    """
-    gc.collect()
 
 
 VERSIONS = pytest.mark.parametrize(
@@ -256,7 +244,7 @@ def test_member_names_are_validated_under_a_members_type(module: ModuleType, nam
         module.GroupSpec[Any, Mapping[str, module.ArraySpec]](members={name: _array(module)})
 
 
-MEMBER_TYPE_SPELLINGS = [
+NON_MAPPING_SPELLINGS = [
     "array",
     "narrowed array",
     "union",
@@ -266,10 +254,13 @@ MEMBER_TYPE_SPELLINGS = [
     "union of aliases",
     "annotated array",
     "array by name",
+    "list of arrays",
+    "optional mapping",
+    "a scalar type",
 ]
 
 
-def _member_type(module: ModuleType, spelling: str) -> Any:
+def _non_mapping_type(module: ModuleType, spelling: str) -> Any:
     return {
         "array": module.ArraySpec,
         "narrowed array": module.ArraySpec[Attrs],
@@ -280,113 +271,56 @@ def _member_type(module: ModuleType, spelling: str) -> Any:
         "union of aliases": module.AnyGroupSpec | module.AnyArraySpec,
         "annotated array": Annotated[module.ArraySpec, "a note"],
         "array by name": "ArraySpec",
-    }[spelling]
-
-
-@VERSIONS
-@pytest.mark.parametrize("spelling", MEMBER_TYPE_SPELLINGS)
-def test_member_type_as_members_type_is_deprecated(
-    module: ModuleType, named: type, spelling: str
-) -> None:
-    """
-    Up to 0.11 the second parameter was the type of one member, and released
-    packages spell it that way. A member type there still works, read as a
-    mapping of that type, with a `DeprecationWarning` that says what to write.
-    It is recognized through unions, aliases, `Annotated` and names given as
-    strings.
-    """
-    with pytest.warns(DeprecationWarning, match=r"Mapping\[str, <member type>\]"):
-        cls = module.GroupSpec[Any, _member_type(module, spelling)]
-
-    spec = cls(members={"a": _array(module)})
-    assert isinstance(spec.members["a"], module.ArraySpec)
-    with pytest.raises(ValidationError, match="members"):
-        cls(members={"a": 1})
-
-
-@VERSIONS
-def test_member_type_as_forward_references_is_deprecated(module: ModuleType, named: type) -> None:
-    """
-    A member type given as forward references is deprecated the same way.
-    The released ome-zarr-models spells its v0.5 and v0.6 groups like this:
-    dotted names that only the code writing the parameterization can resolve.
-    """
-    import pydantic_zarr  # noqa: F401 (the forward references below name it)
-
-    name = module.__name__
-    with pytest.warns(DeprecationWarning, match=r"Mapping\[str, <member type>\]"):
-
-        class Legacy(module.GroupSpec[Any, Union[f"{name}.GroupSpec", f"{name}.ArraySpec"]]):  # type: ignore[misc,name-defined]
-            """A subclass of the parameterization, as ome-zarr-models defines its groups."""
-
-    assert isinstance(Legacy(members={"a": _array(module)}).members["a"], module.ArraySpec)
-
-
-@VERSIONS
-def test_member_type_naming_the_class_itself_is_deprecated(module: ModuleType, named: type) -> None:
-    """
-    A recursive member type, which names the class being defined, cannot be
-    told apart until that class exists. It is deprecated then, not refused
-    when the parameterization is written.
-    """
-    with pytest.warns(DeprecationWarning, match=r"Mapping\[str, <member type>\]"):
-
-        class Tree(module.GroupSpec[Any, Union["Tree", module.ArraySpec]]):  # type: ignore[misc,name-defined]
-            """A group whose members are arrays or groups of its own kind."""
-
-    tree = Tree(members={"a": _array(module), "t": Tree()})
-    assert isinstance(tree.members["t"], Tree)
-
-
-@VERSIONS
-def test_member_type_without_a_subclass_survives_a_rebuild(module: ModuleType, named: type) -> None:
-    """
-    A member type given as a forward reference that resolves only later, on a
-    parameterization used without a subclass, is still read as a mapping once
-    the class is rebuilt.
-    """
-    import pydantic_zarr  # (the forward references below name it)
-
-    # one forward reference, not the union the test above parameterizes with:
-    # pydantic caches a parameterization, and a cached class is not created
-    # (or warned about) a second time
-    with pytest.warns(DeprecationWarning, match=r"Mapping\[str, <member type>\]"):
-        cls = module.GroupSpec[Any, f"{module.__name__}.ArraySpec"]
-    cls.model_rebuild(_types_namespace={"pydantic_zarr": pydantic_zarr})
-    assert isinstance(cls(members={"a": _array(module)}).members["a"], module.ArraySpec)
-
-
-@VERSIONS
-@pytest.mark.parametrize("spelling", ["array", "array alias", "item alias"])
-def test_member_type_through_a_subclass_type_variable_is_deprecated(
-    module: ModuleType, named: type, spelling: str
-) -> None:
-    """The members type is checked on the class that results, so a member type
-    given through a subclass's own type variable is deprecated the same way,
-    aliases included."""
-    with pytest.warns(DeprecationWarning, match=r"Mapping\[str, <member type>\]"):
-        cls = OWN_DATASET[module][_member_type(module, spelling)]
-    assert isinstance(cls(members={"a": _array(module)}).members["a"], module.ArraySpec)
-
-
-@VERSIONS
-@pytest.mark.parametrize("spelling", ["list of arrays", "optional mapping", "a scalar type"])
-def test_non_mapping_members_type_is_refused(
-    module: ModuleType, named: type, spelling: str
-) -> None:
-    """A members type that is neither a mapping nor a member type is refused
-    where it is written, with an error that says what to write."""
-    members_type = {
         "list of arrays": list[module.ArraySpec],
         "optional mapping": Mapping[str, module.ArraySpec] | None,
         "a scalar type": int,
     }[spelling]
-    with pytest.raises(TypeError, match=r"whole members\s+mapping"):
-        module.GroupSpec[Any, members_type]
+
+
+# a bare name resolves in the module of the class it parameterizes, so
+# "ArraySpec" names the spec class only for the generic class itself
+REFUSED = [
+    (spelling, through)
+    for through in ("the class", "a subclass type variable")
+    for spelling in NON_MAPPING_SPELLINGS
+    if (spelling, through) != ("array by name", "a subclass type variable")
+]
 
 
 @VERSIONS
-def test_unresolved_members_type_is_passed_through(module: ModuleType, named: type) -> None:
-    """A members type the check cannot tell apart, such as a name that does
-    not resolve, is not refused at the parameterization."""
-    assert module.GroupSpec[Any, "NotDefinedAnywhere"] is not None
+@pytest.mark.parametrize(("spelling", "through"), REFUSED)
+def test_non_mapping_members_type_is_refused(
+    module: ModuleType, named: type, spelling: str, through: str
+) -> None:
+    """
+    A group class whose members type is not a mapping is refused when it
+    first validates members, with a `TypeError` that says what to write.
+    Up to 0.11 the second parameter was the type of one member, so a spec
+    class is the common case; it is recognized through unions, aliases,
+    `Annotated` and names given as strings, and through a subclass's own type
+    variable.
+    """
+    members_type = _non_mapping_type(module, spelling)
+    if through == "the class":
+        cls = module.GroupSpec[Any, members_type]
+    else:
+        cls = OWN_DATASET[module][members_type]
+    with pytest.raises(TypeError, match=r"whole members\s+mapping"):
+        cls(members={"a": _array(module)})
+    # the refusal does not depend on the value given, and repeats
+    with pytest.raises(TypeError, match=r"Mapping\[str, <member type>\]"):
+        cls()
+
+
+@VERSIONS
+def test_non_mapping_members_type_naming_the_class_itself_is_refused(
+    module: ModuleType, named: type
+) -> None:
+    """A recursive member type, which names the class being defined, is
+    refused the same way once the class validates members."""
+
+    class Tree(module.GroupSpec[Any, Union["Tree", module.ArraySpec]]):  # type: ignore[misc,name-defined]
+        """Written for the 0.11 meaning: members that are arrays or trees."""
+
+    with pytest.raises(TypeError, match=r"Mapping\[str, <member type>\]"):
+        Tree(members={"a": _array(module)})

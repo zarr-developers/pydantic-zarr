@@ -166,10 +166,10 @@ Notes for type checkers and for `TypedDict` members:
   `group: AnyGroupSpec = GroupSpec(members={...})`, to keep the members typed.
 - **The type of one member.** Up to 0.11 the parameter was the type of one
   member. `GroupSpec[Attrs, MyArraySpec]` is now written
-  `GroupSpec[Attrs, Mapping[str, MyArraySpec]]`. The old spelling still works,
-  read as that mapping, with a `DeprecationWarning`; type checkers refuse it.
-  Any other type that is not a mapping raises a `TypeError` when the class is
-  created.
+  `GroupSpec[Attrs, Mapping[str, MyArraySpec]]`. A class still written the old
+  way, or with any other members type that is not a mapping, raises a
+  `TypeError` that says so when it first validates members; type checkers
+  refuse it where it is written.
 
 ## Creating array specs
 
