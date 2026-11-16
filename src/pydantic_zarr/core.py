@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 import sys
 import warnings
 from collections.abc import Iterator, Mapping, Sequence
@@ -666,8 +667,10 @@ def ensure_members_mapping(members: object) -> None:
 # a deprecation raised while a class is being created is attributed to the
 # code that created the class, not to pydantic's or this package's machinery
 _DEPRECATION_SKIP_PREFIXES = (
-    str(Path(pydantic.__file__).parent),
-    str(Path(__file__).parent),
+    # each ends in a separator, so that a sibling package whose name starts
+    # the same way (pydantic_settings) is not skipped too
+    str(Path(pydantic.__file__).parent) + os.sep,
+    str(Path(__file__).parent) + os.sep,
 )
 
 
@@ -681,7 +684,10 @@ def _members_type_kind(
     Aliases, `Annotated`, forward references and unions are looked through.
     """
     if isinstance(members_type, TypeAliasType | _TypeAliasTypeBackport):
-        return _members_type_kind(members_type.__value__, namespace, spec_types)
+        # names inside an alias belong to the module that defines the alias
+        alias_module = sys.modules.get(members_type.__module__ or "")
+        alias_namespace = {**namespace, **(vars(alias_module) if alias_module else {})}
+        return _members_type_kind(members_type.__value__, alias_namespace, spec_types)
     if isinstance(members_type, ForwardRef):
         members_type = members_type.__forward_arg__
     if isinstance(members_type, str):
@@ -696,10 +702,13 @@ def _members_type_kind(
         return _members_type_kind(get_args(members_type)[0], namespace, spec_types)
     if origin in (Union, UnionType):
         kinds = {_members_type_kind(item, namespace, spec_types) for item in get_args(members_type)}
-        if len(kinds) == 1:
-            return kinds.pop()
-        # a union that mixes kinds is a mapping type only if every arm is one
-        return "unknown" if kinds == {"mapping", "unknown"} else "other"
+        if "other" in kinds or {"mapping", "member"} <= kinds:
+            return "other"
+        # an arm that cannot be told yet (a name that resolves later, such as
+        # the class being defined) leaves the union undecided
+        if "unknown" in kinds:
+            return "unknown"
+        return kinds.pop()
     if is_typeddict(members_type):
         return "mapping"
     candidate = members_type if origin is None else origin
@@ -738,13 +747,15 @@ def normalize_members_annotation(cls: type[BaseModel], spec_types: tuple[type, .
     if field is None:
         return
     members_type = field.annotation
-    # names a forward reference may use: this package (released packages write
-    # dotted names such as "pydantic_zarr.v3.ArraySpec"), the module of the
-    # class, and the namespace the class was created in
+    # names a forward reference may still use here: those of the class's
+    # module (which may not be registered, for code run with `exec`), the
+    # class itself, and this package, since released packages write dotted
+    # names such as "pydantic_zarr.v3.ArraySpec"
+    module = sys.modules.get(cls.__module__)
     namespace = {
+        **(vars(module) if module is not None else {}),
+        cls.__name__: cls,
         "pydantic_zarr": sys.modules["pydantic_zarr"],
-        **vars(sys.modules[cls.__module__]),
-        **(cls.__pydantic_parent_namespace__ or {}),
     }
     mapping: Any = Mapping
     if members_type is Any:
@@ -776,9 +787,15 @@ def normalize_members_annotation(cls: type[BaseModel], spec_types: tuple[type, .
     # a copy, so that a field object shared with a parent class is not changed
     field = copy(field)
     field.annotation = replacement
+    # pydantic rebuilds a field that still holds an unresolved forward
+    # reference from the annotation as written, so that is replaced as well
+    if getattr(field, "_original_annotation", None) is not None:
+        field._original_annotation = replacement
     cls.__pydantic_fields__["members"] = field
-    # forward references that are still unresolved are left for a later rebuild
-    cls.model_rebuild(force=True, raise_errors=False)
+    # forward references that are still unresolved are left for a later
+    # rebuild; depth 0 keeps this function's locals out of the names they
+    # may resolve to
+    cls.model_rebuild(force=True, raise_errors=False, _parent_namespace_depth=0)
 
 
 def model_like(a: BaseModel, b: BaseModel, exclude: IncEx = None, include: IncEx = None) -> bool:

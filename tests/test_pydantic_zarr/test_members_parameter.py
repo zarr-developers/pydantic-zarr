@@ -5,6 +5,7 @@ parameter is the type of the whole `members` mapping.
 
 from __future__ import annotations
 
+import gc
 import pickle
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Annotated, Any, Generic, NotRequired, Union
@@ -35,6 +36,17 @@ class NamedV3(TypedDict, closed=True):
 
 class Attrs(BaseModel):
     units: str = "1"
+
+
+@pytest.fixture(autouse=True)
+def _fresh_parameterizations() -> None:
+    """
+    Drop the parameterized classes earlier tests left behind. pydantic caches
+    a parameterization for as long as the class is alive, and the check under
+    test runs when a class is created, so a class surviving from another test
+    would not be checked (or warned about) again.
+    """
+    gc.collect()
 
 
 VERSIONS = pytest.mark.parametrize(
@@ -311,13 +323,49 @@ def test_member_type_as_forward_references_is_deprecated(module: ModuleType, nam
 
 
 @VERSIONS
+def test_member_type_naming_the_class_itself_is_deprecated(module: ModuleType, named: type) -> None:
+    """
+    A recursive member type, which names the class being defined, cannot be
+    told apart until that class exists. It is deprecated then, not refused
+    when the parameterization is written.
+    """
+    with pytest.warns(DeprecationWarning, match=r"Mapping\[str, <member type>\]"):
+
+        class Tree(module.GroupSpec[Any, Union["Tree", module.ArraySpec]]):  # type: ignore[misc,name-defined]
+            """A group whose members are arrays or groups of its own kind."""
+
+    tree = Tree(members={"a": _array(module), "t": Tree()})
+    assert isinstance(tree.members["t"], Tree)
+
+
+@VERSIONS
+def test_member_type_without_a_subclass_survives_a_rebuild(module: ModuleType, named: type) -> None:
+    """
+    A member type given as a forward reference that resolves only later, on a
+    parameterization used without a subclass, is still read as a mapping once
+    the class is rebuilt.
+    """
+    import pydantic_zarr  # (the forward references below name it)
+
+    # one forward reference, not the union the test above parameterizes with:
+    # pydantic caches a parameterization, and a cached class is not created
+    # (or warned about) a second time
+    with pytest.warns(DeprecationWarning, match=r"Mapping\[str, <member type>\]"):
+        cls = module.GroupSpec[Any, f"{module.__name__}.ArraySpec"]
+    cls.model_rebuild(_types_namespace={"pydantic_zarr": pydantic_zarr})
+    assert isinstance(cls(members={"a": _array(module)}).members["a"], module.ArraySpec)
+
+
+@VERSIONS
+@pytest.mark.parametrize("spelling", ["array", "array alias", "item alias"])
 def test_member_type_through_a_subclass_type_variable_is_deprecated(
-    module: ModuleType, named: type
+    module: ModuleType, named: type, spelling: str
 ) -> None:
     """The members type is checked on the class that results, so a member type
-    given through a subclass's own type variable is deprecated the same way."""
+    given through a subclass's own type variable is deprecated the same way,
+    aliases included."""
     with pytest.warns(DeprecationWarning, match=r"Mapping\[str, <member type>\]"):
-        cls = OWN_DATASET[module][module.ArraySpec]
+        cls = OWN_DATASET[module][_member_type(module, spelling)]
     assert isinstance(cls(members={"a": _array(module)}).members["a"], module.ArraySpec)
 
 
