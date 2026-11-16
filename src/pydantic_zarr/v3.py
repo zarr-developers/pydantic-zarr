@@ -33,7 +33,6 @@ from pydantic import (
     SerializerFunctionWrapHandler,
     ValidationError,
     ValidationInfo,
-    field_validator,
     model_serializer,
     model_validator,
 )
@@ -1969,10 +1968,14 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
     # an unparameterized GroupSpec() then has the default members type
     members: TMembers = Field(default=cast("TMembers", {}), validate_default=True)
 
-    @field_validator("members", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def _copy_members(cls, value: object) -> object:
-        return copy_members(value)
+    def _copy_members(cls, data: object) -> object:
+        # a model validator, not a field one: pyrefly and ty widen the
+        # `__init__` parameter of a field with a before validator to `Any`
+        if isinstance(data, Mapping) and "members" in data:
+            return {**data, "members": copy_members(data["members"])}
+        return data
 
     @model_validator(mode="after")
     def validate_member_names(self) -> Self:

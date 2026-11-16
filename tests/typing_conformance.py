@@ -9,8 +9,13 @@ project checker) is variance-lenient, so a bound refusing a narrowed spec,
 or covariance regressing to invariance, would pass it unseen — the former
 reached a release candidate once (zarr-developers/pydantic-zarr#190).
 
-It is not a pytest module; it only needs to type-check.
+It is not a pytest module; it only needs to type-check. Calls a checker
+must refuse carry that checker's suppression comment, and an unused one fails
+the check (pyright through the file-level setting below, ty through an
+override in pyproject.toml), so each refusal is asserted, not only allowed.
 """
+
+# pyright: reportUnnecessaryTypeIgnoreComment=error
 
 from __future__ import annotations
 
@@ -342,3 +347,23 @@ def group_replaces_like_a_base_group_v3(group: v3.AnyGroupSpec) -> ReplacesLikeB
 
 def group_replaces_like_a_base_group_v2(group: v2.AnyGroupSpec) -> ReplacesLikeBaseGroupV2:
     return group
+
+
+# A GroupSpec's members must be a mapping of GroupSpec and ArraySpec members,
+# whatever TMembers is solved to: the TypeVar's bound refuses None (a group
+# without members is a BaseGroupSpec), a BaseGroupSpec member, and a member
+# that is not a spec. pyrefly 1.4 accepts these calls (in pydantic's lax mode
+# it reads a field typed with a bare TypeVar as Any); add its suppression,
+# `# pyrefly: ignore[bad-specialization]`, once it refuses them.
+
+
+def refused_members_v3() -> None:
+    v3.GroupSpec(members=None)  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+    v3.GroupSpec(members={"a": v3.BaseGroupSpec()})  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+    v3.GroupSpec(members={"a": 1})  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+
+
+def refused_members_v2() -> None:
+    v2.GroupSpec(members=None)  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+    v2.GroupSpec(members={"a": v2.BaseGroupSpec()})  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+    v2.GroupSpec(members={"a": 1})  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]

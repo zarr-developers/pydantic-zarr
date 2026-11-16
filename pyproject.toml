@@ -146,6 +146,16 @@ check-ty = "ty check src/pydantic_zarr tests/typing_conformance.py --exclude src
 # `experimental` is excluded in [tool.pyright]: the pyright CLI takes no --exclude
 check-pyright = "pyright src/pydantic_zarr tests/typing_conformance.py"
 
+# tests/typing_conformance.py marks the calls it expects a checker to refuse
+# with that checker's suppression comment, so an unused one (a refusal that
+# stopped being reported) fails the check; pyright's counterpart is a
+# file-level comment in that file
+[[tool.ty.overrides]]
+include = ["tests/typing_conformance.py"]
+
+[tool.ty.overrides.rules]
+unused-ignore-comment = "error"
+
 [tool.coverage.run]
 source_pkgs = ["pydantic_zarr", "tests"]
 branch = true
