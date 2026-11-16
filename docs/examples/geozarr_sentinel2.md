@@ -38,9 +38,11 @@ the four native 10 m bands plus the coordinate and CRS variables. A closed
 `TypedDict` turns that into a validated contract — unknown names and missing
 bands are refused. The shared `x`/`y`/`spatial_ref` trio lives in a non-closed
 base that each closed resolution dict inherits. Cross-member rules go in
-`model_validator`s on a `GroupSpec` subclass: `get_attribute` reads an
-attribute key from member attributes whether they are a model or a plain
-mapping, and `get_path` resolves a relative member path without raising. The
+`model_validator`s on a `GroupSpec` subclass, `GeoZarrDataset`: `get_attribute`
+reads an attribute key from member attributes whether they are a model or a
+plain mapping, and `get_path` resolves a relative member path without raising.
+`GeoZarrDataset` leaves its members type as a parameter, so the 10 m dataset
+is `GeoZarrDataset[R10mMembers]`. The
 section ends with a store round trip through zarr-python, with the
 `write_hierarchy` and `read_documents` helpers from [`examples/zarr_io.py`](https://github.com/zarr-developers/pydantic-zarr/blob/main/examples/zarr_io.py) —
 `from_stored_metadata_json` on the typed subclass re-validates everything it

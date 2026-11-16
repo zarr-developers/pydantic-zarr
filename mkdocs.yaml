@@ -60,6 +60,7 @@ plugins:
             merge_init_into_class: true
 
 markdown_extensions:
+  - admonition
   - pymdownx.highlight:
       anchor_linenums: true
       line_spans: __span

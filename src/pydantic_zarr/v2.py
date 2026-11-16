@@ -53,7 +53,9 @@ from pydantic_zarr.core import (
     _walk_zarr_hierarchy,
     canonicalize_fill_value,
     check_from_zarr_depth,
+    copy_members,
     ensure_key_no_path,
+    ensure_members_mapping,
     from_zarr_group_replacement,
     guess_chunks,
     maybe_node,
@@ -83,20 +85,21 @@ if TYPE_CHECKING:
 # with un-narrowed attributes must serialize with its own fields, not the
 # empty base schema.
 type TBaseAttr = Mapping[str, object] | SerializeAsAny[BaseModel]
-# TBaseItem's bare, recursive spelling serves as TItem's bound and default;
-# see the notes on the v3 spellings.
+# TBaseMembers, the widest members mapping, serves as TMembers' bound and
+# default; see the notes on the v3 spellings.
 type TBaseItem = Union["GroupSpec", "ArraySpec"]
+type TBaseMembers = Mapping[str, TBaseItem]
 
 # Aliases for specs of any specialization: ordinary wide types, equal to the
 # bare class names, since the covariant parameters make a narrowed spec
 # substitutable for a wider one — see the note on the v3 aliases.
 type AnyArraySpec = "ArraySpec[TBaseAttr]"
-type AnyGroupSpec = "GroupSpec[TBaseAttr, TBaseItem]"
+type AnyGroupSpec = "GroupSpec[TBaseAttr, TBaseMembers]"
 type AnyBaseGroupSpec = "BaseGroupSpec[TBaseAttr]"
 
 # covariant because the specs are frozen; see the note on the v3 TypeVars
 TAttr = TypeVar("TAttr", bound=TBaseAttr, default=TBaseAttr, covariant=True)
-TItem = TypeVar("TItem", bound=TBaseItem, default=TBaseItem, covariant=True)
+TMembers = TypeVar("TMembers", bound=TBaseMembers, default=TBaseMembers, covariant=True)
 TDefault = TypeVar("TDefault")
 
 DtypeStr = Annotated[str, BeforeValidator(parse_dtype_v2)]
@@ -914,26 +917,42 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
 
-class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
+class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
     """
     A model of a Zarr Version 2 Group.
     The specification for the data structure being modeled by this
     class can be found in the
     [Zarr specification](https://zarr.readthedocs.io/en/stable/spec/v2.html#groups).
 
+    The second type parameter is the type of the whole `members` mapping. Leave it
+    out for a group of any members, give a `Mapping` to constrain every member's
+    type (`GroupSpec[Attrs, Mapping[str, MyArraySpec]]`), or give a closed
+    `TypedDict` to fix the member names (`GroupSpec[Attrs, MyMembers]`).
+
     Attributes
     ----------
 
     attributes: TAttr
         The user-defined attributes of this group. Should be JSON-serializable.
-    members: dict[str, TItem], default = {}
-        The members of this group: a `Mapping` with string keys and values that are
-        `ArraySpec` or `GroupSpec`. A `GroupSpec` is a complete hierarchy, so an empty
-        mapping means the group has no members. A group whose members are unknown is a
-        `BaseGroupSpec`, which has no `members` field and is never a member.
+    members: TMembers, default = {}
+        The members of this group: a mapping from member name to member, of the
+        type `TMembers`. With the default `TMembers` every member is validated as an
+        `ArraySpec` or a `GroupSpec`; under `Any` the values are not validated. The
+        spec holds its own `dict` copy of the mapping it is given. A `GroupSpec` is a
+        complete hierarchy, so an empty mapping means the group has no members. A
+        group whose members are unknown is a `BaseGroupSpec`, which has no `members`
+        field and is never a member. The default is validated against `TMembers`, so
+        a group whose members type requires a member still requires `members`.
     """
 
-    members: Mapping[str, TItem] = {}
+    # the default is cast so that a checker does not solve TMembers from it:
+    # an unparameterized GroupSpec() then has the default members type
+    members: TMembers = Field(default=cast("TMembers", {}), validate_default=True)
+
+    @field_validator("members", mode="before")
+    @classmethod
+    def _copy_members(cls, value: object) -> object:
+        return copy_members(value)
 
     @model_validator(mode="after")
     def validate_member_names(self) -> Self:
@@ -944,6 +963,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         subclass narrowing the `members` annotation (for example to a closed
         `TypedDict` of members) cannot drop it.
         """
+        ensure_members_mapping(self.members)
         ensure_key_no_path(self.members)
         return self
 

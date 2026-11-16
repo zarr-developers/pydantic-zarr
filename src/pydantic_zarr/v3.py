@@ -34,6 +34,7 @@ from pydantic import (
     SerializerFunctionWrapHandler,
     ValidationError,
     ValidationInfo,
+    field_validator,
     model_serializer,
     model_validator,
 )
@@ -55,15 +56,6 @@ from zarr_metadata import (
 from zarr_metadata.model import ZarrV3ArrayMetadata as ZarrV3ArrayMetadataModel
 from zarr_metadata.model import ZarrV3GroupMetadata as ZarrV3GroupMetadataModel
 from zarr_metadata.model import validate_node_name_v3
-from zarr_metadata.v3.chunk_grid.regular import RegularChunkGridConfiguration
-from zarr_metadata.v3.chunk_key_encoding.default import (
-    DefaultChunkKeyEncodingConfiguration,
-    DefaultChunkKeyEncodingObject,
-)
-from zarr_metadata.v3.chunk_key_encoding.v2 import (
-    V2ChunkKeyEncodingConfiguration,
-    V2ChunkKeyEncodingObject,
-)
 from zarr_metadata.v3.definition import (
     ArrayExtraFieldDefinition,
     ChunkGridDefinition,
@@ -91,6 +83,8 @@ from pydantic_zarr.core import (
     _walk_zarr_hierarchy,
     canonicalize_fill_value,
     check_from_zarr_depth,
+    copy_members,
+    ensure_members_mapping,
     ensure_multiple,
     flatten_extra_fields,
     from_zarr_group_replacement,
@@ -116,6 +110,9 @@ if TYPE_CHECKING:
     import zarr
     from zarr.abc.store import Store
     from zarr.core.array_spec import ArrayConfigParams
+    from zarr_metadata.v3.chunk_key_encoding.default import (
+        DefaultChunkKeyEncodingObject,
+    )
     from zarr_metadata.v3.definition import ZarrV3Context
 
 
@@ -127,28 +124,36 @@ type TBaseAttr = Mapping[str, object] | SerializeAsAny[BaseModel]
 # BaseGroupSpec is not a member type: a GroupSpec is a complete hierarchy,
 # and a group whose members are unknown is never part of one.
 type TBaseItem = Union["GroupSpec", "ArraySpec"]
+# The widest members mapping: any names, each member a GroupSpec or an ArraySpec.
+type TBaseMembers = Mapping[str, TBaseItem]
 
 # Aliases for specs of any specialization. Since the spec parameters are
 # covariant (specs are frozen, so a narrowed spec IS-A wider one), these are
 # ordinary wide types, not gradual-typing escapes: a value typed with one
-# keeps checked, TBaseAttr/TBaseItem-typed reads. The names remain the public
+# keeps checked, TBaseAttr/TBaseMembers-typed reads. The names remain the public
 # spelling for heterogeneous APIs (`resolve_path`, `from_flat`, `like`,
 # `is_array_spec`) and are now equal to the bare class names.
 type AnyArraySpec = "ArraySpec[TBaseAttr]"
-type AnyGroupSpec = "GroupSpec[TBaseAttr, TBaseItem]"
+type AnyGroupSpec = "GroupSpec[TBaseAttr, TBaseMembers]"
 type AnyBaseGroupSpec = "BaseGroupSpec[TBaseAttr]"
 
-# Covariant because the specs are frozen: TAttr and TItem appear only in read
-# positions on instances, so ArraySpec[CFAttrs] is substitutable for
-# ArraySpec[TBaseAttr], and TBaseItem serves as both TItem's bound and its
-# default (its bare, recursive spelling also makes pydantic validate a bare
-# GroupSpec's nested members as specs all the way down;
-# tests/typing_conformance.py guards the narrowed-parameterization contract).
+# Covariant because the specs are frozen: TAttr and TMembers appear only in
+# read positions on instances, so ArraySpec[CFAttrs] is substitutable for
+# ArraySpec[TBaseAttr], and TBaseMembers serves as both TMembers' bound and its
+# default (the bare, recursive spelling of TBaseItem inside it also makes
+# pydantic validate a bare GroupSpec's nested members as specs all the way
+# down; tests/typing_conformance.py guards the narrowed-parameterization
+# contract).
+#
+# TMembers is the whole members mapping, not the type of one member, so that a
+# group whose member names are part of its schema is one parameterization:
+# GroupSpec[Attrs, Members] with Members a closed TypedDict. A group that only
+# constrains its members' type is GroupSpec[Attrs, Mapping[str, MyArraySpec]].
 # Constructing classmethods take TBaseAttr instead of TAttr, since a covariant
 # parameter may not appear in argument positions; the class's real attribute
 # type is still enforced, by validation.
 TAttr = TypeVar("TAttr", bound=TBaseAttr, default=TBaseAttr, covariant=True)
-TItem = TypeVar("TItem", bound=TBaseItem, default=TBaseItem, covariant=True)
+TMembers = TypeVar("TMembers", bound=TBaseMembers, default=TBaseMembers, covariant=True)
 TDefault = TypeVar("TDefault")
 
 NodeType = Literal["group", "array"]
@@ -236,17 +241,6 @@ are read-only, keeps every typed codec object (`BytesCodecObject`,
 since TypedDict keys are invariant. A spec holds every codec as an object
 (`AnyNamedConfig`), since validation writes a bare name as ``{"name": ...}``.
 """
-
-# The structured Zarr V3 metadata types are defined once, by `zarr-metadata`;
-# the names this module exported before it delegated to that library are kept
-# as aliases. The aliased TypedDicts are *closed*: a member their definition
-# does not declare is rejected rather than silently dropped.
-RegularChunkingConfig = RegularChunkGridConfiguration
-RegularChunking = RegularChunkGridMetadata
-DefaultChunkKeyEncodingConfig = DefaultChunkKeyEncodingConfiguration
-DefaultChunkKeyEncoding = DefaultChunkKeyEncodingObject
-V2ChunkKeyEncodingConfig = V2ChunkKeyEncodingConfiguration
-V2ChunkKeyEncoding = V2ChunkKeyEncodingObject
 
 ChunkGridLike = RegularChunkGridMetadata | AnyNamedConfig | ZarrV3NamedConfigJSON
 """
@@ -1925,9 +1919,14 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
 
-class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
+class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
     """
     A model of a Zarr Version 3 Group.
+
+    The second type parameter is the type of the whole `members` mapping. Leave it
+    out for a group of any members, give a `Mapping` to constrain every member's
+    type (`GroupSpec[Attrs, Mapping[str, MyArraySpec]]`), or give a closed
+    `TypedDict` to fix the member names (`GroupSpec[Attrs, MyMembers]`).
 
     Attributes
     ----------
@@ -1936,14 +1935,25 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         The type of this node. Must be the string "group".
     attributes: TAttr
         The user-defined attributes of this group.
-    members: dict[str, TItem], default = {}
-        The members of this group: a `Mapping` with string keys and values that are
-        `ArraySpec` or `GroupSpec`. A `GroupSpec` is a complete hierarchy, so an empty
-        mapping means the group has no members. A group whose members are unknown is a
-        `BaseGroupSpec`, which has no `members` field and is never a member.
+    members: TMembers, default = {}
+        The members of this group: a mapping from member name to member, of the
+        type `TMembers`. With the default `TMembers` every member is validated as an
+        `ArraySpec` or a `GroupSpec`; under `Any` the values are not validated. The
+        spec holds its own `dict` copy of the mapping it is given. A `GroupSpec` is a
+        complete hierarchy, so an empty mapping means the group has no members. A
+        group whose members are unknown is a `BaseGroupSpec`, which has no `members`
+        field and is never a member. The default is validated against `TMembers`, so
+        a group whose members type requires a member still requires `members`.
     """
 
-    members: Mapping[str, TItem] = {}
+    # the default is cast so that a checker does not solve TMembers from it:
+    # an unparameterized GroupSpec() then has the default members type
+    members: TMembers = Field(default=cast("TMembers", {}), validate_default=True)
+
+    @field_validator("members", mode="before")
+    @classmethod
+    def _copy_members(cls, value: object) -> object:
+        return copy_members(value)
 
     @model_validator(mode="after")
     def validate_member_names(self) -> Self:
@@ -1954,6 +1964,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TItem]):
         subclass narrowing the `members` annotation (for example to a closed
         `TypedDict` of members) cannot drop it.
         """
+        ensure_members_mapping(self.members)
         ensure_member_names_v3(self.members)
         return self
 

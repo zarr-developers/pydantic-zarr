@@ -146,7 +146,7 @@ def test_zarr_generated_metadata_accepted(data: st.DataObject) -> None:
         document = tuplify_json(json.loads(json.dumps(meta.to_dict(), cls=V3JsonEncoder)))
     else:
         document = tuplify_json(meta.to_dict())
-    spec: ArraySpec[Any] = ArraySpec(**document)
+    spec: ArraySpec = ArraySpec(**document)
     assert ArraySpec(**spec.model_dump()) == spec
     assert spec.like(spec)
     # ...and zarr-python accepts what the spec emits
@@ -165,7 +165,7 @@ def test_accepted_documents_parse_in_zarr(document: dict[str, Any]) -> None:
     """
     from zarr.core.metadata import ArrayV3Metadata
 
-    spec: ArraySpec[Any] = ArraySpec(**document)
+    spec: ArraySpec = ArraySpec(**document)
     ArrayV3Metadata.from_dict(spec.model_dump())
 
 
@@ -176,7 +176,7 @@ def test_documents_round_trip(document: dict[str, Any]) -> None:
     For every document the generator produces, `ArraySpec` accepts it, the
     spec round-trips through `model_dump`, and `like` is reflexive.
     """
-    spec: ArraySpec[Any] = ArraySpec(**document)
+    spec: ArraySpec = ArraySpec(**document)
     assert ArraySpec(**spec.model_dump()) == spec
     assert spec.like(spec)
 
@@ -198,7 +198,7 @@ def test_fill_value_spellings_alike(document: dict[str, Any], data: st.DataObjec
     dtype = data.draw(st.sampled_from(sorted(_NAN_SPELLINGS)))
     spellings = _NAN_SPELLINGS[dtype]
     document = {**document, "data_type": dtype}
-    specs: list[ArraySpec[Any]] = [
+    specs: list[ArraySpec] = [
         ArraySpec.model_validate({**document, "fill_value": spelling}) for spelling in spellings
     ]
     for other in specs[1:]:
@@ -270,6 +270,6 @@ def test_zarr_node_names_accepted_as_members(data: st.DataObject, document: dict
     from zarr.testing.strategies import node_names
 
     name = data.draw(node_names)
-    array: ArraySpec[Any] = ArraySpec(**document)
-    group: GroupSpec[Any, Any] = GroupSpec(attributes={}, members={name: array})
+    array: ArraySpec = ArraySpec(**document)
+    group: GroupSpec = GroupSpec(attributes={}, members={name: array})
     assert tuple(group.members) == (name,)

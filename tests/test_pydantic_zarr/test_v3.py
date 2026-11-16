@@ -15,6 +15,14 @@ from packaging.version import Version
 from pydantic import AfterValidator, BaseModel, Field, ValidationError
 from zarr_metadata import JSONValue  # noqa: TC002 (pydantic resolves field annotations at runtime)
 from zarr_metadata.model import ZarrV3ArrayMetadata, ZarrV3GroupMetadata
+from zarr_metadata.v3.chunk_grid.regular import (
+    RegularChunkGridConfiguration,
+    RegularChunkGridMetadata,
+)
+from zarr_metadata.v3.chunk_key_encoding.default import (
+    DefaultChunkKeyEncodingConfiguration,
+    DefaultChunkKeyEncodingObject,
+)
 from zarr_metadata.v3.definition import ZARR_PYTHON_CONTEXT
 
 from pydantic_zarr._metadata import CORE_AND_EXTENSIONS_CONTEXT, CORE_CONTEXT
@@ -28,12 +36,8 @@ from pydantic_zarr.v3 import (
     ArraySpec,
     BaseGroupSpec,
     CodecLike,
-    DefaultChunkKeyEncoding,
-    DefaultChunkKeyEncodingConfig,
     GroupSpec,
     NamedConfig,
-    RegularChunking,
-    RegularChunkingConfig,
     auto_codecs,
     from_flat,
     from_zarr,
@@ -120,11 +124,11 @@ def test_from_array() -> None:
             "attributes": {},
             "shape": (10,),
             "data_type": "int64",
-            "chunk_grid": RegularChunking(
-                name="regular", configuration=RegularChunkingConfig(chunk_shape=(10,))
+            "chunk_grid": RegularChunkGridMetadata(
+                name="regular", configuration=RegularChunkGridConfiguration(chunk_shape=(10,))
             ),
-            "chunk_key_encoding": DefaultChunkKeyEncoding(
-                name="default", configuration=DefaultChunkKeyEncodingConfig(separator="/")
+            "chunk_key_encoding": DefaultChunkKeyEncodingObject(
+                name="default", configuration=DefaultChunkKeyEncodingConfiguration(separator="/")
             ),
             "fill_value": 0,
             "codecs": ({"name": "bytes", "configuration": {"endian": "little"}},),
@@ -987,7 +991,7 @@ def test_zarr_scope_class_default() -> None:
     )
     assert derived.codecs[-1]["name"] == "scale_offset"
     # a group's members are validated as their own classes, scope included
-    group = GroupSpec[Mapping[str, object], CoreArraySpec].model_validate(
+    group = GroupSpec[Mapping[str, object], Mapping[str, CoreArraySpec]].model_validate(
         {"attributes": {}, "members": {"x": _scale_offset_kwargs()}}
     )
     assert isinstance(group.members["x"], CoreArraySpec)  # type: ignore[index]

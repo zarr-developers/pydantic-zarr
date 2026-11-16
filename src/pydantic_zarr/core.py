@@ -631,6 +631,37 @@ def ensure_key_no_path(data: Any) -> Any:
     return data
 
 
+def copy_members(members: object) -> object:
+    """
+    Return a `dict` copy of `members` if it is a mapping, or `members` unchanged.
+
+    `GroupSpec` runs this before it validates `members`. Under `GroupSpec[Any, Any]`
+    pydantic keeps the object it is given, so without the copy a frozen spec
+    would share the caller's mapping, and later changes to that mapping would
+    skip validation. A mapping type pydantic cannot serialize, such as
+    `MappingProxyType`, would also make `model_dump_json` fail. A value that is
+    not a mapping is left for validation to refuse.
+    """
+    return dict(members) if isinstance(members, Mapping) else members
+
+
+def ensure_members_mapping(members: object) -> None:
+    """
+    Raise `ValueError` unless `members` is a mapping with string keys.
+
+    `GroupSpec` checks this itself because its members type is a type
+    parameter: pydantic does not enforce a parameter's bound, so under
+    `GroupSpec[Any, Any]` the annotation alone would let any value through.
+    """
+    if not isinstance(members, Mapping):
+        msg = f"members must be a mapping of member names to specs, got {type(members).__name__}"
+        raise ValueError(msg)  # noqa: TRY004 (pydantic reports ValueError as a validation error)
+    not_names = [key for key in members if not isinstance(key, str)]
+    if not_names:
+        msg = f"member names must be strings, got {not_names!r}"
+        raise ValueError(msg)
+
+
 def model_like(a: BaseModel, b: BaseModel, exclude: IncEx = None, include: IncEx = None) -> bool:
     """
     A similarity check for a pair pydantic.BaseModel, parametrized over included or excluded fields.
