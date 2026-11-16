@@ -789,7 +789,7 @@ def normalize_members_annotation(cls: type[BaseModel], spec_types: tuple[type, .
     field.annotation = replacement
     # pydantic rebuilds a field that still holds an unresolved forward
     # reference from the annotation as written, so that is replaced as well
-    if getattr(field, "_original_annotation", None) is not None:
+    if not getattr(field, "_complete", True):
         field._original_annotation = replacement
     cls.__pydantic_fields__["members"] = field
     # forward references that are still unresolved are left for a later
