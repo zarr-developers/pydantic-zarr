@@ -8,6 +8,7 @@ from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
+    Final,
     Generic,
     Literal,
     Self,
@@ -22,7 +23,14 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 from packaging.version import Version
-from pydantic import BaseModel, Field, SerializeAsAny, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    SerializeAsAny,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
 from pydantic.functional_validators import BeforeValidator
 from typing_extensions import TypedDict, TypeIs, TypeVar
 from zarr_metadata import (
@@ -34,6 +42,7 @@ from zarr_metadata import (
     ZarrV2ArrayDimensionSeparator,
     ZarrV2ArrayMetadataJSON,
     ZarrV2ArrayOrder,
+    ZarrV2DataTypeMetadata,
     ZarrV2GroupMetadataJSON,
     ZarrV2ZArrayJSON,
     ZarrV2ZAttrsJSON,
@@ -47,6 +56,7 @@ from pydantic_zarr.core import (
     TO_ZARR_REPLACEMENT,
     ExtraFieldsBase,
     IncEx,
+    MemberToZarrOptions,
     StoredNodes,
     StoredNodeType,
     StrictBase,
@@ -148,33 +158,31 @@ logical path relative to the group, which has no leading `/`
 """
 
 
-def dictify_codec(value: dict[str, Any] | Codec) -> dict[str, Any]:
+def dictify_codec(value: object) -> object:
     """
-    Ensure that a `numcodecs.abc.Codec` is converted to a `dict`. If the input is not an
-    instance of `numcodecs.abc.Codec`, then it is assumed to be a `dict` with string keys
-    and it is returned unaltered.
+    Ensure that a `numcodecs.abc.Codec` is converted to a `dict`. Any other
+    input is returned unaltered, for validation to judge.
 
     Parameters
     ----------
 
-    value : dict[str, Any] | numcodecs.abc.Codec
-        The value to be dictified if it is not already a dict.
+    value : object
+        The value to be dictified if it is a `numcodecs.abc.Codec`.
 
     Returns
     -------
-    dict[str, Any]
+    object
         If the input was a `Codec`, then the result of calling `get_config()` on that
         object is returned. This should be a dict with string keys. All other values pass
         through unaltered.
     """
-
+    # a Codec instance cannot exist unless numcodecs is imported
     if (numcodecs := sys.modules.get("numcodecs")) and isinstance(value, numcodecs.abc.Codec):
         return value.get_config()
-    # a Codec instance cannot exist unless numcodecs is imported, so value is a dict here
-    return cast("dict[str, Any]", value)
+    return value
 
 
-def parse_dimension_separator(data: Any) -> DimensionSeparator:
+def parse_dimension_separator(data: object) -> DimensionSeparator:
     """
     Parse the dimension_separator metadata as per the Zarr version 2 specification.
     If the input is `None`, this returns ".".
@@ -183,7 +191,7 @@ def parse_dimension_separator(data: Any) -> DimensionSeparator:
 
     Parameters
     ----------
-    data : Any
+    data : object
         The input data to parse.
 
     Returns
@@ -192,12 +200,12 @@ def parse_dimension_separator(data: Any) -> DimensionSeparator:
     """
     if data is None:
         return "."
-    if data in get_args(DimensionSeparator):
-        return cast("DimensionSeparator", data)
+    if data == "/" or data == ".":
+        return data
     raise ValueError(f'Invalid data, expected one of ("/", ".", None), got {data}')
 
 
-CodecDict = Annotated[dict[str, Any], BeforeValidator(dictify_codec)]
+CodecDict = Annotated[dict[str, object], BeforeValidator(dictify_codec)]
 
 
 class NodeSpec(StrictBase):
@@ -213,13 +221,15 @@ class NodeSpec(StrictBase):
 
     zarr_format: Literal[2] = 2
 
-    def __replace__(self, **changes: Any) -> Self:
+    def __replace__(self, **changes: object) -> Self:
         """
         `copy.replace(spec, **changes)` (Python 3.13 and later): the spec's own
         `replace`, so it validates the changes, where pydantic's
         `BaseModel.__replace__` copies without validating. It calls
         `self.replace`, so a subclass that overrides `replace` is honored.
         """
+        # `Any`: each subclass's `replace` takes its own TypedDict of changes,
+        # which no signature declared here can name, and validates `changes`
         return cast("Any", self).replace(**changes)
 
 
@@ -234,12 +244,12 @@ class ArraySpecUpdate(TypedDict, total=False):
     attributes: TBaseAttr
     shape: Sequence[int]
     chunks: Sequence[int]
-    dtype: npt.DTypeLike | list[tuple[Any, ...]]
+    dtype: npt.DTypeLike | list[tuple[object, ...]]
     fill_value: FillValueLike
     order: MemoryOrder
-    filters: Sequence[Mapping[str, Any] | Codec] | None
+    filters: Sequence[Mapping[str, object] | Codec] | None
     dimension_separator: DimensionSeparator
-    compressor: Mapping[str, Any] | Codec | None
+    compressor: Mapping[str, object] | Codec | None
     extra_fields: Mapping[str, JSONValue]
 
 
@@ -310,7 +320,7 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
     attributes: TAttr = Field(default={}, validate_default=True)
     shape: tuple[int, ...]
     chunks: tuple[int, ...]
-    dtype: DtypeStr | list[tuple[Any, ...]]
+    dtype: DtypeStr | list[tuple[object, ...]]
     # validation replaces this declared default with the dtype's (see
     # `default_fill_value`); `model_construct` and the JSON schema, which do
     # not validate, still report 0 for every dtype
@@ -431,7 +441,7 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
     @classmethod
     def from_array(
         cls,
-        array: npt.NDArray[Any] | zarr.Array,
+        array: npt.NDArray[np.generic] | zarr.Array,
         chunks: Literal["auto"] | tuple[int, ...] = "auto",
         # TBaseAttr, not TAttr: covariant parameters may not appear in
         # argument positions. Validation enforces the class's attribute type.
@@ -528,16 +538,24 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         else:
             dimension_separator_actual = dimension_separator
 
-        return cls(
-            shape=shape_actual,
-            dtype=parse_dtype_v2(dtype_actual),
-            chunks=chunks_actual,
-            attributes=attributes_actual,
-            fill_value=fill_value_actual,
-            order=order_actual,
-            compressor=None if compressor_actual is None else dictify_codec(compressor_actual),
-            filters=None if filters_actual is None else [dictify_codec(f) for f in filters_actual],
-            dimension_separator=dimension_separator_actual,
+        # validated as a document: the fill value and codecs read from `array`
+        # are whatever its attributes hold, for validation to judge
+        return cls.model_validate(
+            {
+                "shape": shape_actual,
+                "dtype": parse_dtype_v2(dtype_actual),
+                "chunks": chunks_actual,
+                "attributes": attributes_actual,
+                "fill_value": fill_value_actual,
+                "order": order_actual,
+                "compressor": None
+                if compressor_actual is None
+                else dictify_codec(compressor_actual),
+                "filters": None
+                if filters_actual is None
+                else [dictify_codec(f) for f in filters_actual],
+                "dimension_separator": dimension_separator_actual,
+            }
         )
 
     @classmethod
@@ -1077,7 +1095,12 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
 
     @override
     def to_zarr(
-        self, store: Store, path: str, *, overwrite: bool = False, **kwargs: Any
+        self,
+        store: Store,
+        path: str,
+        *,
+        overwrite: bool = False,
+        **kwargs: Unpack[MemberToZarrOptions],
     ) -> zarr.Group:
         """
         Serialize this `GroupSpec` to a Zarr group at a specific path in a `zarr.abc.store.Store`.
@@ -1091,9 +1114,9 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
             The location of the group inside the store.
         overwrite : bool, default = False
             Whether to overwrite existing objects in storage to create the Zarr group.
-        **kwargs : Any
-            Additional keyword arguments that will be passed to `zarr.create` for creating
-            sub-arrays.
+        **kwargs : Unpack[MemberToZarrOptions]
+            Passed on to each member's `to_zarr`: `config`, an `ArrayConfigParams`
+            or `None`, the runtime configuration of each array in the group.
 
         Returns
         -------
@@ -1109,7 +1132,12 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
 
     @override
     def _to_zarr(
-        self, store: Store, path: str, *, overwrite: bool = False, **kwargs: Any
+        self,
+        store: Store,
+        path: str,
+        *,
+        overwrite: bool = False,
+        **kwargs: Unpack[MemberToZarrOptions],
     ) -> zarr.Group:
         """`to_zarr` without the deprecation warning."""
         try:
@@ -1527,7 +1555,7 @@ def to_zarr(
     path: str,
     *,
     overwrite: bool = False,
-    **kwargs: Any,
+    **kwargs: Unpack[MemberToZarrOptions],
 ) -> zarr.Array: ...
 
 
@@ -1538,7 +1566,7 @@ def to_zarr(
     path: str,
     *,
     overwrite: bool = False,
-    **kwargs: Any,
+    **kwargs: Unpack[MemberToZarrOptions],
 ) -> zarr.Group: ...
 
 
@@ -1548,7 +1576,7 @@ def to_zarr(
     path: str,
     *,
     overwrite: bool = False,
-    **kwargs: Any,
+    **kwargs: Unpack[MemberToZarrOptions],
 ) -> zarr.Array | zarr.Group:
     """
     Serialize a `GroupSpec` or `ArraySpec` to a Zarr group or array at a specific path in
@@ -1564,8 +1592,9 @@ def to_zarr(
         The location of the Zarr group or array inside the store.
     overwrite : bool, default = False
         Whether to overwrite existing objects in storage to create the Zarr group or array.
-    **kwargs
-        Additional keyword arguments will be passed to member `to_zarr` calls and `zarr.create`.
+    **kwargs : Unpack[MemberToZarrOptions]
+        Passed on to the spec's `to_zarr`: `config`, an `ArrayConfigParams` or `None`,
+        the runtime configuration of the array, or of each array in the group.
 
     Returns
     -------
@@ -1766,7 +1795,7 @@ def from_flat_group(
     return GroupSpec(members={**member_groups, **member_arrays}, attributes=root_node.attributes)
 
 
-def auto_chunks(data: Any) -> tuple[int, ...]:
+def auto_chunks(data: object) -> tuple[int, ...]:
     """
     Guess chunks from:
       input with a `chunksize` attribute, or
@@ -1777,10 +1806,13 @@ def auto_chunks(data: Any) -> tuple[int, ...]:
         return data.chunksize
     if hasattr(data, "chunks"):
         return data.chunks
-    return guess_chunks(data.shape, np.dtype(data.dtype).itemsize)
+    if hasattr(data, "shape") and hasattr(data, "dtype"):
+        return guess_chunks(data.shape, np.dtype(data.dtype).itemsize)
+    msg = "Cannot guess chunks for an object without `chunksize`, `chunks`, or `shape` and `dtype`"
+    raise ValueError(msg)
 
 
-def auto_attributes(data: Any) -> Mapping[str, Any]:
+def auto_attributes(data: object) -> Mapping[str, object]:
     """
     Guess attributes from:
         input with an `attrs` attribute, or
@@ -1794,7 +1826,11 @@ def auto_attributes(data: Any) -> Mapping[str, Any]:
     return {}
 
 
-def dtype_default_fill_value(dtype: object) -> FillValue:
+_DATA_TYPE_ADAPTER: Final = TypeAdapter(ZarrV2DataTypeMetadata)
+"""Checks that a value is a Zarr V2 data type in its JSON form."""
+
+
+def dtype_default_fill_value(dtype: npt.DTypeLike) -> FillValue:
     """
     The fill value a spec of data type `dtype` gets when none is given: the
     default `zarr-metadata` derives for the data type, the value zarr-python
@@ -1803,17 +1839,16 @@ def dtype_default_fill_value(dtype: object) -> FillValue:
     Zarr V2 data type gets `0`, and validation reports the data type.
     """
     try:
+        data_type = _DATA_TYPE_ADAPTER.validate_python(parse_dtype_v2(dtype))
         return cast(
-            "FillValue",
-            ZarrV2ArrayMetadataModel.create_default(
-                dtype=cast("Any", parse_dtype_v2(cast("Any", dtype)))
-            ).fill_value,
+            "FillValue", ZarrV2ArrayMetadataModel.create_default(dtype=data_type).fill_value
         )
+    # a pydantic ValidationError is a ValueError
     except (MetadataValidationError, TypeError, ValueError):
         return 0
 
 
-def auto_fill_value(data: Any) -> Any:
+def auto_fill_value(data: object) -> object:
     """
     Guess fill value from an input with a `fill_value` attribute. Otherwise
     return the default for the input's dtype (see `dtype_default_fill_value`),
@@ -1826,7 +1861,7 @@ def auto_fill_value(data: Any) -> Any:
     return 0
 
 
-def auto_compresser(data: Any) -> Codec | None:
+def auto_compresser(data: object) -> Codec | None:
     """
     Guess compressor from an input with a `compressor` attribute, returning `None` otherwise.
     """
@@ -1835,7 +1870,7 @@ def auto_compresser(data: Any) -> Codec | None:
     return None
 
 
-def auto_filters(data: Any) -> list[Codec] | None:
+def auto_filters(data: object) -> list[Codec] | None:
     """
     Guess filters from an input with a `filters` attribute, returning `None` otherwise.
     """
@@ -1844,7 +1879,7 @@ def auto_filters(data: Any) -> list[Codec] | None:
     return None
 
 
-def auto_order(data: Any) -> MemoryOrder:
+def auto_order(data: object) -> MemoryOrder:
     """
     Guess array order from an input with an `order` attribute, returning "C" otherwise.
     """
@@ -1856,7 +1891,7 @@ def auto_order(data: Any) -> MemoryOrder:
     return "C"
 
 
-def auto_dimension_separator(data: Any) -> DimensionSeparator:
+def auto_dimension_separator(data: object) -> DimensionSeparator:
     """
     Guess dimension separator from an input with a `dimension_separator` attribute, returning "/" otherwise.
     """
