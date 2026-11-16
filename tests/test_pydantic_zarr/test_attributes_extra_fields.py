@@ -60,7 +60,7 @@ with warnings.catch_warnings():
         closed: Closed | MISSING = MISSING
 
     class ClosedAttributesGroup(ExperimentalGroupSpec):
-        attributes: Closed  # type: ignore[assignment]
+        attributes: Closed
 
 
 _DOCUMENT = {
@@ -180,7 +180,7 @@ def test_error_attributes_setting_extra_allow() -> None:
 def test_error_attributes_assigning_an_undeclared_key() -> None:
     model = Attrs()
     with pytest.raises(ValueError, match="no field"):
-        model.units = "m"  # type: ignore[attr-defined]
+        model.units = "m"  # pyrefly: ignore[missing-attribute]
 
 
 @pytest.mark.parametrize(
@@ -195,4 +195,5 @@ def test_error_attributes_assigning_an_undeclared_key() -> None:
 )
 def test_error_extra_fields_are_read_only(model: Attrs | ExperimentalGroupSpec) -> None:
     with pytest.raises(TypeError):
-        model.extra_fields["foo"] = {"must_understand": True}  # type: ignore[index]
+        # pyrefly: ignore[unsupported-operation]
+        model.extra_fields["foo"] = {"must_understand": True}

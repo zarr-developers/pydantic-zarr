@@ -137,7 +137,7 @@ def test_arrayspec_to_zarr(overwrite: bool, path: str, config: dict[str, object]
 
     # test serialization
     store = zarr.storage.MemoryStore()
-    stored = spec.to_zarr(store, path=path, config=config)  # type: ignore[arg-type]
+    stored = spec.to_zarr(store, path=path, config=config)  # pyrefly: ignore[bad-argument-type]
 
     if config:
         assert stored._async_array._config == ArrayConfig(
@@ -206,7 +206,7 @@ def test_array_spec_from_array(
     # arrayspec should round-trip from_array with no arguments.
     # `from_array` is annotated for ndarray/zarr.Array but documents that it only needs
     # `shape` and `dtype`, which `ArraySpec` supplies.
-    assert spec.from_array(spec) == spec  # type: ignore[arg-type]
+    assert spec.from_array(spec) == spec  # pyrefly: ignore[bad-argument-type]
 
     assert spec.dtype == array.dtype.str
     assert np.dtype(spec.dtype) == array.dtype
@@ -634,14 +634,14 @@ def test_typed_members() -> None:
     class DatasetGroup(GroupSpec):
         # Narrowing `members` to a TypedDict is the point of this test; mypy treats it as an
         # incompatible override of the base `Mapping[str, ArraySpec | GroupSpec]` field.
-        members: DatasetMembers  # type: ignore[assignment]
+        members: DatasetMembers  # pyrefly: ignore[bad-override]
 
     class ExpectedMembers(TypedDict):
         r10m: DatasetGroup
         r20m: DatasetGroup
 
     class ExpectedGroup(GroupSpec):
-        members: ExpectedMembers  # type: ignore[assignment]
+        members: ExpectedMembers  # pyrefly: ignore[bad-override]
 
     flat: dict[str, ArraySpec | BaseGroupSpec] = {
         "": BaseGroupSpec(attributes={}),

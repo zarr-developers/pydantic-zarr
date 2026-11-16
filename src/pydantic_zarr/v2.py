@@ -741,10 +741,10 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         """`like` without the deprecation warning, for the deprecated IO paths to call."""
 
         other_parsed: ArraySpec
-        if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Array):
-            other_parsed = ArraySpec._from_zarr(other)
+        if isinstance(other, ArraySpec):
+            other_parsed = other
         else:
-            other_parsed = other  # type: ignore[assignment]
+            other_parsed = ArraySpec._from_zarr(other)
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
@@ -905,12 +905,12 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
     ) -> bool:
         """`like` without the deprecation warning, for the deprecated IO paths to call."""
         other_parsed: AnyBaseGroupSpec
-        if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
-            other_parsed = BaseGroupSpec._from_zarr(other)
-        elif isinstance(other, GroupSpec):
+        if isinstance(other, GroupSpec):
             other_parsed = BaseGroupSpec(attributes=other.attributes)
+        elif isinstance(other, BaseGroupSpec):
+            other_parsed = other
         else:
-            other_parsed = cast("AnyBaseGroupSpec", other)
+            other_parsed = BaseGroupSpec._from_zarr(other)
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
@@ -966,7 +966,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
         return self
 
     @override
-    def replace(self, **changes: Unpack[GroupSpecUpdate]) -> Self:  # type: ignore[override]
+    def replace(self, **changes: Unpack[GroupSpecUpdate]) -> Self:
         """
         Return a revalidated copy of this model with `changes` applied.
 
@@ -1065,7 +1065,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
                 # convert to dict before the final typed GroupSpec construction
                 item_out = GroupSpec._from_zarr(item).model_dump()
             else:
-                msg = (  # type: ignore[unreachable]
+                msg = (
                     f"Unparsable object encountered: {type(item)}. Expected zarr.Array"
                     " or zarr.Group."
                 )
@@ -1223,17 +1223,17 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
     ) -> bool:
         """`like` without the deprecation warning, for the deprecated IO paths to call."""
 
-        if isinstance(other, BaseGroupSpec) and not isinstance(other, GroupSpec):
+        other_parsed: AnyGroupSpec
+        if isinstance(other, GroupSpec):
+            other_parsed = other
+        elif isinstance(other, BaseGroupSpec):
             # a group without members compares by the group's own metadata;
             # this side projects to its own metadata too, or the comparison
             # would always fail on the members field itself
             projection = BaseGroupSpec(attributes=self.attributes)
             return projection.like(other, include=include, exclude=exclude)
-        other_parsed: GroupSpec
-        if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
-            other_parsed = GroupSpec._from_zarr(other)
         else:
-            other_parsed = other  # type: ignore[assignment]
+            other_parsed = GroupSpec._from_zarr(other)
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
