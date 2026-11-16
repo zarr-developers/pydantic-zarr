@@ -167,16 +167,17 @@ Notes for type checkers and for `TypedDict` members:
   `TBaseMembers`, for members validated as arrays and groups.
 - **Building a group without a members type.** A checker infers the members
   type from the `members` argument. With arrays and groups mixed in one dict
-  literal, pyright infers `dict[str, Unknown]`; annotate the result, as in
+  literal, pyright infers `dict[str, Unknown]`, and from `members={}` it
+  infers `dict[Unknown, Unknown]`; annotate the result, as in
   `group: AnyGroupSpec = GroupSpec(members={...})`, to keep the members typed.
 - **The type of one member.** Up to 0.11 the parameter was the type of one
   member. `GroupSpec[Attrs, MyArraySpec]` is now written
   `GroupSpec[Attrs, Mapping[str, MyArraySpec]]`. A class still written the old
   way validates its whole members mapping as one member, so validation
   fails; type checkers refuse it where it is written. The validation errors
-  name the member type's fields under `members` (`members.shape  Field
-  required` for an array type), or, for a group type with no members, say
-  that `members` must be a mapping.
+  describe the members mapping as if it were one member, for example
+  `members.shape  Field required` for an array type, so they do not mention
+  the change of parameter.
 
 ## Creating array specs
 

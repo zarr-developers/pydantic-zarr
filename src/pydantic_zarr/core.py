@@ -621,9 +621,7 @@ def ensure_member_name(data: Any) -> str:
         if data in ("", ".", ".."):
             raise ValueError(f"The string {data} is not a valid member name.")
         return data
-    # ValueError, so that a validator calling this reports a validation error
-    msg = f"Expected a str, got {type(data)}."
-    raise ValueError(msg)
+    raise TypeError(f"Expected a str, got {type(data)}.")
 
 
 def ensure_key_no_path(data: Any) -> Any:
