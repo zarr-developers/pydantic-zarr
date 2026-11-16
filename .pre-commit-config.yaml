@@ -35,6 +35,16 @@ repos:
     hooks:
       - id: rst-directive-colons
       - id: rst-inline-touching-normal
+  - repo: local
+    hooks:
+      # pyrefly does not check the codes of a `# type: ignore[...]`, nor report
+      # one that is no longer needed; a `# pyrefly: ignore[<kind>]` is checked
+      # by the `unused-ignore` error in pyproject.toml
+      - id: no-type-ignore
+        name: "use `# pyrefly: ignore[<kind>]`, not `# type: ignore`"
+        language: pygrep
+        entry: '#\s*type:\s*ignore'
+        types: [python]
   - repo: https://github.com/numpy/numpydoc
     rev: v1.8.0
     hooks:

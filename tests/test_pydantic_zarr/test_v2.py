@@ -292,7 +292,7 @@ def test_array_spec_from_array(
     # arrayspec should round-trip from_array with no arguments.
     # `from_array` is annotated for ndarray/zarr.Array but documents that it only needs
     # `shape` and `dtype`, which `ArraySpec` supplies.
-    assert spec.from_array(spec) == spec  # type: ignore[arg-type]
+    assert spec.from_array(spec) == spec  # pyrefly: ignore[bad-argument-type]
 
     assert spec.dtype == array.dtype.str
     assert np.dtype(spec.dtype) == array.dtype
@@ -540,7 +540,7 @@ def test_validation() -> None:
 @pytest.mark.parametrize("dtype", [None, "uint8", "float32"])
 def test_from_array(shape: tuple[int, ...], dtype: str | None) -> None:
     template = np.zeros(shape=shape, dtype=dtype)
-    spec = ArraySpec.from_array(template)  # type: ignore[var-annotated]
+    spec = ArraySpec.from_array(template)
 
     assert spec.shape == template.shape
     assert np.dtype(spec.dtype) == np.dtype(template.dtype)
@@ -607,7 +607,7 @@ def test_flatten_unflatten(
 
 # todo: parametrize
 def test_array_like() -> None:
-    a = ArraySpec.from_array(np.arange(10))  # type: ignore[var-annotated]
+    a = ArraySpec.from_array(np.arange(10))
     assert a.like(a)
 
     b = a.model_copy(update={"dtype": "uint8"})
@@ -637,7 +637,7 @@ def test_group_like() -> None:
         "/b": ArraySpec.from_array(np.arange(10), attributes={"path": "/b"}),
         "/a/b": ArraySpec.from_array(np.arange(10), attributes={"path": "/a/b"}),
     }
-    group = GroupSpec.from_flat(tree)  # type: ignore[var-annotated]
+    group = GroupSpec.from_flat(tree)
     assert group.like(group)
     assert not group.like(group.model_copy(update={"attributes": None}))
     assert group.like(group.model_copy(update={"attributes": None}), exclude={"attributes"})
@@ -697,13 +697,13 @@ def test_from_zarr_flat_invalid_depth() -> None:
 def test_members_none_refused() -> None:
     """`members` may not be `None`: a group without members is a `BaseGroupSpec`."""
     with pytest.raises(ValidationError, match="members"):
-        GroupSpec(members=None)  # type: ignore[arg-type]
+        GroupSpec(members=None)
 
 
 def test_base_group_member_refused() -> None:
     """A `GroupSpec` is a complete hierarchy, so a `BaseGroupSpec` is not a member."""
     with pytest.raises(ValidationError, match="members"):
-        GroupSpec(members={"a": BaseGroupSpec()})  # type: ignore[dict-item]
+        GroupSpec(members={"a": BaseGroupSpec()})
 
 
 @pytest.mark.parametrize(("dtype_example"), DTYPE_EXAMPLES_V2, ids=str)
@@ -769,7 +769,7 @@ def test_typevar_defaults_v2() -> None:
 def test_replace_v2(field: str, value: object) -> None:
     """The v2 `replace` returns a revalidated copy with the new field, everything else unchanged."""
     spec: AnyArraySpec = ArraySpec(shape=(4,), dtype="uint8", chunks=(2,), attributes={})
-    built = spec.replace(**{field: value})  # type: ignore[arg-type]
+    built = spec.replace(**{field: value})  # pyrefly: ignore[bad-argument-type]
     assert getattr(built, field) == value
     assert built.model_dump(exclude={field}) == spec.model_dump(exclude={field})
 
@@ -817,7 +817,7 @@ def test_member_name_validation_survives_narrowing_v2() -> None:
     """
 
     class Narrowed(GroupSpec):
-        members: dict[str, ArraySpec]  # type: ignore[assignment]
+        members: dict[str, ArraySpec]
 
     array: AnyArraySpec = ArraySpec(shape=(4,), dtype="uint8", chunks=(2,), attributes={})
     with pytest.raises(ValidationError, match="/"):
@@ -853,7 +853,7 @@ def test_like_filters_keyword_only() -> None:
     """`like` takes its `include`/`exclude` filters as keyword arguments only."""
     group: AnyGroupSpec = GroupSpec()
     with pytest.raises(TypeError):
-        group.like(group, {"attributes"})  # type: ignore[call-arg]
+        group.like(group, {"attributes"})  # pyrefly: ignore[bad-argument-count]
 
 
 def test_resolve_path_v2() -> None:

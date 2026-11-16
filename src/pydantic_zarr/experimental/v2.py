@@ -447,7 +447,7 @@ class ArraySpec(StrictBase):
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Array):
             other_parsed = ArraySpec.from_zarr(other)
         else:
-            other_parsed = other  # type: ignore[assignment]
+            other_parsed = other  # pyrefly: ignore[bad-assignment]
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
@@ -710,7 +710,7 @@ class GroupSpec(BaseGroupSpec):
             raise ValueError(msg)
         if depth == 0:
             # When depth is 0, we don't have members, so return a BaseGroupSpec
-            return GroupSpec(attributes=attributes, members={})  # type: ignore[return-value]
+            return GroupSpec(attributes=attributes, members={})  # pyrefly: ignore[bad-return]
         new_depth = max(depth - 1, -1)
         for name, item in group.members():
             if isinstance(item, zarr.Array):
@@ -718,7 +718,7 @@ class GroupSpec(BaseGroupSpec):
             elif isinstance(item, zarr.Group):
                 members[name] = GroupSpec.from_zarr(item, depth=new_depth).model_dump()
             else:
-                msg = (  # type: ignore[unreachable]
+                msg = (
                     f"Unparsable object encountered: {type(item)}. Expected zarr.Array"
                     " or zarr.Group."
                 )
@@ -857,7 +857,7 @@ class GroupSpec(BaseGroupSpec):
         if (zarr := sys.modules.get("zarr")) and isinstance(other, zarr.Group):
             other_parsed = GroupSpec.from_zarr(other)
         else:
-            other_parsed = other  # type: ignore[assignment]
+            other_parsed = other  # pyrefly: ignore[bad-assignment]
 
         return model_like(self, other_parsed, include=include, exclude=exclude)
 
@@ -1115,7 +1115,7 @@ def from_flat(data: Mapping[str, ArraySpec | BaseGroupSpec]) -> ArraySpec | Grou
         raise ValueError(msg)
 
     if tuple(data.keys()) == ("",) and isinstance(next(iter(data.values())), ArraySpec):
-        return next(iter(data.values()))  # type: ignore[return-value]
+        return next(iter(data.values()))  # pyrefly: ignore[bad-return]
     else:
         return from_flat_group(data)
 

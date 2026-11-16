@@ -140,7 +140,7 @@ def test_from_array() -> None:
     # TODO: fix type of the store argument in to_zarr
     if not ZARR_AVAILABLE:
         return
-    array_spec.to_zarr(store={}, path="")  # type: ignore[arg-type]
+    array_spec.to_zarr(store={}, path="")  # pyrefly: ignore[bad-argument-type]
 
 
 @pytest.mark.filterwarnings("ignore:The data type :FutureWarning")
@@ -196,7 +196,7 @@ def test_auto_codecs(dtype: np.dtype[Any], expected_codecs: tuple[CodecLike, ...
             "fill_value": zdt.to_json_scalar(zdt.default_scalar(), zarr_format=3),
         }
     )
-    spec.to_zarr(store={}, path="")  # type: ignore[arg-type]
+    spec.to_zarr(store={}, path="")  # pyrefly: ignore[bad-argument-type]
 
 
 def test_arrayspec_no_empty_codecs() -> None:
@@ -417,13 +417,13 @@ def test_from_zarr_flat_invalid_depth() -> None:
 def test_members_none_refused() -> None:
     """`members` may not be `None`: a group without members is a `BaseGroupSpec`."""
     with pytest.raises(ValidationError, match="members"):
-        GroupSpec(members=None)  # type: ignore[arg-type]
+        GroupSpec(members=None)
 
 
 def test_base_group_member_refused() -> None:
     """A `GroupSpec` is a complete hierarchy, so a `BaseGroupSpec` is not a member."""
     with pytest.raises(ValidationError, match="members"):
-        GroupSpec(members={"a": BaseGroupSpec()})  # type: ignore[dict-item]
+        GroupSpec(members={"a": BaseGroupSpec()})
 
 
 def test_mix_v3_v2_fails() -> None:
@@ -870,7 +870,7 @@ def test_zarr_scope_class_default() -> None:
     group = GroupSpec[Mapping[str, object], Mapping[str, CoreArraySpec]].model_validate(
         {"attributes": {}, "members": {"x": _scale_offset_kwargs()}}
     )
-    assert isinstance(group.members["x"], CoreArraySpec)  # type: ignore[index]
+    assert isinstance(group.members["x"], CoreArraySpec)
 
 
 def test_zarr_scope_context_overrides_classvar() -> None:
@@ -1188,7 +1188,7 @@ def test_typevar_defaults() -> None:
 def test_replace(field: str, value: object) -> None:
     """`replace` returns a revalidated copy with the new field, everything else unchanged."""
     spec: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
-    built = spec.replace(**{field: value})  # type: ignore[arg-type]
+    built = spec.replace(**{field: value})  # pyrefly: ignore[bad-argument-type]
     assert getattr(built, field) == value
     assert built.model_dump(exclude={field}) == spec.model_dump(exclude={field})
 
@@ -1216,7 +1216,7 @@ def test_replace_unknown_field() -> None:
     """A change naming a field the model does not have is refused."""
     spec: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
     with pytest.raises(ValidationError, match="bogus"):
-        spec.replace(bogus=1)  # type: ignore[call-arg]
+        spec.replace(bogus=1)  # pyrefly: ignore[unexpected-keyword]
 
 
 def _replacers() -> list[Callable[..., Any]]:
@@ -1366,7 +1366,7 @@ def test_typed_members() -> None:
         r20m: ArraySpec
 
     class Measurements(GroupSpec):
-        members: Members  # type: ignore[assignment]
+        members: Members
 
     group = Measurements(attributes={}, members={"r10m": array, "r20m": array.model_dump()})
     assert isinstance(group.members["r20m"], ArraySpec)
@@ -1383,7 +1383,7 @@ def test_member_name_validation_survives_narrowing() -> None:
     """
 
     class Narrowed(GroupSpec):
-        members: dict[str, ArraySpec]  # type: ignore[assignment]
+        members: dict[str, ArraySpec]
 
     array: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
     with pytest.raises(ValidationError, match="member name"):
@@ -1510,7 +1510,7 @@ def test_like_filters_keyword_only() -> None:
     """`like` takes its `include`/`exclude` filters as keyword arguments only."""
     group: AnyGroupSpec = GroupSpec()
     with pytest.raises(TypeError):
-        group.like(group, {"attributes"})  # type: ignore[call-arg]
+        group.like(group, {"attributes"})  # pyrefly: ignore[bad-argument-count]
 
 
 def test_dimension_names_omitted_when_none() -> None:
@@ -1809,7 +1809,7 @@ def test_create_default_auto_chunk_grid() -> None:
     range, while a small array keeps its whole shape.
     """
     whole: AnyArraySpec = ArraySpec.create_default(shape=(10980, 10980), data_type="uint16")
-    assert whole.chunk_grid["configuration"]["chunk_shape"] == (10980, 10980)  # type: ignore[typeddict-item]
+    assert whole.chunk_grid["configuration"]["chunk_shape"] == (10980, 10980)
     big: AnyArraySpec = ArraySpec.create_default(
         shape=(10980, 10980), data_type="uint16", chunk_grid="auto"
     )
@@ -1915,7 +1915,7 @@ def test_bare_codec_rejected() -> None:
         ArraySpec.create_default(
             shape=(4,),
             data_type="uint16",
-            codecs={"name": "bytes"},  # type: ignore[typeddict-item]
+            codecs={"name": "bytes"},  # pyrefly: ignore[bad-argument-type]
         )
     with pytest.raises(ValidationError, match="sequence of codecs"):
         ArraySpec.create_default(shape=(4,), data_type="uint16", codecs="bytes")
