@@ -4,12 +4,24 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from pydantic_zarr.core import ensure_member_name, json_eq, model_like, tuplify_json
+from pydantic_zarr.core import (
+    AttributesBase,
+    ensure_member_name,
+    json_eq,
+    model_like,
+    tuplify_json,
+)
+from pydantic_zarr.v2 import ArraySpec as ArraySpecV2
+from pydantic_zarr.v2 import BaseGroupSpec as BaseGroupSpecV2
 from pydantic_zarr.v2 import GroupSpec as GroupSpecV2
+from pydantic_zarr.v3 import ArraySpec as ArraySpecV3
+from pydantic_zarr.v3 import BaseGroupSpec as BaseGroupSpecV3
 from pydantic_zarr.v3 import GroupSpec as GroupSpecV3
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    from pydantic import BaseModel
 
 
 @pytest.mark.parametrize("data", ["/", "///", "a/b/", "a/b/vc"])
@@ -178,3 +190,47 @@ def test_get_attribute() -> None:
 
     assert get_attribute(Choosy(a="x"), "b", "dflt") == "x"
     assert get_attribute(Choosy(), "a", "dflt") == "dflt"
+
+
+class _Attrs(AttributesBase):
+    units: str
+
+
+@pytest.mark.parametrize(
+    ("model", "properties", "open_"),
+    [
+        pytest.param(
+            ArraySpecV2,
+            {"shape", "chunks", "dtype", "attributes", "extra_fields"},
+            False,
+            id="v2-array",
+        ),
+        pytest.param(
+            ArraySpecV3,
+            {"shape", "data_type", "codecs", "attributes", "extra_fields"},
+            False,
+            id="v3-array",
+        ),
+        pytest.param(BaseGroupSpecV2, {"attributes", "zarr_format"}, False, id="v2-base-group"),
+        pytest.param(
+            BaseGroupSpecV3, {"attributes", "node_type", "extra_fields"}, False, id="v3-base-group"
+        ),
+        pytest.param(GroupSpecV2, {"attributes", "members"}, False, id="v2-group"),
+        pytest.param(GroupSpecV3, {"attributes", "members", "extra_fields"}, False, id="v3-group"),
+        pytest.param(_Attrs, {"units"}, True, id="attributes"),
+    ],
+)
+def test_serialization_json_schema(
+    model: type[BaseModel], properties: set[str], *, open_: bool
+) -> None:
+    """
+    The serialization-mode JSON schema describes the model's fields, as the
+    validation-mode one does, rather than collapsing to an open object: the
+    specs' wrap model serializers carry no return annotation for pydantic to
+    use in their place. An attributes model stays open to extra keys.
+    """
+    schema = model.model_json_schema(mode="serialization")
+    assert schema == model.model_json_schema(mode="validation")
+    definition = schema["$defs"][model.__name__] if "$ref" in schema else schema
+    assert properties <= set(definition["properties"])
+    assert definition.get("additionalProperties", True) is open_
