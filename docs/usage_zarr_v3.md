@@ -105,12 +105,10 @@ of its whole `members` mapping. The members type states what a group may hold:
   undeclared member is refused, and so is a missing one.
 
 ```python
-from typing import Any
-
 from pydantic import ValidationError
 from typing_extensions import TypedDict
 
-from pydantic_zarr.v3 import ArraySpec, GroupSpec
+from pydantic_zarr.v3 import ArraySpec, GroupSpec, TBaseAttr
 
 
 class LevelMembers(TypedDict, closed=True):
@@ -119,7 +117,7 @@ class LevelMembers(TypedDict, closed=True):
     band: ArraySpec
 
 
-Level = GroupSpec[Any, LevelMembers]
+Level = GroupSpec[TBaseAttr, LevelMembers]
 
 axis = ArraySpec.create_default(shape=(4,), data_type="float64")
 band = ArraySpec.create_default(shape=(4, 4), data_type="uint16")
@@ -162,9 +160,13 @@ Notes for type checkers and for `TypedDict` members:
   Declare the items `ReadOnly[...]` (from `typing_extensions`) for checkers to
   refuse that assignment. pydantic accepts `ReadOnly` items, with a warning
   that it does not enforce them at runtime.
-- **`Any`.** `GroupSpec[Any, Any]` holds a `dict` copy of any mapping with
-  string keys, and does not validate the members themselves. Leave the parameter out, or give
-  `TBaseMembers`, for members validated as arrays and groups.
+- **Avoid `Any`.** `Any` as the members type turns off member validation:
+  `GroupSpec[Any, Any]` accepts any mapping with string keys, does not check
+  that its values are specs, and its JSON schema leaves `members`
+  unconstrained. For a group
+  of any arrays and groups, write `GroupSpec` (or `AnyGroupSpec`), whose
+  members type defaults to `TBaseMembers`; for any attributes, give
+  `TBaseAttr`, as in `GroupSpec[TBaseAttr, LevelMembers]`.
 - **Building a group without a members type.** A checker infers the members
   type from the `members` argument. With arrays and groups mixed in one dict
   literal, pyright infers `dict[str, Unknown]`, and from `members={}` it

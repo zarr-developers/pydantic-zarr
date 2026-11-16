@@ -75,29 +75,30 @@ class NamedAndExtraV3(TypedDict, extra_items=v3.ArraySpec):
     g: NotRequired[v3.GroupSpec]
 
 
-class DatasetV2(v2.GroupSpec[Any, v2.TMembers], Generic[v2.TMembers]):
+class DatasetV2(v2.GroupSpec[v2.TBaseAttr, v2.TMembers], Generic[v2.TMembers]):
     """A generic subclass that passes the members type through."""
 
 
-class DatasetV3(v3.GroupSpec[Any, v3.TMembers], Generic[v3.TMembers]):
+class DatasetV3(v3.GroupSpec[v3.TBaseAttr, v3.TMembers], Generic[v3.TMembers]):
     """A generic subclass that passes the members type through."""
 
 
-TOwnMembers = TypeVar("TOwnMembers", bound=Mapping[str, Any])
+TOwnMembersV2 = TypeVar("TOwnMembersV2", bound=v2.TBaseMembers)
+TOwnMembersV3 = TypeVar("TOwnMembersV3", bound=v3.TBaseMembers)
 
 
-class OwnDatasetV2(v2.GroupSpec[Any, TOwnMembers], Generic[TOwnMembers]):
+class OwnDatasetV2(v2.GroupSpec[v2.TBaseAttr, TOwnMembersV2], Generic[TOwnMembersV2]):
     """A generic subclass with a members type variable of its own."""
 
 
-class OwnDatasetV3(v3.GroupSpec[Any, TOwnMembers], Generic[TOwnMembers]):
+class OwnDatasetV3(v3.GroupSpec[v3.TBaseAttr, TOwnMembersV3], Generic[TOwnMembersV3]):
     """A generic subclass with a members type variable of its own."""
 
 
 # parameterized at module level, as a group class usually is, so that pydantic
 # registers the classes where pickle looks them up
-NamedGroupV2 = v2.GroupSpec[Any, NamedV2]
-NamedGroupV3 = v3.GroupSpec[Any, NamedV3]
+NamedGroupV2 = v2.GroupSpec[v2.TBaseAttr, NamedV2]
+NamedGroupV3 = v3.GroupSpec[v3.TBaseAttr, NamedV3]
 
 OPTIONAL_NAMES = {v2: OptionalNamesV2, v3: OptionalNamesV3}
 OWN_DATASET: dict[Any, Any] = {v2: OwnDatasetV2, v3: OwnDatasetV3}
@@ -122,13 +123,16 @@ def _members_case(module: ModuleType, named: type, kind: str) -> tuple[Any, dict
     return {
         "default": (module.GroupSpec, {"a": array, "g": group}),
         "mapping": (
-            module.GroupSpec[Any, Mapping[str, module.ArraySpec]],
+            module.GroupSpec[module.TBaseAttr, Mapping[str, module.ArraySpec]],
             {"a": array, "b": array},
         ),
-        "named": (module.GroupSpec[Any, named], {"a": array, "g": group}),
-        "optional names": (module.GroupSpec[Any, OPTIONAL_NAMES[module]], {"a": array}),
+        "named": (module.GroupSpec[module.TBaseAttr, named], {"a": array, "g": group}),
+        "optional names": (
+            module.GroupSpec[module.TBaseAttr, OPTIONAL_NAMES[module]],
+            {"a": array},
+        ),
         "named and extra": (
-            module.GroupSpec[Any, NAMED_AND_EXTRA[module]],
+            module.GroupSpec[module.TBaseAttr, NAMED_AND_EXTRA[module]],
             {"g": group, "s0": array, "s1": array},
         ),
         "subclass": (DATASET[module][named], {"a": array, "g": group}),
@@ -200,14 +204,14 @@ def test_named_members_refuse_an_undeclared_member(module: ModuleType, named: ty
     """A closed `TypedDict` of members refuses a member it does not declare."""
     array, group = _array(module), module.GroupSpec()
     with pytest.raises(ValidationError, match="extra"):
-        module.GroupSpec[Any, named](members={"a": array, "g": group, "extra": array})
+        module.GroupSpec[module.TBaseAttr, named](members={"a": array, "g": group, "extra": array})
 
 
 @VERSIONS
 def test_named_members_refuse_a_missing_member(module: ModuleType, named: type) -> None:
     """A `TypedDict` of members refuses a group that lacks a required member."""
     with pytest.raises(ValidationError, match=r"members\.g\n\s+Field required"):
-        module.GroupSpec[Any, named](members={"a": _array(module)})
+        module.GroupSpec[module.TBaseAttr, named](members={"a": _array(module)})
 
 
 @VERSIONS
@@ -218,14 +222,16 @@ def test_named_members_are_required(module: ModuleType, named: type) -> None:
     leave `members` out.
     """
     with pytest.raises(ValidationError, match="Field required"):
-        module.GroupSpec[Any, named]()
+        module.GroupSpec[module.TBaseAttr, named]()
 
 
 @VERSIONS
 def test_mapping_members_refuse_a_member_of_another_type(module: ModuleType, named: type) -> None:
     """A `Mapping` members type refuses a member that is not of its value type."""
     with pytest.raises(ValidationError, match="members"):
-        module.GroupSpec[Any, Mapping[str, module.ArraySpec]](members={"g": module.GroupSpec()})
+        module.GroupSpec[module.TBaseAttr, Mapping[str, module.ArraySpec]](
+            members={"g": module.GroupSpec()}
+        )
 
 
 @VERSIONS
@@ -246,7 +252,9 @@ def test_members_are_a_mapping_under_any_members_type(
 def test_member_names_are_validated_under_a_members_type(module: ModuleType, name: str) -> None:
     """Narrowing the members type keeps the member-name rules of the format."""
     with pytest.raises(ValidationError):
-        module.GroupSpec[Any, Mapping[str, module.ArraySpec]](members={name: _array(module)})
+        module.GroupSpec[module.TBaseAttr, Mapping[str, module.ArraySpec]](
+            members={name: _array(module)}
+        )
 
 
 @VERSIONS
@@ -265,4 +273,4 @@ def test_member_type_as_members_type_fails_validation(
         "a union, with no members": (module.ArraySpec | module.GroupSpec, {}),
     }[case]
     with pytest.raises(ValidationError, match="members"):
-        module.GroupSpec[Any, members_type](members=members)
+        module.GroupSpec[module.TBaseAttr, members_type](members=members)

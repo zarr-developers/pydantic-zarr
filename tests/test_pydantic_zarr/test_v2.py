@@ -375,7 +375,7 @@ def test_serialize_deserialize_groupspec(
         a: str
         b: float
 
-    SubGroup = GroupSpec[SubGroupAttrs, Any]
+    SubGroup = GroupSpec[SubGroupAttrs]
 
     class ArrayAttrs(TypedDict):
         scale: list[float]

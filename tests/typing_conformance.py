@@ -57,11 +57,11 @@ class NarrowArrayV2(v2.ArraySpec[Attrs]):
 
 # a group's second parameter is its whole members mapping. A Mapping narrows
 # the type of every member, to a narrowed spec alone or in a union with the
-# Any-parameterized classes
+# unparameterized classes
 GroupOfNarrowV3 = v3.GroupSpec[Mapping[str, object], Mapping[str, NarrowArrayV3]]
-GroupOfUnionV3 = v3.GroupSpec[Attrs, Mapping[str, v3.GroupSpec[Any, Any] | NarrowArrayV3]]
+GroupOfUnionV3 = v3.GroupSpec[Attrs, Mapping[str, v3.GroupSpec | NarrowArrayV3]]
 GroupOfNarrowV2 = v2.GroupSpec[Mapping[str, object], Mapping[str, NarrowArrayV2]]
-GroupOfUnionV2 = v2.GroupSpec[Attrs, Mapping[str, v2.GroupSpec[Any, Any] | NarrowArrayV2]]
+GroupOfUnionV2 = v2.GroupSpec[Attrs, Mapping[str, v2.GroupSpec | NarrowArrayV2]]
 
 
 # a closed TypedDict fixes the member names, each with its own type; one with
