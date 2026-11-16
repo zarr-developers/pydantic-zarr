@@ -167,9 +167,8 @@ Notes for type checkers and for `TypedDict` members:
 - **The type of one member.** Up to 0.11 the parameter was the type of one
   member. `GroupSpec[Attrs, MyArraySpec]` is now written
   `GroupSpec[Attrs, Mapping[str, MyArraySpec]]`. A class still written the old
-  way validates its whole members mapping as one member, so validation fails
-  with that member's missing fields; type checkers refuse it where it is
-  written.
+  way validates its whole members mapping as one member, so validation
+  fails; type checkers refuse it where it is written.
 
 ## Creating array specs
 

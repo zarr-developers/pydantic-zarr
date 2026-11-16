@@ -232,11 +232,19 @@ def test_member_names_are_validated_under_a_members_type(module: ModuleType, nam
 
 
 @VERSIONS
-def test_member_type_as_members_type_fails_validation(module: ModuleType, named: type) -> None:
+@pytest.mark.parametrize("case", ["an array type", "a union, with no members"])
+def test_member_type_as_members_type_fails_validation(
+    module: ModuleType, named: type, case: str
+) -> None:
     """
     Up to 0.11 the second parameter was the type of one member. A class still
-    written that way validates its whole members mapping as one member, so a
-    valid mapping of members is refused.
+    written that way validates its whole members mapping as one member, and
+    is refused. With a union that holds a group type, an empty mapping would
+    pass as an empty group; the check that `members` is a mapping refuses it.
     """
+    members_type, members = {
+        "an array type": (module.ArraySpec, {"a": _array(module)}),
+        "a union, with no members": (module.ArraySpec | module.GroupSpec, {}),
+    }[case]
     with pytest.raises(ValidationError, match="members"):
-        module.GroupSpec[Any, module.ArraySpec](members={"a": _array(module)})
+        module.GroupSpec[Any, members_type](members=members)
