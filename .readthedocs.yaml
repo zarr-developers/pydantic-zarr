@@ -12,12 +12,17 @@ build:
   os: ubuntu-22.04
   tools:
     python: "3.12"
+  # Read the Docs' documented uv setup: uv comes from asdf, so it stays on
+  # PATH once the virtualenv's python shadows the system one
   jobs:
+    pre_create_environment:
+      - asdf plugin add uv
+      - asdf install uv 0.13.5
+      - asdf global uv 0.13.5
     create_environment:
-      - python -m pip install uv==0.13.5
-      - python -m uv venv "${READTHEDOCS_VIRTUALENV_PATH}"
+      - uv venv "${READTHEDOCS_VIRTUALENV_PATH}"
     install:
-      - UV_PROJECT_ENVIRONMENT="${READTHEDOCS_VIRTUALENV_PATH}" python -m uv sync --locked --no-default-groups --group docs
+      - UV_PROJECT_ENVIRONMENT="${READTHEDOCS_VIRTUALENV_PATH}" uv sync --locked --no-default-groups --group docs
 
 mkdocs:
   configuration: mkdocs.yaml
