@@ -233,7 +233,7 @@ class NodeSpec(StrictBase):
         return cast("Any", self).replace(**changes)
 
 
-class ArraySpecUpdate(TypedDict, total=False):
+class ArraySpecUpdate(TypedDict, total=False, closed=True):
     """
     The fields an `ArraySpec.replace` call may replace, of the types an input
     takes: validation writes them as the types the spec holds (a numpy dtype as
@@ -253,13 +253,13 @@ class ArraySpecUpdate(TypedDict, total=False):
     extra_fields: Mapping[str, JSONValue]
 
 
-class BaseGroupSpecUpdate(TypedDict, total=False):
+class BaseGroupSpecUpdate(TypedDict, total=False, closed=True):
     """The fields a `BaseGroupSpec.replace` call may replace."""
 
     attributes: TBaseAttr
 
 
-class GroupSpecUpdate(TypedDict, total=False):
+class GroupSpecUpdate(TypedDict, total=False, closed=True):
     """The fields a `GroupSpec.replace` call may replace."""
 
     attributes: TBaseAttr
@@ -984,7 +984,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
         return self
 
     @override
-    def replace(self, **changes: Unpack[GroupSpecUpdate]) -> Self:  # type: ignore[override]
+    def replace(self, **changes: Unpack[GroupSpecUpdate]) -> Self:
         """
         Return a revalidated copy of this model with `changes` applied.
 

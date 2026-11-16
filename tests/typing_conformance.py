@@ -15,7 +15,7 @@ It is not a pytest module; it only needs to type-check.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Generic, NotRequired
+from typing import TYPE_CHECKING, Any, Generic, NotRequired, Protocol, Unpack
 
 import numpy as np
 from pydantic import BaseModel
@@ -318,3 +318,27 @@ def input_paths_accept_input_types_v2(spec: v2.AnyArraySpec, codec: Codec) -> v2
     return spec.replace(
         shape=[8], chunks=[4], fill_value=np.float32(0), compressor=codec, filters=[codec]
     )
+
+
+# `GroupSpec.replace` overrides `BaseGroupSpec.replace` and adds `members`. That
+# override is sound only while `BaseGroupSpecUpdate` is closed: an open one
+# could carry `members` of any type, which `GroupSpecUpdate` narrows. pyright
+# checks the override only where the class is defined, which no CI checker
+# covers in the library source, so these assign a group to a protocol holding
+# the base signature.
+
+
+class ReplacesLikeBaseGroupV3(Protocol):
+    def replace(self, **changes: Unpack[v3.BaseGroupSpecUpdate]) -> object: ...
+
+
+class ReplacesLikeBaseGroupV2(Protocol):
+    def replace(self, **changes: Unpack[v2.BaseGroupSpecUpdate]) -> object: ...
+
+
+def group_replaces_like_a_base_group_v3(group: v3.AnyGroupSpec) -> ReplacesLikeBaseGroupV3:
+    return group
+
+
+def group_replaces_like_a_base_group_v2(group: v2.AnyGroupSpec) -> ReplacesLikeBaseGroupV2:
+    return group

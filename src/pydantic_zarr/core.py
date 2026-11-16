@@ -261,8 +261,11 @@ class ExtraFieldsBase(StrictBase):
             raise ValueError(msg)
         return value
 
+    # No return annotation: pydantic takes a wrap serializer's return annotation
+    # as the serialization schema, which would replace the fields' schema in
+    # `model_json_schema(mode="serialization")` with an open object.
     @model_serializer(mode="wrap")
-    def _serialize_document(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
+    def _serialize_document(self, handler: SerializerFunctionWrapHandler):  # noqa: ANN202
         """Write the extra fields as top-level members of the dumped document."""
         return flatten_extra_fields(handler(self))
 
@@ -387,10 +390,13 @@ class _OpenModel(BaseModel):
         model._extra_fields = extra
         return model
 
+    # No return annotation, as on `ExtraFieldsBase`: pydantic takes a wrap serializer's return annotation
+    # as the serialization schema, which would replace the fields' schema in
+    # `model_json_schema(mode="serialization")` with an open object.
     @model_serializer(mode="wrap")
-    def _serialize_document(
+    def _serialize_document(  # noqa: ANN202
         self, handler: SerializerFunctionWrapHandler, info: SerializationInfo
-    ) -> dict[str, object]:
+    ):
         """Write the extra fields the dump selects as top-level keys of the dumped document."""
         extra = {
             key: value
