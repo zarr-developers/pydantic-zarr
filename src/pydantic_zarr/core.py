@@ -117,11 +117,7 @@ def _attributes_serializer(spec: type[BaseModel]) -> SchemaSerializer:
     annotation alone, so it serializes as the field does but without the
     field serializer that calls it. Cached per class.
     """
-    field = spec.model_fields["attributes"]
-    annotation = (
-        Annotated[field.annotation, *field.metadata] if field.metadata else field.annotation
-    )
-    return TypeAdapter(annotation).serializer
+    return TypeAdapter(spec.model_fields["attributes"].rebuild_annotation()).serializer
 
 
 def serialize_attributes(
