@@ -38,8 +38,34 @@ from pydantic import (
 )
 from typing_extensions import TypedDict, TypeIs, TypeVar
 from zarr_metadata import (
+    BOOL_DATA_TYPE_NAME,
+    BYTES_CODEC_NAME,
+    BYTES_DATA_TYPE_NAME,
+    CAST_VALUE_CODEC_NAME,
+    COMPLEX64_DATA_TYPE_NAME,
+    COMPLEX128_DATA_TYPE_NAME,
+    CRC32C_CODEC_NAME,
     DEFAULT_CHUNK_KEY_ENCODING_DEFAULT_SEPARATOR,
     DEFAULT_CHUNK_KEY_ENCODING_NAME,
+    FIXED_LENGTH_UTF32_DATA_TYPE_NAME,
+    FLOAT16_DATA_TYPE_NAME,
+    FLOAT32_DATA_TYPE_NAME,
+    FLOAT64_DATA_TYPE_NAME,
+    INT8_DATA_TYPE_NAME,
+    INT16_DATA_TYPE_NAME,
+    INT32_DATA_TYPE_NAME,
+    INT64_DATA_TYPE_NAME,
+    NUMPY_DATETIME64_DATA_TYPE_NAME,
+    NUMPY_TIMEDELTA64_DATA_TYPE_NAME,
+    REGULAR_CHUNK_GRID_NAME,
+    SCALE_OFFSET_CODEC_NAME,
+    SHARDING_INDEXED_CODEC_NAME,
+    STRING_DATA_TYPE_NAME,
+    TRANSPOSE_CODEC_NAME,
+    UINT8_DATA_TYPE_NAME,
+    UINT16_DATA_TYPE_NAME,
+    UINT32_DATA_TYPE_NAME,
+    UINT64_DATA_TYPE_NAME,
     ZARR_V3_ARRAY_METADATA_STORE_KEY,
     ZARR_V3_CONSOLIDATED_METADATA_KEY,
     ZARR_V3_GROUP_METADATA_STORE_KEY,
@@ -47,6 +73,7 @@ from zarr_metadata import (
     JSONValue,
     MetadataValidationError,
     RegularChunkGridMetadata,
+    ShardingIndexLocation,
     V2ChunkKeyEncodingMetadata,
     ZarrV3ArrayMetadataJSON,
     ZarrV3DeclarationJSON,
@@ -60,6 +87,12 @@ from zarr_metadata.model import ZarrV3GroupMetadata as ZarrV3GroupMetadataModel
 from zarr_metadata.model import validate_node_name_v3
 from zarr_metadata.typed_json import check as check_json
 from zarr_metadata.v3 import is_zarr_v3_node_type
+from zarr_metadata.v3.data_type import (
+    NULL_TERMINATED_BYTES_DATA_TYPE_NAME,
+    VARIABLE_LENGTH_BYTES_DATA_TYPE_NAME,
+    ZARR_PYTHON_RAW_BYTES_DATA_TYPE_NAME,
+    raw_bytes_dtype_name,
+)
 from zarr_metadata.v3.definition import (
     ArrayExtraFieldDefinition,
     ChunkGridDefinition,
@@ -460,11 +493,17 @@ def parse_dtype_v3(
     # a zero-length string or bytes type (numpy's bare `str`, `"U"`, `"S"`) has
     # no Zarr V3 form, and neither has a structured or subarray void type
     if isinstance(parsed, np.dtypes.StrDType) and parsed.itemsize > 0:
-        return {"name": "fixed_length_utf32", "configuration": {"length_bytes": parsed.itemsize}}
+        return {
+            "name": FIXED_LENGTH_UTF32_DATA_TYPE_NAME,
+            "configuration": {"length_bytes": parsed.itemsize},
+        }
     if isinstance(parsed, np.dtypes.BytesDType) and parsed.itemsize > 0:
-        return {"name": "null_terminated_bytes", "configuration": {"length_bytes": parsed.itemsize}}
+        return {
+            "name": NULL_TERMINATED_BYTES_DATA_TYPE_NAME,
+            "configuration": {"length_bytes": parsed.itemsize},
+        }
     if isinstance(parsed, np.dtypes.StringDType):
-        return "string"
+        return STRING_DATA_TYPE_NAME
     if (
         isinstance(parsed, np.dtypes.VoidDType)
         and parsed.fields is None
@@ -472,9 +511,15 @@ def parse_dtype_v3(
         and parsed.itemsize > 0
     ):
         scope_actual = CORE_AND_EXTENSIONS_CONTEXT if scope is None else scope
-        if scope_actual.claimant(DataTypeDefinition, "raw_bytes") is not None:
-            return {"name": "raw_bytes", "configuration": {"length_bytes": parsed.itemsize}}
-        return f"r{parsed.itemsize * 8}"
+        if (
+            scope_actual.claimant(DataTypeDefinition, ZARR_PYTHON_RAW_BYTES_DATA_TYPE_NAME)
+            is not None
+        ):
+            return {
+                "name": ZARR_PYTHON_RAW_BYTES_DATA_TYPE_NAME,
+                "configuration": {"length_bytes": parsed.itemsize},
+            }
+        return raw_bytes_dtype_name(f"r{parsed.itemsize * 8}")
     if parsed.kind in ("M", "m"):
         # numpy time dtypes take the named-configuration form in Zarr V3. These are
         # handled outside the match statement because numpy's stubs reject the
@@ -482,46 +527,50 @@ def parse_dtype_v3(
         unit, scale_factor = np.datetime_data(
             cast("np.dtype[np.datetime64 | np.timedelta64]", parsed)
         )
-        name = "numpy.datetime64" if parsed.kind == "M" else "numpy.timedelta64"
+        name = (
+            NUMPY_DATETIME64_DATA_TYPE_NAME
+            if parsed.kind == "M"
+            else NUMPY_TIMEDELTA64_DATA_TYPE_NAME
+        )
         return {"name": name, "configuration": {"unit": unit, "scale_factor": scale_factor}}
     else:
         match parsed:
             case np.dtypes.BoolDType():
-                return "bool"
+                return BOOL_DATA_TYPE_NAME
             case np.dtypes.Int8DType():
-                return "int8"
+                return INT8_DATA_TYPE_NAME
             case np.dtypes.Int16DType():
-                return "int16"
+                return INT16_DATA_TYPE_NAME
             case np.dtypes.Int32DType():
-                return "int32"
+                return INT32_DATA_TYPE_NAME
             case np.dtypes.Int64DType():
-                return "int64"
+                return INT64_DATA_TYPE_NAME
             case np.dtypes.UInt8DType():
-                return "uint8"
+                return UINT8_DATA_TYPE_NAME
             case np.dtypes.UInt16DType():
-                return "uint16"
+                return UINT16_DATA_TYPE_NAME
             case np.dtypes.UInt32DType():
-                return "uint32"
+                return UINT32_DATA_TYPE_NAME
             case np.dtypes.UInt64DType():
-                return "uint64"
+                return UINT64_DATA_TYPE_NAME
             case np.dtypes.Float16DType():
-                return "float16"
+                return FLOAT16_DATA_TYPE_NAME
             case np.dtypes.Float32DType():
-                return "float32"
+                return FLOAT32_DATA_TYPE_NAME
             case np.dtypes.Float64DType():
-                return "float64"
+                return FLOAT64_DATA_TYPE_NAME
             case np.dtypes.Complex64DType():
-                return "complex64"
+                return COMPLEX64_DATA_TYPE_NAME
             case np.dtypes.Complex128DType():
-                return "complex128"
+                return COMPLEX128_DATA_TYPE_NAME
             case _:
                 raise ValueError(f"Unsupported dtype: {dtype}")
 
 
 _FIXED_LENGTH_NUMPY_CODES: Final = {
-    "fixed_length_utf32": ("<U", 4),
-    "null_terminated_bytes": ("S", 1),
-    "raw_bytes": ("V", 1),
+    FIXED_LENGTH_UTF32_DATA_TYPE_NAME: ("<U", 4),
+    NULL_TERMINATED_BYTES_DATA_TYPE_NAME: ("S", 1),
+    ZARR_PYTHON_RAW_BYTES_DATA_TYPE_NAME: ("V", 1),
 }
 """The numpy type code and code-unit size of each fixed-length data type
 `parse_dtype_v3` writes as a named configuration with a `length_bytes`."""
@@ -560,10 +609,13 @@ def _numpy_dtype_from_v3(data_type: str | Mapping[str, object]) -> np.dtype[np.g
         if isinstance(length, int) and length > 0 and length % unit_bytes == 0:
             return np.dtype(f"{code}{length // unit_bytes}")
         return None
-    if name in ("numpy.datetime64", "numpy.timedelta64") and isinstance(config, Mapping):
+    if name in (
+        NUMPY_DATETIME64_DATA_TYPE_NAME,
+        NUMPY_TIMEDELTA64_DATA_TYPE_NAME,
+    ) and isinstance(config, Mapping):
         unit = config.get("unit")
         scale = config.get("scale_factor", 1)
-        code = "M8" if name == "numpy.datetime64" else "m8"
+        code = "M8" if name == NUMPY_DATETIME64_DATA_TYPE_NAME else "m8"
         try:
             return np.dtype(f"{code}[{unit}]" if scale == 1 else f"{code}[{scale}{unit}]")
         except TypeError:
@@ -613,7 +665,7 @@ def _is_single_byte_cached(scope: ZarrV3Context, data_type_json: str) -> bool:
 # element size to guess chunks from. Their fill values and codecs are not
 # derived here: `zarr-metadata` derives them for the names a scope claims.
 _VARIABLE_LENGTH_DATA_TYPES: frozenset[str] = frozenset(
-    {"string", "str", "bytes", "variable_length_bytes"}
+    {STRING_DATA_TYPE_NAME, "str", BYTES_DATA_TYPE_NAME, VARIABLE_LENGTH_BYTES_DATA_TYPE_NAME}
 )
 # chunk guessing needs an element size; variable-length elements have none,
 # so use the size of a pointer, as numpy object arrays do
@@ -666,7 +718,7 @@ def _unclaimed_extension_point_names(
             here = f"{loc}.{index}"
             check(CodecDefinition, "codec", codec.get("name"), f"{here}.name")
             config = codec.get("configuration")
-            if codec.get("name") == "sharding_indexed" and isinstance(config, Mapping):
+            if codec.get("name") == SHARDING_INDEXED_CODEC_NAME and isinstance(config, Mapping):
                 walk_codecs(config.get("codecs"), f"{here}.configuration.codecs")
                 walk_codecs(config.get("index_codecs"), f"{here}.configuration.index_codecs")
 
@@ -971,25 +1023,25 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
                 return codec, None
             name = codec.get("name")
             config = codec.get("configuration")
-            if name == "cast_value":
+            if name == CAST_VALUE_CODEC_NAME:
                 cast_to = config.get("data_type") if isinstance(config, Mapping) else None
                 return codec, None if cast_to is None else parse_data_type(cast_to)
             if (
-                name == "bytes"
+                name == BYTES_CODEC_NAME
                 and isinstance(config, Mapping)
                 and set(config) == {"endian"}
                 and data_type is not None
                 and _is_single_byte(data_type, scope_actual)
             ):
-                return {"name": "bytes"}, data_type
-            if name == "sharding_indexed" and isinstance(config, Mapping):
+                return {"name": BYTES_CODEC_NAME}, data_type
+            if name == SHARDING_INDEXED_CODEC_NAME and isinstance(config, Mapping):
                 new_config = dict(config)
                 inner = config.get("codecs")
                 if isinstance(inner, Sequence) and not isinstance(inner, str):
                     new_config["codecs"] = normalize_pipeline(inner, data_type)
                 index = config.get("index_codecs")
                 if isinstance(index, Sequence) and not isinstance(index, str):
-                    new_config["index_codecs"] = normalize_pipeline(index, "uint64")
+                    new_config["index_codecs"] = normalize_pipeline(index, UINT64_DATA_TYPE_NAME)
                 return {**codec, "configuration": new_config}, data_type
             # an array -> array codec this walk does not know may change the data
             # type, so what follows it gets an unknown one (and keeps its endian),
@@ -1531,7 +1583,7 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         self,
         subchunk_shape: Sequence[int],
         *,
-        index_location: Literal["start", "end"] = "end",
+        index_location: ShardingIndexLocation = "end",
     ) -> Self:
         """
         Return a copy of this spec sharded with the `sharding_indexed` codec:
@@ -1545,13 +1597,13 @@ class ArraySpec(NodeSpec, Generic[TAttr]):
         existing inner chunk shape, which document validation also enforces.
         """
         sharding_codec: AnyNamedConfig = {
-            "name": "sharding_indexed",
+            "name": SHARDING_INDEXED_CODEC_NAME,
             "configuration": {
                 "chunk_shape": tuple(subchunk_shape),
                 "codecs": self.codecs,
                 "index_codecs": (
-                    {"name": "bytes", "configuration": {"endian": "little"}},
-                    {"name": "crc32c"},
+                    {"name": BYTES_CODEC_NAME, "configuration": {"endian": "little"}},
+                    {"name": CRC32C_CODEC_NAME},
                 ),
                 "index_location": index_location,
             },
@@ -2825,10 +2877,10 @@ def auto_attributes(data: object) -> Mapping[str, object]:
 def auto_chunk_grid(data: object) -> AnyNamedConfig:
     if hasattr(data, "chunk_shape"):
         chunk_shape = as_shape(read_attribute(data, "chunk_shape"))
-        return {"name": "regular", "configuration": {"chunk_shape": chunk_shape}}
+        return {"name": REGULAR_CHUNK_GRID_NAME, "configuration": {"chunk_shape": chunk_shape}}
     elif hasattr(data, "shape"):
         chunk_shape = as_shape(read_attribute(data, "shape"))
-        return {"name": "regular", "configuration": {"chunk_shape": chunk_shape}}
+        return {"name": REGULAR_CHUNK_GRID_NAME, "configuration": {"chunk_shape": chunk_shape}}
     raise ValueError("Cannot get chunk grid from object without .shape or .chunk_shape attribute")
 
 
@@ -2919,7 +2971,7 @@ def auto_fill_value(data: object) -> FillValue:
     raise ValueError("Cannot determine a default fill value for an object without a dtype.")
 
 
-_DATA_TYPE_KEEPING_CODECS = frozenset({"transpose", "scale_offset"})
+_DATA_TYPE_KEEPING_CODECS = frozenset({TRANSPOSE_CODEC_NAME, SCALE_OFFSET_CODEC_NAME})
 """
 The array -> array codecs that pass on a chunk of the data type they receive
 (the specs say so for both). `cast_value` sets the data type it passes on; any
@@ -2998,7 +3050,10 @@ def _derived_array_members(
         lengths = cast("Sequence[object]", document["shape"])
         if all(isinstance(n, int) for n in lengths):
             chunk_shape = tuple(max(cast("int", n), 1) for n in lengths)
-            found["chunk_grid"] = {"name": "regular", "configuration": {"chunk_shape": chunk_shape}}
+            found["chunk_grid"] = {
+                "name": REGULAR_CHUNK_GRID_NAME,
+                "configuration": {"chunk_shape": chunk_shape},
+            }
     return found
 
 
@@ -3023,7 +3078,7 @@ def _guessed_chunk_grid(shape: tuple[int, ...], data_type: object) -> RegularChu
     chunk_shape = (
         guess_chunks(shape, item_size) if item_size is not None else tuple(max(n, 1) for n in shape)
     )
-    return {"name": "regular", "configuration": {"chunk_shape": chunk_shape}}
+    return {"name": REGULAR_CHUNK_GRID_NAME, "configuration": {"chunk_shape": chunk_shape}}
 
 
 def auto_codecs(data: object) -> tuple[CodecLike, ...]:
@@ -3052,8 +3107,8 @@ def auto_codecs(data: object) -> tuple[CodecLike, ...]:
             return tuple(spec.codecs)
     if dtype is not None and dtype.itemsize > 1:
         # the zarr v3 spec requires the ``endian`` configuration for multi-byte data types
-        return ({"name": "bytes", "configuration": {"endian": "little"}},)
-    return ({"name": "bytes"},)
+        return ({"name": BYTES_CODEC_NAME, "configuration": {"endian": "little"}},)
+    return ({"name": BYTES_CODEC_NAME},)
 
 
 def auto_storage_transformers(data: object) -> tuple[AnyNamedConfig, ...]:

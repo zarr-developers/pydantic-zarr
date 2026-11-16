@@ -55,6 +55,7 @@ from zarr_metadata.v2.array import (
     is_zarr_v2_array_dimension_separator,
     is_zarr_v2_array_order,
 )
+from zarr_metadata.v2.data_type.scalar import ZarrV2FloatSpecial
 
 from pydantic_zarr._metadata import format_problems
 from pydantic_zarr.core import (
@@ -126,7 +127,7 @@ DtypeStr = Annotated[str, BeforeValidator(parse_dtype_v2)]
 BoolFillValue = bool
 IntFillValue = int
 # todo: introduce a type that represents hexadecimal representations of floats
-FloatFillValue = Literal["Infinity", "-Infinity", "NaN"] | float
+FloatFillValue = ZarrV2FloatSpecial | float
 ComplexFillValue = tuple[FloatFillValue, FloatFillValue]
 RawFillValue = tuple[int, ...]
 
