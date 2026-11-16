@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import math
+import operator
+import sys
 import warnings
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from functools import cache
 from types import MappingProxyType
 from typing import (
@@ -39,6 +41,7 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+from typing_extensions import TypeIs
 
 # pydantic resolves the `extra_fields` annotation at runtime
 from zarr_metadata import JSONValue  # noqa: TC002
@@ -596,6 +599,62 @@ def resolve_member_path(node: object, path: str) -> object:
         node = node.members[segment]
         resolved.append(segment)
     return node
+
+
+def is_zarr_array(obj: object) -> TypeIs[zarr.Array]:
+    """
+    Whether `obj` is a `zarr.Array`, without importing zarr: an instance cannot
+    exist unless zarr is imported, and zarr is an optional dependency.
+    """
+    zarr_module = sys.modules.get("zarr")
+    return zarr_module is not None and isinstance(obj, zarr_module.Array)
+
+
+def is_zarr_group(obj: object) -> TypeIs[zarr.Group]:
+    """
+    Whether `obj` is a `zarr.Group`, without importing zarr: an instance cannot
+    exist unless zarr is imported, and zarr is an optional dependency.
+    """
+    zarr_module = sys.modules.get("zarr")
+    return zarr_module is not None and isinstance(obj, zarr_module.Group)
+
+
+def read_attribute(data: object, name: str) -> object:
+    """
+    `data.<name>`, typed as the `object` it is. The `auto_*` readers of the v2
+    and v3 `from_array` probe a duck-typed array (numpy, dask, zarr, a spec)
+    with `hasattr` and read what they find through this function, then check
+    the value before returning it as the type they promise.
+    """
+    return getattr(data, name)
+
+
+def as_shape(value: object) -> tuple[int, ...]:
+    """
+    `value`, an array's shape or chunk shape read from a duck-typed array, as
+    a tuple of ints. Each element is converted with `operator.index`, which
+    takes Python and numpy integers alike.
+
+    Raises
+    ------
+    TypeError
+        If `value` is not an iterable of integers.
+    """
+    if not isinstance(value, Iterable) or isinstance(value, str | bytes):
+        msg = f"Expected an iterable of integers, got {value!r}."
+        raise TypeError(msg)
+    return tuple(operator.index(n) for n in value)
+
+
+def as_dtype_like(value: object) -> npt.DTypeLike:
+    """
+    `value`, the `dtype` read from a duck-typed array, as numpy's `DTypeLike`.
+    `DTypeLike` cannot be checked with `isinstance`, and every consumer of the
+    result (`np.dtype` and the `parse_dtype_*` functions it backs) validates
+    it and raises `TypeError` on a value numpy cannot read as a data type, so
+    the value passes through unchanged.
+    """
+    return cast("npt.DTypeLike", value)
 
 
 def guess_chunks(shape: tuple[int, ...], typesize: int) -> tuple[int, ...]:

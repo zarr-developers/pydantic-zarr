@@ -17,7 +17,7 @@ setup:
 lint:
     prek run --all-files --show-diff-on-failure
 
-# Run pyrefly type checking
+# Run the type checkers (pyrefly, ty and pyright)
 typecheck:
     hatch run types:check
 
