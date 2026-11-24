@@ -82,7 +82,7 @@ def test_array_documents_agree(document: Mapping[str, Any]) -> None:
     assert reading.metadata is not None
     assert reading.metadata.shape == tuple(document["shape"])
     assert ArraySpec.model_validate(written) == spec
-    assert spec.like(spec)
+    assert not spec.diff(spec)
     # extra fields the spec does not define are kept as drawn
     for key in set(document) - ARRAY_FIELDS:
         assert key in spec.extra_fields
@@ -158,7 +158,7 @@ def test_fill_value_spellings_alike(data: st.DataObject) -> None:
     # such examples are discarded, so Hypothesis can tell how many checked anything
     assume(models[0] is not None and models[1] is not None)
     specs = [ArraySpec.model_validate(document) for document in documents]
-    assert specs[0].like(specs[1]) == (models[0] == models[1])
+    assert (not specs[0].diff(specs[1], semantic=True)) == (models[0] == models[1])
 
 
 @pytest.mark.parametrize(
@@ -207,4 +207,4 @@ def test_fill_value_spellings_alike_examples(
     assert models[1] is not None
     assert (models[0] == models[1]) is alike
     specs = [ArraySpec.model_validate(document) for document in documents]
-    assert specs[0].like(specs[1]) is alike
+    assert (not specs[0].diff(specs[1], semantic=True)) is alike

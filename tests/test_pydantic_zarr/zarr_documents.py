@@ -23,7 +23,12 @@ if TYPE_CHECKING:
 
 
 def write_hierarchy(
-    spec: v2.AnyArraySpec | v2.AnyBaseGroupSpec | v3.AnyArraySpec | v3.AnyBaseGroupSpec,
+    spec: v2.AnyArraySpec
+    | v2.AnyGroupSpec
+    | v2.AnyBaseGroupSpec
+    | v3.AnyArraySpec
+    | v3.AnyGroupSpec
+    | v3.AnyBaseGroupSpec,
     store: Store,
     path: str = "",
 ) -> zarr.Array | zarr.Group:

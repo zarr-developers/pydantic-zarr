@@ -24,7 +24,7 @@ from zarr_metadata.v3.chunk_key_encoding.default import (
 from zarr_metadata.v3.definition import ZARR_PYTHON_CONTEXT
 
 from pydantic_zarr._metadata import CORE_AND_EXTENSIONS_CONTEXT, CORE_CONTEXT
-from pydantic_zarr.core import AttributesBase, tuplify_json
+from pydantic_zarr.core import AttributesBase, get_attribute, tuplify_json
 from pydantic_zarr.v3 import (
     _SINGLE_BYTE_DATA_TYPES,
     AnyArraySpec,
@@ -412,6 +412,7 @@ def _make_array_spec() -> AnyArraySpec:
     )
 
 
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_arrayspec_like_spec_vs_spec() -> None:
     """
     Regression test: ArraySpec.like(other_spec) must not raise NameError.
@@ -866,6 +867,7 @@ def test_zarr_scope_strict_refuses_unclaimed_storage_transformer() -> None:
         _StrictCoreArraySpec(**_v3_array_kwargs(storage_transformers=({"name": "chunk-manifest"},)))
 
 
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_like_compares_documents_canonically() -> None:
     """
     With no include/exclude filters, `like` compares the metadata documents by
@@ -1183,6 +1185,7 @@ def test_replace_spellings_refuse_invalid_change(replace: Callable[..., Any]) ->
         replace(spec, shape="nonsense")
 
 
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_base_group_spec() -> None:
     """
     `BaseGroupSpec` models a group without members: `to_flat` emits it for
@@ -1226,8 +1229,8 @@ def test_base_group_spec_zarr_round_trip() -> None:
 
 def test_narrowing_helpers() -> None:
     """
-    `is_array_spec` and `is_group_spec` tell flat-hierarchy values apart, and
-    `is_base_group_spec` holds for any group model, members or not.
+    `is_array_spec`, `is_group_spec` and `is_base_group_spec` tell
+    flat-hierarchy values apart.
     """
     from pydantic_zarr.v3 import is_base_group_spec
 
@@ -1239,8 +1242,53 @@ def test_narrowing_helpers() -> None:
     assert is_group_spec(group)
     assert not is_group_spec(base)
     assert is_base_group_spec(base)
-    assert is_base_group_spec(group)
+    assert not is_base_group_spec(group)
     assert not is_base_group_spec(array)
+
+
+def test_group_spec_and_base_group_spec_are_siblings() -> None:
+    """
+    A `GroupSpec` is a hierarchy and a `BaseGroupSpec` one group's own
+    metadata, so neither is a kind of the other. `own_metadata` returns a
+    hierarchy's root, with its attributes and extra fields, as a
+    `BaseGroupSpec`.
+    """
+    array: AnyArraySpec = ArraySpec(**_v3_array_kwargs())
+    extra = {"foo": {"must_understand": False}}
+    group: AnyGroupSpec = GroupSpec(attributes={"a": 1}, members={"x": array}, extra_fields=extra)
+    assert not isinstance(group, BaseGroupSpec)
+    assert not isinstance(BaseGroupSpec(), GroupSpec)
+    with pytest.raises(ValidationError):
+        BaseGroupSpec.model_validate(group)
+    root = group.own_metadata()
+    assert type(root) is BaseGroupSpec
+    assert root == BaseGroupSpec(attributes={"a": 1}, extra_fields=extra)
+    assert root == group.to_flat()[""]
+    assert root.to_stored_metadata_json() == {
+        key: document for key, document in group.to_stored_metadata_json().items() if "/" not in key
+    }
+
+
+def test_own_metadata_of_a_subclass_with_declared_fields() -> None:
+    """
+    A field that a `GroupSpec` subclass adds is not part of a plain
+    `BaseGroupSpec`, so the root leaves it out, and so does `to_flat`. With
+    every added field at its default, the hierarchy still goes through
+    `to_flat` and `from_flat` to the same dump. The root's attributes are a
+    deep copy.
+    """
+
+    class Declared(GroupSpec):
+        foo: int = 1
+        consolidated_metadata: dict[str, object] | None = None
+
+    group = Declared(members={"sub": Declared(members={})}, attributes={"a": [1]})
+    root = group.own_metadata()
+    assert root == BaseGroupSpec(attributes={"a": [1]})
+    assert group.to_flat()[""] == root
+    assert Declared.from_flat(group.to_flat()).model_dump() == group.model_dump()
+    assert root.attributes is not group.attributes
+    assert get_attribute(root.attributes, "a") is not get_attribute(group.attributes, "a")
 
 
 def test_typed_members() -> None:
@@ -1283,6 +1331,7 @@ def test_member_name_validation_survives_narrowing() -> None:
         Narrowed(attributes={}, members={"__reserved": array})
 
 
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_group_like_canonical() -> None:
     """
     With no `include`/`exclude` filters, `GroupSpec.like` compares each member
@@ -1316,6 +1365,7 @@ def test_group_like_canonical() -> None:
     ],
     ids=["no_members", "renamed_member", "kind_mismatch", "unalike_member"],
 )
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_group_like_canonical_unalike(other_members: dict[str, object]) -> None:
     """
     The canonical group comparison still distinguishes groups that differ in
@@ -1360,6 +1410,7 @@ def test_attributes_default_narrowed_type_rejected() -> None:
         GroupSpec[RequiredAttrs]()
 
 
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_like_filters_keyword_only() -> None:
     """`like` takes its `include`/`exclude` filters as keyword arguments only."""
     group: AnyGroupSpec = GroupSpec()
@@ -1482,7 +1533,7 @@ def test_bytes_codec_canonicalized_for_single_byte_dtypes() -> None:
         bare: AnyArraySpec = ArraySpec.create_default(shape=(4,), data_type=data_type)
         assert with_endian.codecs == ({"name": "bytes"},)
         assert with_endian == bare
-        assert with_endian.like(bare)
+        assert not with_endian.diff(bare)
     assert (
         ArraySpec.create_default(shape=(4,), data_type="uint16", codecs=endian_codecs).codecs
         == endian_codecs
@@ -1703,6 +1754,7 @@ def test_get_path() -> None:
         root.resolve_path("a/zz")
 
 
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_group_like_base_group_projection() -> None:
     """
     A `BaseGroupSpec` compares as the projection it is: by the group's own
@@ -1749,7 +1801,7 @@ def test_bytes_codec_canonicalized_inside_sharding() -> None:
     with_endian = sharded(True)
     bare = sharded(False)
     assert with_endian == bare
-    assert with_endian.like(bare)
+    assert not with_endian.diff(bare)
     outer = with_endian.codecs[0]
     assert isinstance(outer, dict)
     config = outer["configuration"]

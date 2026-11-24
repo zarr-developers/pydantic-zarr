@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from pydantic_zarr.core import tuplify_json
+from pydantic_zarr.core import get_attribute, tuplify_json
 
 from .conftest import DTYPE_EXAMPLES_V2, ZARR_PYTHON_VERSION, DTypeExample
 from .zarr_documents import read_documents, write_hierarchy
@@ -546,6 +546,7 @@ def test_flatten_unflatten(
 
 
 # todo: parametrize
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_array_like() -> None:
     a = ArraySpec.from_array(np.arange(10))
     assert a.like(a)
@@ -566,10 +567,11 @@ def test_array_like_with_zarr() -> None:
     arr: AnyArraySpec = ArraySpec(shape=(1,), dtype="uint8", chunks=(1,), attributes={})
     store = zarr.storage.MemoryStore()
     arr_stored = write_hierarchy(arr, store, path="arr")
-    assert arr.like(ArraySpec.from_stored_metadata_json(read_documents(arr_stored)))
+    assert not arr.diff(ArraySpec.from_stored_metadata_json(read_documents(arr_stored)))
 
 
 # todo: parametrize
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_group_like() -> None:
     tree: dict[str, BaseGroupSpec | ArraySpec] = {
         "": BaseGroupSpec(attributes={"path": ""}),
@@ -671,6 +673,7 @@ def test_replace_dtype_v2() -> None:
     assert spec.replace(dtype=np.dtype("float64")).dtype == "<f8"
 
 
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_base_group_spec_v2() -> None:
     """`BaseGroupSpec` models a v2 group without members, and `like` ignores members."""
     array: AnyArraySpec = ArraySpec(shape=(4,), dtype="uint8", chunks=(2,), attributes={})
@@ -697,8 +700,32 @@ def test_narrowing_helpers_v2() -> None:
     assert is_group_spec(group)
     assert not is_group_spec(base)
     assert is_base_group_spec(base)
-    assert is_base_group_spec(group)
+    assert not is_base_group_spec(group)
     assert not is_base_group_spec(array)
+
+
+def test_group_spec_and_base_group_spec_are_siblings_v2() -> None:
+    """
+    A `GroupSpec` is a hierarchy and a `BaseGroupSpec` one group's own
+    metadata, so neither is a kind of the other. `own_metadata` returns a
+    hierarchy's root as a `BaseGroupSpec`.
+    """
+    array: AnyArraySpec = ArraySpec(shape=(4,), dtype="uint8", chunks=(2,), attributes={})
+    group: AnyGroupSpec = GroupSpec(attributes={"a": [1]}, members={"x": array})
+    assert not isinstance(group, BaseGroupSpec)
+    assert not isinstance(BaseGroupSpec(), GroupSpec)
+    with pytest.raises(ValidationError):
+        BaseGroupSpec.model_validate(group)
+    root = group.own_metadata()
+    assert type(root) is BaseGroupSpec
+    assert root == BaseGroupSpec(attributes={"a": [1]})
+    assert root == group.to_flat()[""]
+    # a deep copy: changing the root's attributes does not change the group
+    assert root.attributes is not group.attributes
+    assert get_attribute(root.attributes, "a") is not get_attribute(group.attributes, "a")
+    assert root.to_stored_metadata_json() == {
+        key: document for key, document in group.to_stored_metadata_json().items() if "/" not in key
+    }
 
 
 def test_member_name_validation_survives_narrowing_v2() -> None:
@@ -740,6 +767,7 @@ def test_attributes_default_narrowed_type_rejected() -> None:
         GroupSpec[RequiredAttrs]()
 
 
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_like_filters_keyword_only() -> None:
     """`like` takes its `include`/`exclude` filters as keyword arguments only."""
     group: AnyGroupSpec = GroupSpec()

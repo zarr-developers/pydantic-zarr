@@ -272,8 +272,8 @@ store = zarr.storage.MemoryStore()
 write_hierarchy(image, store, "image.ome.zarr")
 stored = zarr.open_group(store, path="image.ome.zarr", mode="r")
 readback = Image.from_stored_metadata_json(read_documents(stored))
-print("round trip like():", image.like(readback))
-assert image.like(readback)
+print("round trip diff:", image.diff(readback))
+assert not image.diff(readback)
 assert readback.attributes == attributes
 
 # refused: metadata names a level the hierarchy does not hold

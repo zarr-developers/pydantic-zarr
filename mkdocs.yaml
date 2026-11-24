@@ -55,6 +55,10 @@ plugins:
             members_order: source
             separate_signature: true
             filters: ["!^_"]
+            # Render these inherited methods on every class that inherits them.
+            # The group specs inherit them from their private base, and
+            # document their fields in their own docstrings.
+            inherited_members: [to_metadata_json, validate_metadata_document]
             docstring_options:
               ignore_init_summary: true
             merge_init_into_class: true

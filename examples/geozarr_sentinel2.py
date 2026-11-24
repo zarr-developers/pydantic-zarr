@@ -174,7 +174,7 @@ store = zarr.storage.MemoryStore()
 write_hierarchy(r10m, store, "measurements/r10m")
 stored = zarr.open_group(store, path="measurements/r10m", mode="r")
 read_back = R10mDataset.from_stored_metadata_json(read_documents(stored))
-assert read_back.like(r10m)
+assert not read_back.diff(r10m)
 assert read_back == r10m
 print("round trip through a MemoryStore preserved the dataset")
 

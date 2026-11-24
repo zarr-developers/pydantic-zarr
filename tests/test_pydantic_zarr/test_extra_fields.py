@@ -117,8 +117,8 @@ def test_extra_fields_accepted(cls: type[Any], document: dict[str, Any], context
     assert cls.model_validate_json(spec.model_dump_json(), context=context) == spec
     assert spec.replace(attributes={"x": 1}).extra_fields == spec.extra_fields
     assert spec.replace(extra_fields={}).extra_fields == {}
-    assert spec.like(spec)
-    assert not spec.like(spec.replace(extra_fields={}))
+    assert not spec.diff(spec)
+    assert spec.diff(spec.replace(extra_fields={}), semantic=True)
     if isinstance(spec, v3.GroupSpec):
         flat = v3.to_flat(spec)
         assert flat[""].extra_fields == spec.extra_fields

@@ -357,6 +357,56 @@ with tempfile.TemporaryDirectory() as root:
     assert GroupSpec.from_stored_metadata_json(documents) == group
 ```
 
+## Comparing specs
+
+`diff` returns the changes that turn one spec's document into another's, as a
+JSON Patch ([RFC 6902](https://www.rfc-editor.org/rfc/rfc6902)). The document
+is what `model_dump()` returns, and each operation's `path` is a JSON Pointer
+([RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)) into it. So any JSON
+Patch library, such as [`jsonpatch`](https://pypi.org/project/jsonpatch/), can
+apply `a.diff(b)` to `a`'s document to get `b`'s. Apply it to the document as
+JSON, with lists for tuples: `json.loads(json.dumps(a.model_dump()))`.
+
+```python
+from pydantic_zarr.v3 import ArraySpec, GroupSpec
+
+temp = ArraySpec.create_default(shape=(4,), data_type="float32", fill_value="NaN")
+planned = GroupSpec(members={"temp": temp})
+written = GroupSpec(
+    attributes={"title": "run 1"},
+    members={"temp": temp.replace(fill_value="0x7fc00000")},
+)
+for operation in planned.diff(written):
+    print(operation)
+    #> {'op': 'add', 'path': '/attributes/title', 'value': 'run 1'}
+    #> {'op': 'replace', 'path': '/members/temp/fill_value', 'value': '0x7fc00000'}
+
+# "NaN" and "0x7fc00000" are two spellings of one float32 value
+for operation in planned.diff(written, semantic=True):
+    print(operation)
+    #> {'op': 'add', 'path': '/attributes/title', 'value': 'run 1'}
+```
+
+With `semantic=True`, `diff` returns only the operations that change what the
+metadata means. `zarr-metadata` reads each node's document, in the class's
+`zarr_scope`, to decide this. A document it cannot read in that scope cannot
+be judged, so every change to it is returned. Attributes are not interpreted, so a change to
+them always counts, and so does adding, removing or replacing a member.
+
+So `not a.diff(b)` checks that two specs have the same document, and
+`not a.diff(b, semantic=True)` checks that they mean the same. To compare only
+some fields, filter the operations by their path.
+
+`diff` compares two specs of the same kind: two arrays, two `GroupSpec`s or
+two `BaseGroupSpec`s. Comparing an array with a group raises a `ValueError`.
+So does comparing a `GroupSpec`, which is a hierarchy, with a `BaseGroupSpec`,
+which is one group's own metadata and says nothing about its members. To
+compare a hierarchy's root with a `BaseGroupSpec`, diff `group.own_metadata()`
+with it. Inside a group, a member that is an array on one side and a group on
+the other is replaced whole.
+
+The `like` method is deprecated, and will be removed in pydantic-zarr 0.14.
+
 ## Reading and writing with zarr-python
 
 pydantic-zarr does no IO. A spec is a metadata document, or a hierarchy of
@@ -464,7 +514,7 @@ print(spec.codecs[-1]["name"])
 ### Scope as a class property
 
 A per-call context lasts one call: operations that build new specs
-(`replace`, `create_default`, `with_sharding_codec`, `like`)
+(`replace`, `create_default`, `with_sharding_codec`)
 re-validate with no context, back in the default scope. To make the scope a
 property of the model instead, set the `zarr_scope` class variable on a
 subclass: it is the scope every validation of that class reads in when the
