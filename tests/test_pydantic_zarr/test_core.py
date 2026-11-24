@@ -105,6 +105,7 @@ def test_json_eq_unequal(a: object, b: object) -> None:
 
 
 @pytest.mark.parametrize("group_spec_cls", [GroupSpecV2, GroupSpecV3])
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_model_like_list_vs_tuple_attrs(group_spec_cls: type) -> None:
     """
     Specs whose attributes differ only by list-vs-tuple (e.g. one constructed directly and

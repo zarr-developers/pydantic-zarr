@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import math
 import operator
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from functools import cache
 from types import MappingProxyType
 from typing import (
@@ -12,6 +13,7 @@ from typing import (
     Literal,
     Protocol,
     Self,
+    TypedDict,
     TypeVar,
     cast,
     overload,
@@ -902,6 +904,453 @@ def json_eq(a: object, b: object) -> bool:
 
     # otherwise → regular equality
     return a == b
+
+
+class AddOperation(TypedDict):
+    """A JSON Patch `add` operation: add `value` at `path`."""
+
+    op: Literal["add"]
+    path: str
+    value: object
+
+
+class RemoveOperation(TypedDict):
+    """A JSON Patch `remove` operation: remove the value at `path`."""
+
+    op: Literal["remove"]
+    path: str
+
+
+class ReplaceOperation(TypedDict):
+    """A JSON Patch `replace` operation: replace the value at `path` with `value`."""
+
+    op: Literal["replace"]
+    path: str
+    value: object
+
+
+type PatchOperation = AddOperation | RemoveOperation | ReplaceOperation
+"""
+One operation of a JSON Patch, as RFC 6902 defines it
+(https://www.rfc-editor.org/rfc/rfc6902). Its `path` is a JSON Pointer
+(https://www.rfc-editor.org/rfc/rfc6901).
+"""
+
+
+def json_patch(left: object, right: object) -> list[PatchOperation]:
+    """
+    Return a JSON Patch (RFC 6902) that turns `left` into `right`.
+
+    `left` and `right` are JSON-like values: mappings with string keys,
+    lists or tuples, strings, numbers, booleans and `None`. Applying the patch
+    to `left` gives a value equal to `right`, as JSON Patch compares values:
+    numbers by value, and a bool never equal to a number. So the patch is
+    empty exactly when the two values are equal. Two float NaNs are equal,
+    and `-0.0` does not equal `0.0`, because Zarr metadata gives these
+    values meaning.
+
+    The patch has only `add`, `remove` and `replace` operations. Mappings are
+    compared key by key, and sequences of the same length item by item. A
+    sequence whose length differs is replaced whole, so no operation moves an
+    item that a later operation refers to by index. The values in the patch
+    are the objects in `right`, not copies.
+
+    Raises `TypeError` if a mapping that is compared key by key has a key
+    that is not a string. A value that is added or replaced whole is not
+    checked.
+
+    Examples
+    --------
+    >>> from pydantic_zarr.core import json_patch
+    >>> json_patch({"a": 1, "b": [1, 2]}, {"b": [1, 3], "c": None})
+    [{'op': 'remove', 'path': '/a'}, {'op': 'replace', 'path': '/b/1', 'value': 3}, {'op': 'add', 'path': '/c', 'value': None}]
+    """
+    operations: list[PatchOperation] = []
+    _extend_patch(left, right, "", operations)
+    return operations
+
+
+def _extend_patch(left: object, right: object, path: str, operations: list[PatchOperation]) -> None:
+    """Append the operations that turn `left` into `right`, both at `path`, to `operations`."""
+    if isinstance(left, Mapping) and isinstance(right, Mapping):
+        for key, value in left.items():
+            key_path = f"{path}/{_pointer_token(key)}"
+            if key in right:
+                _extend_patch(value, right[key], key_path, operations)
+            else:
+                operations.append({"op": "remove", "path": key_path})
+        for key, value in right.items():
+            if key not in left:
+                key_path = f"{path}/{_pointer_token(key)}"
+                operations.append({"op": "add", "path": key_path, "value": value})
+        return
+    if (
+        isinstance(left, list | tuple)
+        and isinstance(right, list | tuple)
+        and len(left) == len(right)
+    ):
+        for index, (left_item, right_item) in enumerate(zip(left, right, strict=True)):
+            _extend_patch(left_item, right_item, f"{path}/{index}", operations)
+        return
+    if not _json_equal(left, right):
+        operations.append({"op": "replace", "path": path, "value": right})
+
+
+def _json_equal(a: object, b: object) -> bool:
+    """
+    Return whether two JSON-like values are equal, as JSON Patch compares them.
+
+    The rules are those of the RFC 6902 `test` operation (section 4.6). Numbers
+    are equal if their values are, so `1` equals `1.0`. A bool is not a
+    number, so `True` does not equal `1`. Objects are equal if they have the
+    same keys with equal values, and arrays if they have equal items in the
+    same order. Lists and tuples are both arrays.
+
+    Two values that JSON itself does not have are compared too, because Zarr
+    metadata gives them meaning: two float NaNs are equal, and `-0.0` does
+    not equal `0.0`.
+    """
+    if isinstance(a, bool) or isinstance(b, bool):
+        return isinstance(a, bool) and isinstance(b, bool) and a == b
+    if isinstance(a, float | int) and isinstance(b, float | int):
+        if isinstance(a, float) and isinstance(b, float) and math.isnan(a) and math.isnan(b):
+            return True
+        # Python compares an int and a float exactly. The sign only matters
+        # for zero, so only a zero is converted to a float.
+        return a == b and (a != 0 or math.copysign(1.0, a) == math.copysign(1.0, b))
+    if isinstance(a, list | tuple) and isinstance(b, list | tuple):
+        return len(a) == len(b) and all(_json_equal(x, y) for x, y in zip(a, b, strict=True))
+    if isinstance(a, Mapping) and isinstance(b, Mapping):
+        return a.keys() == b.keys() and all(_json_equal(a[key], b[key]) for key in a)
+    if isinstance(a, str) and isinstance(b, str):
+        return a == b
+    if a is None or b is None:
+        return a is b
+    return a == b
+
+
+def _pointer_token(key: object) -> str:
+    """Return a mapping key as one JSON Pointer reference token (RFC 6901, section 3)."""
+    if not isinstance(key, str):
+        msg = f"JSON object keys must be strings, got {key!r}"
+        raise TypeError(msg)
+    return key.replace("~", "~0").replace("/", "~1")
+
+
+def _pointer_tokens(path: str) -> list[str]:
+    """Split a JSON Pointer into its unescaped reference tokens (RFC 6901, section 4)."""
+    if not path:
+        return []
+    return [token.replace("~1", "/").replace("~0", "~") for token in path[1:].split("/")]
+
+
+type DocumentReader = Callable[[Mapping[str, object]], object]
+"""
+Read a node's metadata document, with empty attributes, into an object that
+compares by meaning, such as a `zarr-metadata` model. Return `None` if the
+document cannot be read.
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class NodeView[N]:
+    """
+    What `node_patch` needs to know about a node besides its document.
+
+    `read` reads the node's document by meaning. If it is `None`, every change
+    to the document changes its meaning. `members` maps each member's name to
+    the member node. It is `None` for a node without members.
+    """
+
+    node_type: StoredNodeType
+    read: DocumentReader | None
+    members: Mapping[str, N] | None
+
+
+_ATTRIBUTES: Final = "attributes"
+_MEMBERS: Final = "members"
+
+
+def node_patch[N: BaseModel](
+    left: N,
+    right: N,
+    view: Callable[[N], NodeView[N]],
+    *,
+    semantic: bool,
+) -> list[PatchOperation]:
+    """
+    Return the JSON Patch that turns `left.model_dump()` into `right.model_dump()`.
+
+    The patch is built node by node, from the two dumps. `view` tells what
+    type each node is, how to read its document, and what members it has.
+
+    - If both nodes have members, their documents without `"members"` are
+      compared with `json_patch`. Then each member that only one side has is
+      added or removed whole. A member that is an array on one side and a
+      group on the other is replaced whole. Each other member is compared in
+      the same way as the nodes.
+    - Otherwise the two documents are compared with `json_patch`, so a
+      `"members"` mapping that only one side has is added or removed whole.
+
+    With `semantic`, only the operations that change what the metadata means
+    are kept:
+
+    - An operation on attributes changes meaning. Attributes are not
+      interpreted, so any change to them counts.
+    - An operation on `"members"`, or on a member as a whole, changes the
+      hierarchy, so it changes meaning.
+    - Any other operation changes a node's own document. It is left out if
+      both documents can be read, and either they mean the same, or swapping
+      the value at its path leaves each document's meaning unchanged. To
+      swap, the value in one document is set to the value in the other.
+    - The operations left out of one document must also keep its meaning
+      when they are applied together. If they do not, they are all kept. So
+      an empty result always means that the metadata means the same.
+
+    Raises `ValueError` if one of `left` and `right` is an array and the
+    other a group.
+    """
+    operations: list[PatchOperation] = []
+    _extend_node_patch(
+        left,
+        right,
+        left.model_dump(),
+        right.model_dump(),
+        "",
+        view,
+        operations,
+        semantic=semantic,
+    )
+    return operations
+
+
+def _extend_node_patch[N: BaseModel](
+    left: N,
+    right: N,
+    left_dump: Mapping[str, object],
+    right_dump: Mapping[str, object],
+    path: str,
+    view: Callable[[N], NodeView[N]],
+    operations: list[PatchOperation],
+    *,
+    semantic: bool,
+) -> None:
+    """Append the operations that turn node `left`, dumped as `left_dump`, into `right`."""
+    left_view, right_view = view(left), view(right)
+    if left_view.node_type != right_view.node_type:
+        if not path:
+            msg = (
+                f"Cannot diff {_A_NODE[left_view.node_type]} with "
+                f"{_A_NODE[right_view.node_type]}. A diff compares two arrays or two groups."
+            )
+            raise ValueError(msg)
+        # a member that changed type is a new value in the members mapping
+        operations.append({"op": "replace", "path": path, "value": right_dump})
+        return
+
+    # The documents without members, as `view.read` reads them. A node without
+    # members keeps a "members" key if it has one, as an extra field.
+    # A node has members if its view and its dump both have them. A member
+    # declared as a type without members is dumped without them.
+    left_members = left_view.members if _MEMBERS in left_dump else None
+    right_members = right_view.members if _MEMBERS in right_dump else None
+    left_document = _own_document(left_dump, has_members=left_members is not None)
+    right_document = _own_document(right_dump, has_members=right_members is not None)
+    if left_members is None or right_members is None:
+        own = json_patch(left_dump, right_dump)
+    else:
+        own = json_patch(left_document, right_document)
+    if semantic:
+        own = _changes_of_meaning(own, left_document, right_document, left_view, right_view)
+    operations.extend(_under(path, operation) for operation in own)
+    if left_members is None or right_members is None:
+        return
+
+    left_dumps = cast("Mapping[str, Mapping[str, object]]", left_dump[_MEMBERS])
+    right_dumps = cast("Mapping[str, Mapping[str, object]]", right_dump[_MEMBERS])
+    for name, left_member in left_members.items():
+        member_path = f"{path}/{_MEMBERS}/{_pointer_token(name)}"
+        if name in right_members:
+            _extend_node_patch(
+                left_member,
+                right_members[name],
+                left_dumps[name],
+                right_dumps[name],
+                member_path,
+                view,
+                operations,
+                semantic=semantic,
+            )
+        else:
+            operations.append({"op": "remove", "path": member_path})
+    for name in right_members:
+        if name not in left_members:
+            member_path = f"{path}/{_MEMBERS}/{_pointer_token(name)}"
+            operations.append({"op": "add", "path": member_path, "value": right_dumps[name]})
+
+
+def _own_document(dump: Mapping[str, object], *, has_members: bool) -> dict[str, object]:
+    """Return a node's dump without its members."""
+    document = dict(dump)
+    if has_members:
+        document.pop(_MEMBERS, None)
+    return document
+
+
+def _under(prefix: str, operation: PatchOperation) -> PatchOperation:
+    """Return `operation` with its path moved under the JSON Pointer `prefix`."""
+    path = prefix + operation["path"]
+    if operation["op"] == "remove":
+        return {"op": "remove", "path": path}
+    if operation["op"] == "add":
+        return {"op": "add", "path": path, "value": operation["value"]}
+    return {"op": "replace", "path": path, "value": operation["value"]}
+
+
+def _changes_of_meaning(
+    patch: list[PatchOperation],
+    left_document: Mapping[str, object],
+    right_document: Mapping[str, object],
+    left_view: NodeView[object],
+    right_view: NodeView[object],
+) -> list[PatchOperation]:
+    """Return the operations of `patch`, between two node documents, that change their meaning."""
+    judge = _MeaningJudge(left_document, right_document, left_view.read, right_view.read)
+    left_out: list[list[str]] = []
+    kept: list[bool] = []
+    for operation in patch:
+        tokens = _pointer_tokens(operation["path"])
+        if tokens[0] in (_ATTRIBUTES, _MEMBERS):
+            kept.append(True)
+        elif judge.same_meaning():
+            # the documents mean the same, so no operation on them changes it
+            kept.append(False)
+        elif not judge.respelling(tokens):
+            kept.append(True)
+        else:
+            kept.append(False)
+            left_out.append(tokens)
+    if left_out and not judge.same_meaning() and not judge.respellings(left_out):
+        kept = [True] * len(patch)
+    return [operation for operation, keep in zip(patch, kept, strict=True) if keep]
+
+
+LIKE_DEPRECATION: Final = (
+    "`like` is deprecated and will be removed in pydantic-zarr 0.14. Use `diff`: "
+    "`not a.diff(b)` checks that two specs have the same document, and "
+    "`not a.diff(b, semantic=True)` checks that they mean the same."
+)
+
+
+class _MeaningJudge:
+    """
+    Judge changes to a pair of node documents by their meaning.
+
+    Attributes are set to `{}` before a document is read, because they are not
+    interpreted. Each document is read once, plus twice per test.
+    """
+
+    def __init__(
+        self,
+        left: Mapping[str, object],
+        right: Mapping[str, object],
+        read_left: DocumentReader | None,
+        read_right: DocumentReader | None,
+    ) -> None:
+        self._left = _with_empty_attributes(left)
+        self._right = _with_empty_attributes(right)
+        self._read_left = read_left
+        self._read_right = read_right
+        self._meanings: tuple[object, object] | None = None
+
+    def _both_meanings(self) -> tuple[object, object]:
+        if self._meanings is None:
+            left = None if self._read_left is None else self._read_left(self._left)
+            right = None if self._read_right is None else self._read_right(self._right)
+            self._meanings = (left, right)
+        return self._meanings
+
+    def same_meaning(self) -> bool:
+        """Whether both documents can be read, and mean the same."""
+        left, right = self._both_meanings()
+        return left is not None and right is not None and left == right
+
+    def respelling(self, tokens: Sequence[str]) -> bool:
+        """Whether the two documents' values at `tokens` are spellings of one value."""
+        return self.respellings([tokens])
+
+    def respellings(self, paths: Sequence[Sequence[str]]) -> bool:
+        """
+        Whether swapping the values at all of `paths` together leaves the
+        meaning of both documents unchanged.
+        """
+        if self._read_left is None or self._read_right is None:
+            return False
+        left_meaning, right_meaning = self._both_meanings()
+        if left_meaning is None or right_meaning is None:
+            return False
+        left_swapped, right_swapped = self._left, self._right
+        for tokens in paths:
+            left_swapped = _with_value_at(left_swapped, tokens, _value_at(self._right, tokens))
+            right_swapped = _with_value_at(right_swapped, tokens, _value_at(self._left, tokens))
+        return (
+            self._read_left(left_swapped) == left_meaning
+            and self._read_right(right_swapped) == right_meaning
+        )
+
+
+def _with_empty_attributes(document: Mapping[str, object]) -> dict[str, object]:
+    copy = dict(document)
+    if _ATTRIBUTES in copy:
+        copy[_ATTRIBUTES] = {}
+    return copy
+
+
+def _value_at(document: object, tokens: Sequence[str]) -> object:
+    """Return the value at `tokens` in `document`, or `MISSING` if there is none."""
+    value = document
+    for token in tokens:
+        if isinstance(value, Mapping) and token in value:
+            value = value[token]
+        elif isinstance(value, list | tuple) and token.isdigit() and int(token) < len(value):
+            value = value[int(token)]
+        else:
+            return MISSING
+    return value
+
+
+def _with_value_at(
+    document: Mapping[str, object], tokens: Sequence[str], value: object
+) -> dict[str, object]:
+    """
+    Return a copy of `document` with `value` at `tokens`, or without the
+    entry at `tokens` if `value` is `MISSING`.
+
+    Only the containers along the path are copied. The path is one that
+    `json_patch` produced, so every container on it exists.
+    """
+    copy = dict(document)
+    head, rest = tokens[0], tokens[1:]
+    if rest:
+        copy[head] = _with_nested_value_at(copy[head], rest, value)
+    elif value is MISSING:
+        copy.pop(head, None)
+    else:
+        copy[head] = value
+    return copy
+
+
+def _with_nested_value_at(container: object, tokens: Sequence[str], value: object) -> object:
+    if isinstance(container, Mapping):
+        return _with_value_at(container, tokens, value)
+    if isinstance(container, list | tuple):
+        items = list(container)
+        index = int(tokens[0])
+        items[index] = (
+            value if len(tokens) == 1 else _with_nested_value_at(items[index], tokens[1:], value)
+        )
+        return items
+    return container
 
 
 type StoredNodeType = Literal["array", "group"]

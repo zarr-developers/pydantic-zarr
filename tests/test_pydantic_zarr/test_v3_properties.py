@@ -142,7 +142,7 @@ def test_zarr_generated_metadata_accepted(data: st.DataObject) -> None:
         document = tuplify_json(meta.to_dict())
     spec: ArraySpec = ArraySpec(**document)
     assert ArraySpec(**spec.model_dump()) == spec
-    assert spec.like(spec)
+    assert not spec.diff(spec)
     # ...and zarr-python accepts what the spec emits
     ArrayV3Metadata.from_dict(spec.model_dump())
 
@@ -172,7 +172,7 @@ def test_documents_round_trip(document: dict[str, Any]) -> None:
     """
     spec: ArraySpec = ArraySpec(**document)
     assert ArraySpec(**spec.model_dump()) == spec
-    assert spec.like(spec)
+    assert not spec.diff(spec)
 
 
 _NAN_SPELLINGS: dict[str, tuple[object, ...]] = {
@@ -196,8 +196,8 @@ def test_fill_value_spellings_alike(document: dict[str, Any], data: st.DataObjec
         ArraySpec.model_validate({**document, "fill_value": spelling}) for spelling in spellings
     ]
     for other in specs[1:]:
-        assert specs[0].like(other)
-        assert other.like(specs[0])
+        assert not specs[0].diff(other, semantic=True)
+        assert not other.diff(specs[0], semantic=True)
 
 
 def _mutate_chunk_rank(document: dict[str, Any]) -> dict[str, Any]:

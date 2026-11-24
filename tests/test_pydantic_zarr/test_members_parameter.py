@@ -190,7 +190,7 @@ def test_members_type_parameter(module: ModuleType, named: type, kind: str) -> N
     assert cls.from_flat(spec.to_flat()) == spec
     assert cls.from_stored_metadata_json(spec.to_stored_metadata_json()) == spec
     assert spec.replace(attributes={"k": 1}).members == members
-    assert spec.like(spec.replace(members=members))
+    assert not spec.diff(spec.replace(members=members))
     assert spec.get_path(next(iter(members))) == next(iter(members.values()))
 
 

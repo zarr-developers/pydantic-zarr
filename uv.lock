@@ -981,6 +981,27 @@ wheels = [
 ]
 
 [[package]]
+name = "jsonpatch"
+version = "1.48"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jsonpointer" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9c/b5/0236966b8a3d5b9bf147ea81932c0cd59358a77497bdb95d137e5ee3f080/jsonpatch-1.48.tar.gz", hash = "sha256:81e9a03754137a1201d9b534ddd599cc0eb5983fe941bce238dc8a76e442bb94", size = 85549, upload-time = "2026-11-19T21:16:43.769Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/76/79/524d5f481ffd5095dd8fdf273bc410214d1a2bb19e6c9a3f379071f1cfc4/jsonpatch-1.48-py3-none-any.whl", hash = "sha256:389f25f006940b7bc939c33ca0f6cf8875527dc70599520652a269040ce40b63", size = 27220, upload-time = "2026-11-19T21:16:42.63Z" },
+]
+
+[[package]]
+name = "jsonpointer"
+version = "3.12"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/46/cb/2c3112a061a718d93866c2555dad1e9d53865e4703d0f3be550d252b277b/jsonpointer-3.12.tar.gz", hash = "sha256:7a3dcc11b64053eaa9c549e85e413f8d40a075215f793a331bed9182a14251ae", size = 23217, upload-time = "2026-11-11T09:34:22.894Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/72/07/3c953fceee478798f6bdf7b39e0da0793f437e8b5f9e9e1360fba32fb25c/jsonpointer-3.12-py3-none-any.whl", hash = "sha256:89f391335ee2719ae72149e1bf30a4d4c7c5d92f15a3f53faa8d20cc7c6c7f19", size = 10562, upload-time = "2026-11-11T09:34:21.711Z" },
+]
+
+[[package]]
 name = "lazy-loader"
 version = "0.6"
 source = { registry = "https://pypi.org/simple" }
@@ -2273,6 +2294,7 @@ dev = [
     { name = "coverage" },
     { name = "dask" },
     { name = "hypothesis" },
+    { name = "jsonpatch" },
     { name = "pydantic-zarr", extra = ["zarr"], marker = "extra == 'group-13-pydantic-zarr-dev' or extra != 'group-13-pydantic-zarr-docs' or extra == 'group-13-pydantic-zarr-test' or extra == 'group-13-pydantic-zarr-types'" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -2284,6 +2306,7 @@ docs = [
     { name = "coverage" },
     { name = "dask" },
     { name = "hypothesis" },
+    { name = "jsonpatch" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings", extra = ["python"], marker = "extra == 'group-13-pydantic-zarr-docs'" },
     { name = "ngff-zarr" },
@@ -2301,6 +2324,7 @@ test = [
     { name = "coverage" },
     { name = "dask" },
     { name = "hypothesis" },
+    { name = "jsonpatch" },
     { name = "pydantic-zarr", extra = ["zarr"], marker = "extra == 'group-13-pydantic-zarr-test' or (extra == 'group-13-pydantic-zarr-dev' and extra == 'group-13-pydantic-zarr-docs') or (extra == 'group-13-pydantic-zarr-docs' and extra == 'group-13-pydantic-zarr-types')" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -2312,6 +2336,7 @@ test-base = [
     { name = "coverage" },
     { name = "dask" },
     { name = "hypothesis" },
+    { name = "jsonpatch" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-examples" },
@@ -2322,6 +2347,7 @@ types = [
     { name = "coverage" },
     { name = "dask" },
     { name = "hypothesis" },
+    { name = "jsonpatch" },
     { name = "pydantic-zarr", extra = ["zarr"], marker = "extra == 'group-13-pydantic-zarr-dev' or extra != 'group-13-pydantic-zarr-docs' or extra == 'group-13-pydantic-zarr-test' or extra == 'group-13-pydantic-zarr-types'" },
     { name = "pyrefly" },
     { name = "pyright" },
@@ -2349,6 +2375,7 @@ dev = [
     { name = "coverage" },
     { name = "dask", specifier = ">=2025.11.0" },
     { name = "hypothesis", specifier = ">=6.100" },
+    { name = "jsonpatch", specifier = ">=1.33" },
     { name = "pydantic-zarr", extras = ["zarr"] },
     { name = "pytest", specifier = "==9.1.0" },
     { name = "pytest-cov" },
@@ -2360,6 +2387,7 @@ docs = [
     { name = "coverage" },
     { name = "dask", specifier = ">=2025.11.0" },
     { name = "hypothesis", specifier = ">=6.100" },
+    { name = "jsonpatch", specifier = ">=1.33" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings", extras = ["python"] },
     { name = "ngff-zarr", specifier = ">=0.50" },
@@ -2377,6 +2405,7 @@ test = [
     { name = "coverage" },
     { name = "dask", specifier = ">=2025.11.0" },
     { name = "hypothesis", specifier = ">=6.100" },
+    { name = "jsonpatch", specifier = ">=1.33" },
     { name = "pydantic-zarr", extras = ["zarr"] },
     { name = "pytest", specifier = "==9.1.0" },
     { name = "pytest-cov" },
@@ -2388,6 +2417,7 @@ test-base = [
     { name = "coverage" },
     { name = "dask", specifier = ">=2025.11.0" },
     { name = "hypothesis", specifier = ">=6.100" },
+    { name = "jsonpatch", specifier = ">=1.33" },
     { name = "pytest", specifier = "==9.1.0" },
     { name = "pytest-cov" },
     { name = "pytest-examples" },
@@ -2398,6 +2428,7 @@ types = [
     { name = "coverage" },
     { name = "dask", specifier = ">=2025.11.0" },
     { name = "hypothesis", specifier = ">=6.100" },
+    { name = "jsonpatch", specifier = ">=1.33" },
     { name = "pydantic-zarr", extras = ["zarr"] },
     { name = "pyrefly", specifier = "==1.4.0" },
     { name = "pyright", specifier = "==1.1.414" },
