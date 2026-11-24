@@ -1761,8 +1761,9 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         `json.loads(json.dumps(self.model_dump()))`.
 
         The patch is built node by node. A member that only one side has is
-        added or removed whole. A member that is an array on one side and a
-        group on the other is replaced whole. Everything else is compared key by key,
+        added or removed whole. So is a member that is a different kind on
+        each side: an array on one side and a group on the other, or a group
+        with members on one side and a group without on the other. Everything else is compared key by key,
         as `pydantic_zarr.core.json_patch` does.
 
         With `semantic=True`, only the operations that change what the

@@ -1056,23 +1056,21 @@ def node_patch[N: BaseModel](
     Return the JSON Patch that turns `left.model_dump()` into `right.model_dump()`.
 
     The patch is built node by node, from the two dumps. `view` tells what
-    type each node is, how to read its document, and what members it has.
+    type each node is, how to read its document, and what members it has. A
+    node's kind is its type and whether it has members.
 
-    - If both nodes have members, their documents without `"members"` are
-      compared with `json_patch`. Then each member that only one side has is
-      added or removed whole. A member that is an array on one side and a
-      group on the other is replaced whole. Each other member is compared in
-      the same way as the nodes.
-    - Otherwise the two documents are compared with `json_patch`, so a
-      `"members"` mapping that only one side has is added or removed whole.
+    The nodes' documents, without `"members"`, are compared with
+    `json_patch`. Then each member that only one side has is added or removed
+    whole, and so is a member that is a different kind on each side. Each
+    other member is compared in the same way as the nodes.
 
     With `semantic`, only the operations that change what the metadata means
     are kept:
 
     - An operation on attributes changes meaning. Attributes are not
       interpreted, so any change to them counts.
-    - An operation on `"members"`, or on a member as a whole, changes the
-      hierarchy, so it changes meaning.
+    - Adding, removing or replacing a member changes the hierarchy, so it
+      changes meaning.
     - Any other operation changes a node's own document. It is left out if
       both documents can be read, and either they mean the same, or swapping
       the value at its path leaves each document's meaning unchanged. To
@@ -1081,8 +1079,8 @@ def node_patch[N: BaseModel](
       when they are applied together. If they do not, they are all kept. So
       an empty result always means that the metadata means the same.
 
-    Raises `ValueError` if `left` and `right` are not the same kind of spec:
-    one is an array and the other a group, or one is a group with members (a
+    Raises `ValueError` if `left` and `right` are different kinds: one is an
+    array and the other a group, or one is a group with members (a
     `GroupSpec`) and the other a group without (a `BaseGroupSpec`).
     """
     operations: list[PatchOperation] = []
@@ -1112,25 +1110,24 @@ def _extend_node_patch[N: BaseModel](
 ) -> None:
     """Append the operations that turn node `left`, dumped as `left_dump`, into `right`."""
     left_view, right_view = view(left), view(right)
-    if not path:
-        _check_same_kind(left_view, right_view)
-    if left_view.node_type != right_view.node_type:
-        # a member that changed type is a new value in the members mapping
+    # A node has members if its view and its dump both have them. A member
+    # declared as a type without members is dumped without them.
+    left_members = left_view.members if _MEMBERS in left_dump else None
+    right_members = right_view.members if _MEMBERS in right_dump else None
+    left_kind = (left_view.node_type, left_members is not None)
+    right_kind = (right_view.node_type, right_members is not None)
+    if left_kind != right_kind:
+        if not path:
+            _refuse_different_kinds(left_kind, right_kind)
+        # a member that changed kind is a new value in the members mapping
         operations.append({"op": "replace", "path": path, "value": right_dump})
         return
 
     # The documents without members, as `view.read` reads them. A node without
     # members keeps a "members" key if it has one, as an extra field.
-    # A node has members if its view and its dump both have them. A member
-    # declared as a type without members is dumped without them.
-    left_members = left_view.members if _MEMBERS in left_dump else None
-    right_members = right_view.members if _MEMBERS in right_dump else None
     left_document = _own_document(left_dump, has_members=left_members is not None)
     right_document = _own_document(right_dump, has_members=right_members is not None)
-    if left_members is None or right_members is None:
-        own = json_patch(left_dump, right_dump)
-    else:
-        own = json_patch(left_document, right_document)
+    own = json_patch(left_document, right_document)
     if semantic:
         own = _changes_of_meaning(own, left_document, right_document, left_view, right_view)
     operations.extend(_under(path, operation) for operation in own)
@@ -1163,25 +1160,28 @@ def _extend_node_patch[N: BaseModel](
 _SAME_KIND: Final = "A diff compares two arrays, two GroupSpecs or two BaseGroupSpecs."
 
 
-def _check_same_kind(left: NodeView[object], right: NodeView[object]) -> None:
+def _refuse_different_kinds(
+    left: tuple[StoredNodeType, bool], right: tuple[StoredNodeType, bool]
+) -> None:
     """
-    Raise `ValueError` unless two nodes are the same kind of spec.
+    Raise `ValueError` for two nodes of different kinds.
 
-    An array and a group are different kinds. So are a `GroupSpec`, which is
-    a hierarchy, and a `BaseGroupSpec`, which is one group's own metadata and
-    says nothing about its members.
+    A kind is a node type and whether the node has members. An array and a
+    group are different kinds. So are a group with members (a `GroupSpec`),
+    which is a hierarchy, and a group without (a `BaseGroupSpec`), which is
+    one group's own metadata and says nothing about its members.
     """
-    if left.node_type != right.node_type:
-        msg = f"Cannot diff {_A_NODE[left.node_type]} with {_A_NODE[right.node_type]}. {_SAME_KIND}"
+    (left_type, left_has_members), (right_type, _) = left, right
+    if left_type != right_type:
+        msg = f"Cannot diff {_A_NODE[left_type]} with {_A_NODE[right_type]}. {_SAME_KIND}"
         raise ValueError(msg)
-    if (left.members is None) != (right.members is None):
-        hierarchy, metadata = ("left", "right") if left.members is not None else ("right", "left")
-        msg = (
-            f"Cannot diff a GroupSpec ({hierarchy}) with a BaseGroupSpec ({metadata}). "
-            f"{_SAME_KIND} To compare the group's own metadata, diff the BaseGroupSpec "
-            'with the root of the GroupSpec, `group.to_flat()[""]`.'
-        )
-        raise ValueError(msg)
+    hierarchy, metadata = ("left", "right") if left_has_members else ("right", "left")
+    msg = (
+        f"Cannot diff a GroupSpec ({hierarchy}) with a BaseGroupSpec ({metadata}). "
+        f"{_SAME_KIND} To compare the group's own metadata, diff the BaseGroupSpec "
+        'with the root of the GroupSpec, `group.to_flat()[""]`.'
+    )
+    raise ValueError(msg)
 
 
 def _own_document(dump: Mapping[str, object], *, has_members: bool) -> dict[str, object]:
@@ -1215,7 +1215,7 @@ def _changes_of_meaning(
     kept: list[bool] = []
     for operation in patch:
         tokens = _pointer_tokens(operation["path"])
-        if tokens[0] in (_ATTRIBUTES, _MEMBERS):
+        if tokens[0] == _ATTRIBUTES:
             kept.append(True)
         elif judge.same_meaning():
             # the documents mean the same, so no operation on them changes it

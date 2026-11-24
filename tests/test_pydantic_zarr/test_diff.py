@@ -88,6 +88,10 @@ class _Noted(ArraySpec):
     note: str = "original"
 
 
+_MixedMembers = Mapping[str, ArraySpec | GroupSpec | BaseGroupSpec]
+# pyrefly: ignore[bad-specialization]
+_GroupOfMixedGroups = GroupSpec[dict[str, object], _MixedMembers]
+
 # Type checkers refuse this members type, which is outside the bound, but
 # pydantic accepts it, and dumps each member as a group without members.
 _BaseGroupMembers = Mapping[str, BaseGroupSpec]
@@ -222,6 +226,13 @@ CASES: list[tuple[str, object, object, list[PatchOperation], list[PatchOperation
         [{"op": "add", "path": "/members/g/attributes/a", "value": 1}],
     ),
     (
+        "member-changes-from-group-to-base-group",
+        _GroupOfMixedGroups(members={"g": GroupSpec(members={"x": ARRAY})}),
+        _GroupOfMixedGroups(members={"g": BaseGroupSpec()}),
+        [{"op": "replace", "path": "/members/g", "value": BaseGroupSpec().model_dump()}],
+        [{"op": "replace", "path": "/members/g", "value": BaseGroupSpec().model_dump()}],
+    ),
+    (
         "v2-compressor-spelling",
         ARRAY_V2,
         ARRAY_V2.replace(compressor={"id": "zlib", "level": 1}),
@@ -283,25 +294,39 @@ def test_diff_refuses_an_array_and_a_group(left: object, right: object) -> None:
 
 
 @pytest.mark.parametrize(
-    ("left", "right"),
+    ("left", "right", "message"),
     [
-        (GroupSpec(members={}), BaseGroupSpec()),
-        (BaseGroupSpec(attributes={"a": 1}), GroupSpec(members={"x": ARRAY})),
+        (GroupSpec(members={}), BaseGroupSpec(), "a GroupSpec (left) with a BaseGroupSpec (right)"),
+        (
+            BaseGroupSpec(attributes={"a": 1}),
+            GroupSpec(members={"x": ARRAY}),
+            "a GroupSpec (right) with a BaseGroupSpec (left)",
+        ),
         (
             GroupSpec(members={"x": ARRAY}),
             BaseGroupSpec.model_validate({"members": {"must_understand": False}}),
+            "a GroupSpec (left) with a BaseGroupSpec (right)",
         ),
-        (GroupSpecV2(members={}), BaseGroupSpecV2()),
+        (
+            GroupSpecV2(members={}),
+            BaseGroupSpecV2(),
+            "a GroupSpec (left) with a BaseGroupSpec (right)",
+        ),
     ],
     ids=["v3-group-base-group", "v3-base-group-group", "v3-base-group-extra-members", "v2"],
 )
-def test_diff_refuses_a_group_spec_and_a_base_group_spec(left: object, right: object) -> None:
+def test_diff_refuses_a_group_spec_and_a_base_group_spec(
+    left: object, right: object, message: str
+) -> None:
     """
     A `GroupSpec` is a hierarchy, and a `BaseGroupSpec` is one group's own
-    metadata, which says nothing about its members.
+    metadata, which says nothing about its members. The error says which is
+    which, and how to compare the hierarchy's root instead.
     """
-    with pytest.raises(ValueError, match="Cannot diff a GroupSpec .* with a BaseGroupSpec"):
+    with pytest.raises(ValueError) as error:
         cast("Any", left).diff(right)
+    assert f"Cannot diff {message}." in str(error.value)
+    assert 'group.to_flat()[""]' in str(error.value)
 
 
 @pytest.mark.parametrize(
