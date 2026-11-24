@@ -2,6 +2,17 @@
 
 <!-- towncrier release notes start -->
 
+## pydantic-zarr 0.12.1 (2026-11-24)
+
+### Features
+
+- `pydantic_zarr.v3.normalize_group_metadata` repairs a stored Zarr V3 group document before it is validated. With `normalize_null_consolidated_metadata` (on by default), it drops the `"consolidated_metadata": null` that zarr-python 3.0 writes into every group, which the spec does not allow; every other JSON value is returned as it is. Apply it to each document of a stored-documents mapping before `from_stored_metadata_json`. ([#209](https://github.com/zarr-developers/pydantic-zarr/issues/209))
+
+### Improved Documentation
+
+- The API documentation of `pydantic_zarr.v2`, `pydantic_zarr.v3` and `pydantic_zarr.core` is rewritten in plain, shorter sentences. Docstrings that disagreed with the code, such as those of `to_flat`, `v3.ArraySpec.from_array` and `v3.ArraySpec.like`, now describe what the code does. ([#231](https://github.com/zarr-developers/pydantic-zarr/issues/231))
+
+
 ## pydantic-zarr 0.12.0 (2026-11-16)
 
 ### Features
