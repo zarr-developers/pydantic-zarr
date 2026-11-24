@@ -157,11 +157,10 @@ Notes for type checkers and for `TypedDict` members:
   `extra="forbid"` setting does not apply to the `TypedDict`. Type checkers
   accept the decorator, where they refuse a `__pydantic_config__` assignment
   in the `TypedDict` body.
-- **Member order.** A group keeps its members in the order they were given.
-  pydantic builds a `TypedDict` in declaration order, so the group puts the
-  members back in the given order afterwards. A members type with its own
-  validators (`Annotated[..., AfterValidator(...)]`) keeps the order those
-  validators produce.
+- **Member order.** pydantic builds a `TypedDict` in declaration order,
+  followed by any extra items. So a group whose members type is a
+  `TypedDict` holds its members in that order, not in the order they were
+  given. Zarr gives member order no meaning, and comparing specs ignores it.
 - **Read-only members.** A spec is frozen, but type checkers let code assign
   to a key of a `TypedDict`, so `group.members["band"] = other` type-checks.
   Declare the items `ReadOnly[...]` (from `typing_extensions`) for checkers to
