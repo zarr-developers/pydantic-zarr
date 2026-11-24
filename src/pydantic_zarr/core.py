@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import math
 import operator
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+import warnings
+from collections.abc import Generator, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from functools import cache
 from types import MappingProxyType
 from typing import (
@@ -38,6 +40,11 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+
+# `ModelMetaclass` has no public import path; libraries that extend pydantic's
+# class construction (SQLModel, for one) import it from here too
+from pydantic._internal._model_construction import ModelMetaclass
+from pydantic.warnings import TypedDictExtraConfigWarning
 
 # pydantic resolves the `extra_fields` annotation at runtime
 from zarr_metadata import JSONValue  # noqa: TC002
@@ -157,8 +164,81 @@ def serialize_attributes(
     )
 
 
-class StrictBase(BaseModel):
+@contextmanager
+def _extra_items_kept() -> Generator[None]:
+    """
+    Build a spec's schema without pydantic's warning that the spec's
+    `extra="forbid"` does not apply to a `TypedDict` with `extra_items`.
+
+    pydantic offers a model's `extra` setting to every `TypedDict` the model
+    holds that has no configuration of its own, and warns when the
+    `TypedDict` declares `extra_items`, since its own declaration wins. For a
+    spec that outcome is the intended one: `extra="forbid"` is the spec's
+    setting, not the author of the `TypedDict`'s, and a members or attributes
+    `TypedDict` with `extra_items` says what its other keys hold. Only that
+    warning is silenced; every other one is raised as usual.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"TypedDict class .* allows extra items",
+            category=TypedDictExtraConfigWarning,
+        )
+        yield
+
+
+if TYPE_CHECKING:
+    # a checker derives a spec's constructor from pydantic's metaclass, which
+    # `dataclass_transform` marks; a subclass of it, declared as a spec's
+    # metaclass, would hide that constructor (pyright then accepts any keyword)
+    _SpecMetaclass = ModelMetaclass
+else:
+
+    class _SpecMetaclass(ModelMetaclass):
+        """Build each spec class's schema inside `_extra_items_kept`."""
+
+        def __new__(mcs, *args: object, **kwargs: object) -> type:
+            with _extra_items_kept():
+                return super().__new__(mcs, *args, **kwargs)
+
+
+class StrictBase(BaseModel, metaclass=_SpecMetaclass):
+    """
+    The base of every spec: frozen, and refusing input keys it does not
+    declare.
+
+    pydantic offers `extra="forbid"` to each `TypedDict` the spec holds that
+    has no configuration of its own, so a plain `TypedDict` of attributes or
+    members refuses unknown keys too. A `TypedDict` that is closed or declares
+    `extra_items` follows its own declaration, without the warning pydantic
+    gives elsewhere for that combination (see `_extra_items_kept`).
+    """
+
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+    @override
+    @classmethod
+    def model_rebuild(
+        cls,
+        *,
+        force: bool = False,
+        raise_errors: bool = True,
+        _parent_namespace_depth: int = 2,
+        _types_namespace: Mapping[str, object] | None = None,
+    ) -> bool | None:
+        """
+        Rebuild the schema as `BaseModel.model_rebuild` does, inside
+        `_extra_items_kept`: a spec whose annotations could not be resolved
+        when its class was created builds its schema here instead.
+        """
+        with _extra_items_kept():
+            return super().model_rebuild(
+                force=force,
+                raise_errors=raise_errors,
+                # this frame sits between the caller and pydantic's lookup
+                _parent_namespace_depth=_parent_namespace_depth + 1,
+                _types_namespace=_types_namespace,
+            )
 
     # unannotated: pydantic takes a wrap serializer's return annotation as the
     # field's serialization schema, which would replace the attributes' own
@@ -768,6 +848,41 @@ def copy_members(members: object) -> object:
     not a mapping is left for validation to refuse.
     """
     return dict(members) if isinstance(members, Mapping) else members
+
+
+def given_members(data: object) -> object:
+    """
+    The members a group's input holds, before validation: the `members` item
+    of a mapping, or the `members` attribute of an object read with
+    `from_attributes`. `None` when the input holds none.
+    """
+    if isinstance(data, Mapping):
+        return data.get("members")
+    return getattr(data, "members", None)
+
+
+def restore_member_order(members: object, given: object) -> None:
+    """
+    Put a group's validated `members` back in the order of `given`, the
+    members its input held, in place.
+
+    pydantic builds a `TypedDict` in the order the class declares its keys,
+    so without this a group whose members type is a closed `TypedDict` would
+    hold its members, and write their documents, in declaration order rather
+    than in the order they were given. A member validation added keeps its
+    place after the given ones. Members that are not a `dict` (a group's own
+    copy) are left as they are.
+    """
+    if not isinstance(members, dict) or not isinstance(given, Mapping):
+        return
+    order = [key for key in given if key in members]
+    if list(members)[: len(order)] == order:
+        return
+    reordered = {key: members[key] for key in order}
+    # a key already placed keeps its position; the rest follow in their order
+    reordered.update(members)
+    members.clear()
+    members.update(reordered)
 
 
 def ensure_members_mapping(members: object) -> None:

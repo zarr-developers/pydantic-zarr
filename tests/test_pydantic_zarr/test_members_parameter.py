@@ -6,12 +6,13 @@ parameter is the type of the whole `members` mapping.
 from __future__ import annotations
 
 import pickle
+import warnings
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Generic, NotRequired
 
 import pytest
-from pydantic import BaseModel, ConfigDict, ValidationError, with_config
+from pydantic import BaseModel, ValidationError
 from typing_extensions import TypedDict, TypeVar
 
 from pydantic_zarr import v2, v3
@@ -59,16 +60,10 @@ class OptionalNamesV3(TypedDict, closed=True, total=False):
     g: v3.GroupSpec
 
 
-# its own configuration, so that the group's `extra="forbid"` is not offered
-# to a TypedDict that allows extra items (pydantic warns of that)
-@with_config(ConfigDict())
 class NamedAndExtraV2(TypedDict, extra_items=v2.ArraySpec):
     g: NotRequired[v2.GroupSpec]
 
 
-# its own configuration, so that the group's `extra="forbid"` is not offered
-# to a TypedDict that allows extra items (pydantic warns of that)
-@with_config(ConfigDict())
 class NamedAndExtraV3(TypedDict, extra_items=v3.ArraySpec):
     g: NotRequired[v3.GroupSpec]
 
@@ -155,13 +150,27 @@ def test_members_type_parameter(module: ModuleType, named: type, kind: str) -> N
     In every case the members validate from specs and from their dumped
     documents, read back as specs, and survive the operations that build a
     group from another form: a flat mapping of nodes, the stored metadata
-    documents, and `replace`.
+    documents, and `replace`. The group keeps the order the members were given
+    in, which is not the order a `TypedDict` declares them in, also when it is
+    re-typed from a plain group with `from_attributes`, and writes the
+    documents of members whose names have one length in that order.
     """
-    cls, members = _members_case(module, named, kind)
+    cls, declared = _members_case(module, named, kind)
+    members = dict(reversed(declared.items()))
 
     spec = cls(attributes={}, members=members)
 
     assert spec.members == members
+    assert list(spec.members) == list(members)
+    stored = spec.to_stored_metadata_json()
+    written = list(dict.fromkeys(key.split("/")[0] for key in stored if "/" in key))
+    # `to_flat`, and so the stored layout, orders paths by length, stably;
+    # reading the layout back keeps the order it holds
+    assert written == sorted(members, key=len)
+    assert list(cls.from_stored_metadata_json(stored).members) == written
+    assert list(cls.model_validate(spec.model_dump()).members) == list(members)
+    retyped = cls.model_validate(module.GroupSpec(members=members), from_attributes=True)
+    assert list(retyped.members) == list(members)
     assert all(
         isinstance(member, module.ArraySpec | module.GroupSpec) for member in spec.members.values()
     )
@@ -272,3 +281,42 @@ def test_member_type_as_members_type_fails_validation(
     }[case]
     with pytest.raises(ValidationError, match="members"):
         module.GroupSpec[module.TBaseAttr, members_type](members=members)
+
+
+@VERSIONS
+def test_extra_items_typed_dict_needs_no_configuration(module: ModuleType, named: type) -> None:
+    """
+    A `TypedDict` with `extra_items`, as the members type or the attributes
+    type, needs no pydantic configuration of its own: the group's
+    `extra="forbid"` gives way to it without pydantic's warning that the
+    setting is ignored, whether the schema is built when the class is created
+    or later, when a forward reference resolves. Its other keys take the
+    `extra_items` type.
+    """
+
+    class Members(TypedDict, extra_items=module.ArraySpec):
+        g: NotRequired[module.GroupSpec]
+
+    class Attributes(TypedDict, extra_items=int):
+        units: str
+
+    def deferred() -> type:
+        class Group(module.GroupSpec):
+            members: Later
+
+        class Later(TypedDict, extra_items=module.ArraySpec):
+            pass
+
+        Group.model_rebuild()
+        return Group
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        cls = module.GroupSpec[Attributes, Members]
+        late = deferred()
+        spec = cls(attributes={"units": "m", "scale": 2}, members={"s0": _array(module)})
+        late_spec = late(members={"s0": _array(module)})
+
+    assert spec.attributes == {"units": "m", "scale": 2}
+    assert list(spec.members) == ["s0"]
+    assert list(late_spec.members) == ["s0"]

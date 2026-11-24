@@ -23,7 +23,7 @@ from typing import Annotated, Literal, NotRequired, Self, Union
 
 import zarr
 import zarr.storage
-from pydantic import ConfigDict, Field, ValidationError, model_validator, with_config
+from pydantic import Field, ValidationError, model_validator
 from typing_extensions import TypedDict
 from zarr_io import read_documents, repaired, write_hierarchy
 
@@ -136,9 +136,6 @@ class ImageAttributes(AttributesBase):
     ome: OmeImageBlock
 
 
-# its own configuration keeps the enclosing model's extra="forbid" off this
-# TypedDict, which allows extra items
-@with_config(ConfigDict())
 class MultiscaleImageMembers(TypedDict, extra_items=ArraySpec):
     """Dynamically named resolution arrays, plus at most one "labels" group."""
 
