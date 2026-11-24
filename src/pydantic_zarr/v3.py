@@ -1678,7 +1678,7 @@ class _GroupNode(NodeSpec, Generic[TAttr]):
         Return this group's own metadata as a `BaseGroupSpec`.
 
         The result contains the attributes and extra fields, without members.
-        A field that a subclass declares is not part of a `BaseGroupSpec`, so
+        A field that a subclass adds is not part of a plain `BaseGroupSpec`, so
         it is left out. The result is constructed without validation, because
         this spec is already validated. It may have been validated in a scope
         that a bare `BaseGroupSpec` would not use for its extra fields. It
@@ -1925,7 +1925,7 @@ class GroupSpec(_GroupNode[TAttr], Generic[TAttr, TMembers]):
         The result is not validated again, because this spec is already
         valid. It is a plain `BaseGroupSpec`, whatever this spec's class is.
         So it is typed with the widest attributes type, and a field that a
-        subclass of `GroupSpec` declares is left out. To read it as a
+        subclass of `GroupSpec` adds is left out. To read it as a
         subclass of `BaseGroupSpec`, validate its `model_dump()` with that
         class. Its attributes are a deep copy, so changing them does not
         change this spec.
@@ -2805,8 +2805,8 @@ def to_flat(
     member's name with a `/` character, and so on recursively for each sub-member. The entries
     are sorted by key length.
 
-    A field that a subclass of `GroupSpec` declares is not part of a
-    `BaseGroupSpec`, so it is left out of the group's entry.
+    A field that a subclass of `GroupSpec` or `BaseGroupSpec` adds is not
+    part of a plain `BaseGroupSpec`, so it is left out of the group's entry.
 
     Parameters
     ----------

@@ -1271,10 +1271,10 @@ def test_group_spec_and_base_group_spec_are_siblings() -> None:
 
 def test_own_metadata_of_a_subclass_with_declared_fields() -> None:
     """
-    A field that a `GroupSpec` subclass declares is not part of a
+    A field that a `GroupSpec` subclass adds is not part of a plain
     `BaseGroupSpec`, so the root leaves it out, and so does `to_flat`. With
-    every declared field at its default, the hierarchy still goes through
-    `to_flat` and `from_flat` without an error. The root's attributes are a
+    every added field at its default, the hierarchy still goes through
+    `to_flat` and `from_flat` to the same dump. The root's attributes are a
     deep copy.
     """
 
@@ -1285,7 +1285,8 @@ def test_own_metadata_of_a_subclass_with_declared_fields() -> None:
     group = Declared(members={"sub": Declared(members={})}, attributes={"a": [1]})
     root = group.own_metadata()
     assert root == BaseGroupSpec(attributes={"a": [1]})
-    assert Declared.from_flat(group.to_flat()).to_metadata_json() == group.to_metadata_json()
+    assert group.to_flat()[""] == root
+    assert Declared.from_flat(group.to_flat()).model_dump() == group.model_dump()
     assert root.attributes is not group.attributes
     assert get_attribute(root.attributes, "a") is not get_attribute(group.attributes, "a")
 
