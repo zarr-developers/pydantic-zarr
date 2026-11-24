@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import sys
 from collections.abc import Iterable, Mapping, Sequence
 from typing import (
@@ -796,8 +797,7 @@ class BaseGroupSpec(_GroupNode[TAttr], Generic[TAttr]):
         With `semantic=True`, only the operations that change what the
         metadata means are returned, so the result is empty exactly when the
         two specs mean the same. A group's document holds only its attributes, which
-        are not interpreted, so every operation is returned. A change to attributes
-        always changes the meaning, because attributes are not interpreted.
+        are not interpreted, so every operation is returned.
 
         Parameters
         ----------
@@ -947,11 +947,13 @@ class GroupSpec(_GroupNode[TAttr], Generic[TAttr, TMembers]):
 
         The result is not validated again, because this spec is already
         valid. It is a plain `BaseGroupSpec`, whatever this spec's class is.
-        So it is typed with the widest attributes type. To read it as a
+        So it is typed with the widest attributes type, and a field that a
+        subclass of `GroupSpec` declares is left out. To read it as a
         subclass of `BaseGroupSpec`, validate its `model_dump()` with that
-        class.
+        class. Its attributes are a deep copy, so changing them does not
+        change this spec.
         """
-        return self._own_metadata()
+        return copy.deepcopy(self._own_metadata())
 
     def resolve_path(self, path: str) -> AnyArraySpec | AnyGroupSpec:
         """

@@ -1269,21 +1269,25 @@ def test_group_spec_and_base_group_spec_are_siblings() -> None:
     }
 
 
-def test_own_metadata_keeps_fields_a_subclass_declares() -> None:
+def test_own_metadata_of_a_subclass_with_declared_fields() -> None:
     """
-    A field that a `GroupSpec` subclass declares is part of the group's own
-    metadata document, so the root keeps it, as an extra field.
+    A field that a `GroupSpec` subclass declares is not part of a
+    `BaseGroupSpec`, so the root leaves it out. The hierarchy still goes
+    through `to_flat` and `from_flat` to the same document, because
+    `from_flat` validates the root as the subclass. The root's attributes are
+    a copy.
     """
 
-    class Consolidated(GroupSpec):
+    class Declared(GroupSpec):
+        foo: int = 1
         consolidated_metadata: dict[str, object] | None = None
 
-    consolidated = {"kind": "inline", "must_understand": False, "metadata": {}}
-    group = Consolidated(members={}, consolidated_metadata=consolidated)
+    group = Declared(members={"sub": Declared(members={})}, attributes={"a": [1]})
     root = group.own_metadata()
-    assert root.extra_fields == {"consolidated_metadata": consolidated}
-    assert root.to_metadata_json() == group.to_metadata_json()
-    assert group.to_flat()[""] == root
+    assert root == BaseGroupSpec(attributes={"a": [1]})
+    # members are validated as the members type, a plain GroupSpec here
+    assert Declared.from_flat(group.to_flat()).model_dump() == group.model_dump()
+    assert root.attributes is not group.attributes
 
 
 def test_typed_members() -> None:

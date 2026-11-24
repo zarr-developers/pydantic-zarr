@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import functools
 import json
 from collections.abc import Iterable, Mapping, Sequence
@@ -1676,21 +1677,16 @@ class _GroupNode(NodeSpec, Generic[TAttr]):
         """
         Return this group's own metadata as a `BaseGroupSpec`.
 
-        The result holds the same metadata document, without members: the
-        attributes, and every other member of the document as an extra field.
-        So a field that a subclass declares, such as `consolidated_metadata`,
-        is kept as an extra field. The result is constructed without
-        validation, because this spec is already validated. It may have been
-        validated in a scope that a bare `BaseGroupSpec` would not use for its
-        extra fields.
+        The result contains the attributes and extra fields, without members.
+        A field that a subclass declares is not part of a `BaseGroupSpec`, so
+        it is left out. The result is constructed without validation, because
+        this spec is already validated. It may have been validated in a scope
+        that a bare `BaseGroupSpec` would not use for its extra fields. It
+        shares the attributes and extra fields with this spec.
         """
-        document = self.to_metadata_json()
-        extra_fields = {
-            key: value
-            for key, value in document.items()
-            if key not in ("zarr_format", "node_type", "attributes")
-        }
-        return BaseGroupSpec.model_construct(attributes=self.attributes, extra_fields=extra_fields)
+        return BaseGroupSpec.model_construct(
+            attributes=self.attributes, extra_fields=self.extra_fields
+        )
 
     def to_metadata_json(self) -> ZarrV3GroupMetadataJSON:
         """
@@ -1928,11 +1924,13 @@ class GroupSpec(_GroupNode[TAttr], Generic[TAttr, TMembers]):
 
         The result is not validated again, because this spec is already
         valid. It is a plain `BaseGroupSpec`, whatever this spec's class is.
-        So it is typed with the widest attributes type. To read it as a
+        So it is typed with the widest attributes type, and a field that a
+        subclass of `GroupSpec` declares is left out. To read it as a
         subclass of `BaseGroupSpec`, validate its `model_dump()` with that
-        class.
+        class. Its attributes are a deep copy, so changing them does not
+        change this spec.
         """
-        return self._own_metadata()
+        return copy.deepcopy(self._own_metadata())
 
     def resolve_path(self, path: str) -> AnyArraySpec | AnyGroupSpec:
         """
