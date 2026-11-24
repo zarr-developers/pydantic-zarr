@@ -1676,14 +1676,21 @@ class _GroupNode(NodeSpec, Generic[TAttr]):
         """
         Return this group's own metadata as a `BaseGroupSpec`.
 
-        The result contains the attributes and extra fields, without members.
-        It is constructed without validation, because this spec is already
-        validated. It may have been validated in a scope that a bare
-        `BaseGroupSpec` would not use for its extra fields.
+        The result holds the same metadata document, without members: the
+        attributes, and every other member of the document as an extra field.
+        So a field that a subclass declares, such as `consolidated_metadata`,
+        is kept as an extra field. The result is constructed without
+        validation, because this spec is already validated. It may have been
+        validated in a scope that a bare `BaseGroupSpec` would not use for its
+        extra fields.
         """
-        return BaseGroupSpec.model_construct(
-            attributes=self.attributes, extra_fields=self.extra_fields
-        )
+        document = self.to_metadata_json()
+        extra_fields = {
+            key: value
+            for key, value in document.items()
+            if key not in ("zarr_format", "node_type", "attributes")
+        }
+        return BaseGroupSpec.model_construct(attributes=self.attributes, extra_fields=extra_fields)
 
     def to_metadata_json(self) -> ZarrV3GroupMetadataJSON:
         """
@@ -1914,17 +1921,18 @@ class GroupSpec(_GroupNode[TAttr], Generic[TAttr, TMembers]):
         """
         return self._replaced(changes)
 
-    def own_metadata(self) -> BaseGroupSpec[TAttr]:
+    def own_metadata(self) -> AnyBaseGroupSpec:
         """
         Return this hierarchy's root as a `BaseGroupSpec`: the group's own
         metadata, without members.
 
         The result is not validated again, because this spec is already
-        valid. It is a plain `BaseGroupSpec`, so it does not keep the class of
-        a subclass of `GroupSpec`. To read it as a subclass of
-        `BaseGroupSpec`, validate its `model_dump()` with that class.
+        valid. It is a plain `BaseGroupSpec`, whatever this spec's class is.
+        So it is typed with the widest attributes type. To read it as a
+        subclass of `BaseGroupSpec`, validate its `model_dump()` with that
+        class.
         """
-        return cast("BaseGroupSpec[TAttr]", self._own_metadata())
+        return self._own_metadata()
 
     def resolve_path(self, path: str) -> AnyArraySpec | AnyGroupSpec:
         """
@@ -2898,11 +2906,11 @@ def is_array_spec(node: object) -> TypeIs[AnyArraySpec]:
 
 def is_group_spec(node: object) -> TypeIs[AnyGroupSpec]:
     """
-    Return whether `node` is a `GroupSpec` (a group with members).
+    Return whether `node` is a `GroupSpec` (a hierarchy rooted at a group).
 
     This narrows the type in both branches. It returns `False` for a
-    `BaseGroupSpec` that is not a `GroupSpec`, so use it to tell the two
-    apart in a flattened hierarchy.
+    `BaseGroupSpec`, which is one group's own metadata. Use it to tell the
+    two apart in a flattened hierarchy.
     """
     return isinstance(node, GroupSpec)
 

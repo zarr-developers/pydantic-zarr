@@ -940,17 +940,18 @@ class GroupSpec(_GroupNode[TAttr], Generic[TAttr, TMembers]):
         """
         return type(self).model_validate({**self.model_dump(), **changes})
 
-    def own_metadata(self) -> BaseGroupSpec[TAttr]:
+    def own_metadata(self) -> AnyBaseGroupSpec:
         """
         Return this hierarchy's root as a `BaseGroupSpec`: the group's own
         metadata, without members.
 
         The result is not validated again, because this spec is already
-        valid. It is a plain `BaseGroupSpec`, so it does not keep the class of
-        a subclass of `GroupSpec`. To read it as a subclass of
-        `BaseGroupSpec`, validate its `model_dump()` with that class.
+        valid. It is a plain `BaseGroupSpec`, whatever this spec's class is.
+        So it is typed with the widest attributes type. To read it as a
+        subclass of `BaseGroupSpec`, validate its `model_dump()` with that
+        class.
         """
-        return cast("BaseGroupSpec[TAttr]", self._own_metadata())
+        return self._own_metadata()
 
     def resolve_path(self, path: str) -> AnyArraySpec | AnyGroupSpec:
         """
@@ -1681,9 +1682,11 @@ def is_array_spec(node: object) -> TypeIs[AnyArraySpec]:
 
 def is_group_spec(node: object) -> TypeIs[AnyGroupSpec]:
     """
-    Whether `node` is a `GroupSpec` (a group with members), narrowing the type
-    in both branches. A `BaseGroupSpec` that is not a `GroupSpec` returns
-    `False`. Use this to tell the two apart in a flattened hierarchy.
+    Return whether `node` is a `GroupSpec` (a hierarchy rooted at a group).
+
+    This narrows the type in both branches. It returns `False` for a
+    `BaseGroupSpec`, which is one group's own metadata. Use it to tell the
+    two apart in a flattened hierarchy.
     """
     return isinstance(node, GroupSpec)
 

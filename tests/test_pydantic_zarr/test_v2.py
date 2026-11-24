@@ -714,6 +714,8 @@ def test_group_spec_and_base_group_spec_are_siblings_v2() -> None:
     group: AnyGroupSpec = GroupSpec(attributes={"a": 1}, members={"x": array})
     assert not isinstance(group, BaseGroupSpec)
     assert not isinstance(BaseGroupSpec(), GroupSpec)
+    with pytest.raises(ValidationError):
+        BaseGroupSpec.model_validate(group)
     root = group.own_metadata()
     assert type(root) is BaseGroupSpec
     assert root == BaseGroupSpec(attributes={"a": 1})

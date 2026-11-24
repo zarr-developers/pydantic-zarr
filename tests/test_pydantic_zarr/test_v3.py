@@ -1258,6 +1258,8 @@ def test_group_spec_and_base_group_spec_are_siblings() -> None:
     group: AnyGroupSpec = GroupSpec(attributes={"a": 1}, members={"x": array}, extra_fields=extra)
     assert not isinstance(group, BaseGroupSpec)
     assert not isinstance(BaseGroupSpec(), GroupSpec)
+    with pytest.raises(ValidationError):
+        BaseGroupSpec.model_validate(group)
     root = group.own_metadata()
     assert type(root) is BaseGroupSpec
     assert root == BaseGroupSpec(attributes={"a": 1}, extra_fields=extra)
@@ -1265,6 +1267,23 @@ def test_group_spec_and_base_group_spec_are_siblings() -> None:
     assert root.to_stored_metadata_json() == {
         key: document for key, document in group.to_stored_metadata_json().items() if "/" not in key
     }
+
+
+def test_own_metadata_keeps_fields_a_subclass_declares() -> None:
+    """
+    A field that a `GroupSpec` subclass declares is part of the group's own
+    metadata document, so the root keeps it, as an extra field.
+    """
+
+    class Consolidated(GroupSpec):
+        consolidated_metadata: dict[str, object] | None = None
+
+    consolidated = {"kind": "inline", "must_understand": False, "metadata": {}}
+    group = Consolidated(members={}, consolidated_metadata=consolidated)
+    root = group.own_metadata()
+    assert root.extra_fields == {"consolidated_metadata": consolidated}
+    assert root.to_metadata_json() == group.to_metadata_json()
+    assert group.to_flat()[""] == root
 
 
 def test_typed_members() -> None:
