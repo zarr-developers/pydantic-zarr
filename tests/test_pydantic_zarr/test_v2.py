@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from pydantic_zarr.core import tuplify_json
+from pydantic_zarr.core import get_attribute, tuplify_json
 
 from .conftest import DTYPE_EXAMPLES_V2, ZARR_PYTHON_VERSION, DTypeExample
 from .zarr_documents import read_documents, write_hierarchy
@@ -711,15 +711,18 @@ def test_group_spec_and_base_group_spec_are_siblings_v2() -> None:
     hierarchy's root as a `BaseGroupSpec`.
     """
     array: AnyArraySpec = ArraySpec(shape=(4,), dtype="uint8", chunks=(2,), attributes={})
-    group: AnyGroupSpec = GroupSpec(attributes={"a": 1}, members={"x": array})
+    group: AnyGroupSpec = GroupSpec(attributes={"a": [1]}, members={"x": array})
     assert not isinstance(group, BaseGroupSpec)
     assert not isinstance(BaseGroupSpec(), GroupSpec)
     with pytest.raises(ValidationError):
         BaseGroupSpec.model_validate(group)
     root = group.own_metadata()
     assert type(root) is BaseGroupSpec
-    assert root == BaseGroupSpec(attributes={"a": 1})
+    assert root == BaseGroupSpec(attributes={"a": [1]})
     assert root == group.to_flat()[""]
+    # a deep copy: changing the root's attributes does not change the group
+    assert root.attributes is not group.attributes
+    assert get_attribute(root.attributes, "a") is not get_attribute(group.attributes, "a")
     assert root.to_stored_metadata_json() == {
         key: document for key, document in group.to_stored_metadata_json().items() if "/" not in key
     }

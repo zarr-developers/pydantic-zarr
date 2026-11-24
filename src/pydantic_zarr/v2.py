@@ -1356,6 +1356,9 @@ def to_flat(
     joining `root_path` and the member's name with a `/` character. This repeats recursively for
     each sub-member. The entries are sorted by key length.
 
+    A field that a subclass of `GroupSpec` declares is not part of a
+    `BaseGroupSpec`, so it is left out of the group's entry.
+
     Parameters
     ----------
     node : `GroupSpec` | `ArraySpec`
