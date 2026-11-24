@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import operator
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, MutableMapping, Sequence
 from functools import cache
 from types import MappingProxyType, UnionType
 from typing import (
@@ -12,6 +12,7 @@ from typing import (
     Literal,
     Protocol,
     Self,
+    TypeAliasType,
     TypeVar,
     Union,
     cast,
@@ -24,23 +25,29 @@ from typing import (
 
 import numpy as np
 import numpy.typing as npt
+import typing_extensions
 from pydantic import (
     AliasChoices,
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    Discriminator,
     Field,
     GetJsonSchemaHandler,
     ModelWrapValidatorHandler,
+    PlainSerializer,
     PrivateAttr,
     SerializationInfo,
     SerializerFunctionWrapHandler,
+    Tag,
     TypeAdapter,
+    WrapSerializer,
     field_serializer,
     field_validator,
     model_serializer,
     model_validator,
 )
+from typing_extensions import NoDefault, is_typeddict
 
 # pydantic resolves the `extra_fields` annotation at runtime
 from zarr_metadata import JSONValue  # noqa: TC002
@@ -828,55 +835,72 @@ def restore_member_order(members_field: FieldInfo, given: object, validated: obj
 
     pydantic builds a `TypedDict` with its keys in the order the class
     declares them, followed by any extra items. This puts the members back in
-    the order they were given. That covers a plain `TypedDict`, a union of
-    them, a generic `TypedDict` and a type variable bound to one. Other
-    members types keep their order already, so for them this changes nothing.
-
-    A members type with validators of its own
-    (`Annotated[..., AfterValidator(...)]`) may reorder on purpose, so it is
-    left alone. So is a value that is not a `dict`.
+    the order they were given. It does so only when every part of the members
+    type is one whose order pydantic changes by declaration alone: a
+    `TypedDict`, generic or not, a `dict` or `Mapping`, or a union, type alias,
+    type variable or `Annotated` form built from these. Any other members
+    type, such as one with validators of its own, may set an order on purpose,
+    so its value is returned as it is. So is a value that is not a plain
+    `dict`.
     """
-    if not isinstance(validated, dict) or not isinstance(given, Mapping):
+    if type(validated) is not dict or not isinstance(given, Mapping):
         return validated
     order = [key for key in given if key in validated]
     if list(validated)[: len(order)] == order:
         return validated
-    if any(map(_is_validator, members_field.metadata)) or _has_validators(members_field.annotation):
+    if not all(map(_keeps_order, members_field.metadata)) or not _reorders_by_declaration_only(
+        members_field.annotation
+    ):
         return validated
     # the given keys first, then any others in their validated order
     return {**{key: validated[key] for key in order}, **validated}
 
 
-def _is_validator(metadata: object) -> bool:
-    # pydantic's validators (`AfterValidator` and the others) change the
-    # schema through this hook; plain metadata such as a docstring, a
-    # `Field(...)` or an `annotated_types` constraint has no such hook
-    return hasattr(metadata, "__get_pydantic_core_schema__")
+# `Annotated` metadata that changes how a value is serialized, or which arm of
+# a union validates it, but never the order of the validated mapping's keys
+_ORDER_KEEPING_METADATA = (PlainSerializer, WrapSerializer, Discriminator, Tag)
+
+_TYPE_ALIAS_TYPES = (TypeAliasType, typing_extensions.TypeAliasType)
 
 
-def _has_validators(annotation: object) -> bool:
+def _keeps_order(metadata: object) -> bool:
+    # pydantic metadata that changes validation (`AfterValidator` and the
+    # others) does so through this hook; plain metadata such as a docstring,
+    # a `Field(...)` or an `annotated_types` constraint has no such hook
+    return not hasattr(metadata, "__get_pydantic_core_schema__") or isinstance(
+        metadata, _ORDER_KEEPING_METADATA
+    )
+
+
+def _reorders_by_declaration_only(annotation: object) -> bool:
     """
-    Return whether `annotation` carries pydantic validators that act on the
-    members mapping as a whole.
+    Return whether pydantic can change the key order of a value of
+    `annotation` only by building a `TypedDict` in declaration order.
 
-    This looks through `Annotated`, unions and type variables. It does not
-    look into type arguments such as the value type of `dict[str, X]`,
-    because validators there act on single members.
+    This looks through type aliases, `Annotated`, unions and type variables.
+    It does not look into type arguments such as the value type of
+    `dict[str, X]`, because validators there act on single members.
     """
+    if isinstance(annotation, _TYPE_ALIAS_TYPES):
+        return _reorders_by_declaration_only(annotation.__value__)
+    if isinstance(annotation, TypeVar):
+        default = getattr(annotation, "__default__", NoDefault)
+        candidates = [annotation.__bound__, *annotation.__constraints__]
+        if default is not NoDefault:
+            candidates.append(default)
+        return all(
+            _reorders_by_declaration_only(candidate)
+            for candidate in candidates
+            if candidate is not None
+        )
     origin = get_origin(annotation)
     if origin is Annotated:
         inner, *metadata = get_args(annotation)
-        return any(map(_is_validator, metadata)) or _has_validators(inner)
+        return all(map(_keeps_order, metadata)) and _reorders_by_declaration_only(inner)
     if origin is Union or origin is UnionType:
-        return any(map(_has_validators, get_args(annotation)))
-    if isinstance(annotation, TypeVar):
-        candidates = (
-            annotation.__bound__,
-            getattr(annotation, "__default__", None),
-            *annotation.__constraints__,
-        )
-        return any(map(_has_validators, candidates))
-    return False
+        return all(map(_reorders_by_declaration_only, get_args(annotation)))
+    plain = origin or annotation
+    return is_typeddict(plain) or plain in (dict, Mapping, MutableMapping)
 
 
 def ensure_members_mapping(members: object) -> None:

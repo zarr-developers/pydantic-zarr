@@ -8,7 +8,7 @@ from __future__ import annotations
 import pickle
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Annotated, Any, Generic, NotRequired
+from typing import TYPE_CHECKING, Annotated, Any, Generic, NotRequired, TypeAliasType
 
 import pytest
 from pydantic import (
@@ -16,10 +16,12 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    GetCoreSchemaHandler,
     ValidationError,
     model_validator,
     with_config,
 )
+from pydantic_core import core_schema
 from typing_extensions import TypedDict, TypeVar
 
 from pydantic_zarr import v2, v3
@@ -118,6 +120,9 @@ class GenericNamedV3(TypedDict, Generic[TMember], closed=True):
     g: v3.GroupSpec
 
 
+type NamedAliasV2 = NamedV2
+type NamedAliasV3 = NamedV3
+
 TBoundMembersV2 = TypeVar("TBoundMembersV2", bound=NamedV2)
 TBoundMembersV3 = TypeVar("TBoundMembersV3", bound=NamedV3)
 
@@ -142,6 +147,7 @@ NAMED_AND_EXTRA = {v2: NamedAndExtraV2, v3: NamedAndExtraV3}
 DATASET: dict[Any, Any] = {v2: DatasetV2, v3: DatasetV3}
 GENERIC_NAMED: dict[Any, Any] = {v2: GenericNamedV2, v3: GenericNamedV3}
 BOUND_DATASET: dict[Any, Any] = {v2: BoundDatasetV2, v3: BoundDatasetV3}
+NAMED_ALIAS: dict[Any, Any] = {v2: NamedAliasV2, v3: NamedAliasV3}
 
 KINDS = [
     "default",
@@ -154,6 +160,7 @@ KINDS = [
     "union of named types",
     "generic named type",
     "annotated named type",
+    "type alias of a named type",
     "unparameterized subclass with a bound type variable",
 ]
 
@@ -195,6 +202,10 @@ def _members_case(module: ModuleType, named: type, kind: str) -> tuple[Any, dict
             ],
             {"a": array, "g": group},
         ),
+        "type alias of a named type": (
+            module.GroupSpec[module.TBaseAttr, NAMED_ALIAS[module]],
+            {"a": array, "g": group},
+        ),
         "unparameterized subclass with a bound type variable": (
             BOUND_DATASET[module],
             {"a": array, "g": group},
@@ -211,7 +222,8 @@ def test_members_type_parameter(module: ModuleType, named: type, kind: str) -> N
     every member. A closed `TypedDict` fixes the member names and the type of
     each; its names may be optional, and `extra_items` types the members it
     does not name. The members type may also be a union of `TypedDict`s, a
-    generic `TypedDict`, or a `TypedDict` with plain `Annotated` metadata. A
+    generic `TypedDict`, a `TypedDict` with plain `Annotated` metadata, or a
+    type alias of a `TypedDict`. A
     generic subclass passes the members type through, with the class's type
     variable or one of its own, or uses the bound of its type variable when
     it is not parameterized.
@@ -359,7 +371,8 @@ def test_member_order_set_by_validators_is_kept(module: ModuleType, named: type)
     Restoring the given member order undoes only pydantic's `TypedDict`
     ordering. An order that a subclass validator or a validator on the members
     type sets on purpose is kept, also when that validator is on one arm of a
-    union.
+    union or behind a type alias, and so is the order and type of a members
+    type that builds its value itself.
     """
     array = _array(module)
     given = {"c": array, "b": array, "a": array}
@@ -381,11 +394,26 @@ def test_member_order_set_by_validators_is_kept(module: ModuleType, named: type)
     sorted_type = Annotated[dict[str, module.ArraySpec], AfterValidator(sort)]
     sorted_typed_dict = Annotated[Closed, AfterValidator(sort)]
     sorted_union = Annotated[Closed, AfterValidator(sort)] | dict[str, int]
+    # a call, not a `type` statement, which pyrefly refuses inside a function
+    SortedAlias = TypeAliasType("SortedAlias", Annotated[Closed, AfterValidator(sort)])  # noqa: UP040
+
+    class SortedMembers(dict[str, Any]):
+        @classmethod
+        def __get_pydantic_core_schema__(
+            cls, source: object, handler: GetCoreSchemaHandler
+        ) -> core_schema.CoreSchema:
+            return core_schema.no_info_after_validator_function(
+                lambda members: cls(sorted(members.items())), handler(Closed)
+            )
 
     assert list(SortsMembers(members=given).members) == ["a", "b", "c"]
     assert list(module.GroupSpec[Any, sorted_type](members=given).members) == ["a", "b", "c"]
     assert list(module.GroupSpec[Any, sorted_typed_dict](members=given).members) == ["a", "b", "c"]
     assert list(module.GroupSpec[Any, sorted_union](members=given).members) == ["a", "b", "c"]
+    assert list(module.GroupSpec[Any, SortedAlias](members=given).members) == ["a", "b", "c"]
+    custom = module.GroupSpec[Any, SortedMembers](members=given).members
+    assert list(custom) == ["a", "b", "c"]
+    assert type(custom) is SortedMembers
 
 
 @VERSIONS

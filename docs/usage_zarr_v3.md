@@ -160,11 +160,11 @@ Notes for type checkers and for `TypedDict` members:
 - **Member order.** A group keeps its members in the order they were given.
   pydantic builds a `TypedDict` in declaration order, so the group puts the
   members back in the given order afterwards. This also holds for a union of
-  `TypedDict`s, a generic `TypedDict` and a type variable bound to a
-  `TypedDict`. A members type with its own validators
-  (`Annotated[..., AfterValidator(...)]`) keeps the order those validators
-  produce. A member given under an alias goes after the members given by
-  name.
+  `TypedDict`s, a generic `TypedDict`, a type alias of a `TypedDict` and a
+  type variable bound to one. Any other members type, such as one with
+  validators of its own (`Annotated[..., AfterValidator(...)]`), keeps the
+  order pydantic validates it in. A member given under an alias goes after
+  the members given by name.
 - **Read-only members.** A spec is frozen, but type checkers let code assign
   to a key of a `TypedDict`, so `group.members["band"] = other` type-checks.
   Declare the items `ReadOnly[...]` (from `typing_extensions`) for checkers to
