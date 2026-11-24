@@ -44,18 +44,19 @@ from typing_extensions import is_typeddict
 from zarr_metadata import JSONValue  # noqa: TC002
 
 if TYPE_CHECKING:
-    # both pydantic spellings below re-export pydantic_core's sentinel, and
-    # unlike them this import resolves statically on every supported pydantic;
-    # `as MISSING` marks the re-export explicit for strict checkers
+    # Both pydantic import paths below re-export pydantic_core's sentinel.
+    # Unlike them, this import resolves statically on every supported pydantic
+    # version. `as MISSING` marks the re-export as explicit for strict checkers.
     from pydantic_core import MISSING as MISSING
 else:
     try:
         # the MISSING sentinel is stable from pydantic 2.14
         from pydantic import MISSING
     except ImportError:
-        # on pydantic 2.12 / 2.13 it lives in the experimental module, with
-        # the same object and behavior; re-exported here so users of
-        # AttributesBase have one import spanning the supported pydantic range
+        # On pydantic 2.12 and 2.13 the sentinel is in the experimental module.
+        # It is the same object, with the same behavior. It is re-exported here
+        # so that users of AttributesBase have one import that works across the
+        # supported pydantic range.
         from pydantic.experimental.missing_sentinel import MISSING
 
 if TYPE_CHECKING:
@@ -65,8 +66,8 @@ if TYPE_CHECKING:
     from pydantic.json_schema import JsonSchemaValue
     from pydantic_core import CoreSchema, SchemaSerializer
 
-# the selection pydantic's `model_dump` takes as `include` / `exclude`
-# (`pydantic.main.IncEx`), plus `None` for "no selection"
+# The selection that pydantic's `model_dump` accepts as `include` or `exclude`
+# (`pydantic.main.IncEx`), plus `None` for "no selection".
 type _IncExSelection = (
     set[int]
     | set[str]
@@ -101,9 +102,11 @@ def tuplify_json(obj: object) -> object:
 @cache
 def _attributes_serializer(spec: type[BaseModel]) -> SchemaSerializer:
     """
-    A serializer for the `attributes` field of `spec`, built from the field's
-    annotation alone, so it serializes as the field does but without the
-    field serializer that calls it. Cached per class.
+    Return a serializer for the `attributes` field of `spec`.
+
+    The serializer is built from the field's annotation alone. It serializes
+    values the same way the field does, but without the field serializer that
+    calls it. Cached per class.
     """
     return TypeAdapter(spec.model_fields["attributes"].rebuild_annotation()).serializer
 
@@ -115,22 +118,24 @@ def serialize_attributes(
     info: SerializationInfo,
 ) -> object:
     """
-    Serialize the attributes of a node of class `spec` with their aliases
-    unless the dump says `by_alias=False`.
+    Serialize the attributes of a node of class `spec`, with aliases by default.
 
-    The aliases of an attribute model spell stored metadata keys that are not
-    Python identifiers (`_FillValue`, `image-label`, `proj:code`), so without
-    this default a hierarchy would be written under the Python field names. A
-    spec's own fields declare no aliases, so the default only reaches the
+    Aliases are used unless the dump passes `by_alias=False`. The aliases of
+    an attribute model name stored metadata keys that are not Python
+    identifiers (`_FillValue`, `image-label`, `proj:code`). Without this
+    default, a hierarchy would be written with the Python field names. A
+    spec's own fields declare no aliases, so the default only affects the
     attributes: an attribute model, or the models in an attributes mapping.
-    It lives in the serializer, not in `model_dump`, so that every way of
-    dumping a spec applies it: `model_dump`, `model_dump_json`, a
-    `TypeAdapter`, and a spec held by another model. The dump's other
-    settings carry over, including the part of `include` and `exclude` that
-    selects within the attributes.
+
+    The default is applied in the serializer, not in `model_dump`, so that
+    every way of dumping a spec uses it: `model_dump`, `model_dump_json`, a
+    `TypeAdapter`, and a spec contained in another model. The dump's other
+    settings carry over. This includes the part of `include` and `exclude`
+    that selects within the attributes.
 
     An attribute model is serialized with its own schema, as `SerializeAsAny`
-    would; anything else as the `attributes` field declares.
+    would do. Any other value is serialized as the `attributes` field
+    declares.
     """
     if info.by_alias is not None:
         return handler(value)
@@ -139,10 +144,10 @@ def serialize_attributes(
         if isinstance(value, BaseModel)
         else _attributes_serializer(spec)
     )
-    # the casts bridge pydantic-core's stubs, which type the selection a dump
-    # hands on (`set[int | str] | dict[int | str, ...]`) wider than the
-    # selection `to_python` takes (`set[int] | set[str] | Mapping[...]`),
-    # though both are the same value at runtime
+    # The casts bridge a gap in pydantic-core's stubs. They type the selection
+    # that a dump passes on (`set[int | str] | dict[int | str, ...]`) wider than
+    # the selection that `to_python` accepts (`set[int] | set[str] | Mapping[...]`).
+    # At runtime both are the same value.
     return serializer.to_python(
         value,
         mode=info.mode,
@@ -162,24 +167,25 @@ def serialize_attributes(
 class StrictBase(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    # unannotated: pydantic takes a wrap serializer's return annotation as the
-    # field's serialization schema, which would replace the attributes' own
+    # No return annotation: pydantic uses a wrap serializer's return annotation
+    # as the field's serialization schema, which would replace the attributes' own.
     @field_serializer("attributes", mode="wrap", check_fields=False)
     def _serialize_attributes(  # noqa: ANN202
         self, value: object, handler: SerializerFunctionWrapHandler, info: SerializationInfo
     ):
-        """Dump an attribute model with its aliases by default; see `serialize_attributes`."""
+        """Dump an attribute model with its aliases by default. See `serialize_attributes`."""
         return serialize_attributes(type(self), value, handler, info)
 
 
 EXTRA_FIELDS = "extra_fields"
-"""The name of the field in which `ExtraFieldsBase` keeps a document's extra fields."""
+"""The name of the field where `ExtraFieldsBase` stores a document's extra fields."""
 
 
 def flatten_extra_fields(document: dict[str, object]) -> dict[str, object]:
     """
-    Turn a dumped spec's `extra_fields` mapping back into top-level members
-    of the document, where the metadata document holds them.
+    Move the entries of a dumped spec's `extra_fields` to the document's top level.
+
+    The metadata document stores extra fields as top-level members.
     """
     extra = document.pop(EXTRA_FIELDS, None)
     if isinstance(extra, Mapping):
@@ -189,24 +195,27 @@ def flatten_extra_fields(document: dict[str, object]) -> dict[str, object]:
 
 class ExtraFieldsBase(StrictBase):
     """
-    A base class for specs of metadata documents that may hold members the
-    spec class does not declare ("extra fields").
+    A base class for specs of metadata documents with undeclared members.
 
-    The members a document holds beyond the declared fields are gathered into
-    the `extra_fields` mapping, by key, and dumped back as top-level members:
-    `model_dump` and `model_dump_json` write the document as it was read.
-    They are held in a field of their own rather than as pydantic extras
-    (`extra="allow"`), because pydantic applies a model's `extra` setting to
-    every TypedDict the model holds, which would open the closed TypedDicts
-    of field and attribute types. Which extra fields a document may hold is
-    up to each subclass; a key nobody validates is still kept out of
-    `extra_fields` when it names a declared field.
+    Members of a document that the spec class does not declare are called
+    "extra fields". They are collected, by key, into the `extra_fields`
+    mapping. `model_dump` and `model_dump_json` write them back as top-level
+    members, so the document is written as it was read.
+
+    Extra fields are stored in a field of their own rather than as pydantic
+    extras (`extra="allow"`). This is because pydantic applies a model's
+    `extra` setting to every TypedDict the model contains, which would open
+    the closed TypedDicts of field and attribute types.
+
+    Each subclass decides which extra fields a document may contain. Even if
+    a subclass does not validate extra fields, `extra_fields` rejects a key
+    that names a declared field.
 
     Attributes
     ----------
     extra_fields: Mapping[str, JSONValue], default = {}
-        The document's members that this class does not declare, by key,
-        with arrays held as tuples.
+        The members of the document that this class does not declare, by key.
+        JSON arrays are stored as tuples.
     """
 
     extra_fields: Mapping[str, Annotated[JSONValue, BeforeValidator(tuplify_json)]] = Field(
@@ -217,8 +226,11 @@ class ExtraFieldsBase(StrictBase):
     @classmethod
     def _collect_extra_fields(cls, data: object) -> object:
         """
-        Gather the members of an input document that this class does not
-        declare into `extra_fields`, alongside any given there directly.
+        Collect the members of an input document that this class does not
+        declare into `extra_fields`.
+
+        They are merged with any entries passed in `extra_fields` directly. A
+        key passed both ways raises `ValueError`.
         """
         if not isinstance(data, Mapping):
             return data
@@ -242,15 +254,15 @@ class ExtraFieldsBase(StrictBase):
     @field_validator(EXTRA_FIELDS, mode="after")
     @classmethod
     def _refuse_declared_keys(cls, value: Mapping[str, JSONValue]) -> Mapping[str, JSONValue]:
-        """Refuse an extra field named after a field this class declares."""
+        """Reject an extra field whose name is a field that this class declares."""
         declared = sorted(set(value) & set(cls.model_fields))
         if declared:
             msg = f"{declared} name fields of this spec, so they are not extra fields"
             raise ValueError(msg)
         return value
 
-    # No return annotation: pydantic takes a wrap serializer's return annotation
-    # as the serialization schema, which would replace the fields' schema in
+    # No return annotation: pydantic uses a wrap serializer's return annotation
+    # as the serialization schema. That would replace the fields' schema in
     # `model_json_schema(mode="serialization")` with an open object.
     @model_serializer(mode="wrap")
     def _serialize_document(self, handler: SerializerFunctionWrapHandler):  # noqa: ANN202
@@ -263,13 +275,15 @@ class ExtraFieldsBase(StrictBase):
         cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler, /
     ) -> JsonSchemaValue:
         """
-        Describe the document, not the model: a document holds its extra
-        fields as top-level members and has no `extra_fields` member, so the
-        schema (in either mode, matching what validation reads and what
-        `model_dump` writes) types the members it does not declare as an
-        extra field's value, in place of the `extra_fields` property, and
-        admits no member named `extra_fields`. A declared field is a property,
-        which `additionalProperties` does not reach.
+        Describe the document, not the model.
+
+        A document stores its extra fields as top-level members and has no
+        `extra_fields` member. So the schema replaces the `extra_fields`
+        property with `additionalProperties`, which gives the type of an extra
+        field's value. It also rejects any member named `extra_fields`.
+        Declared fields are properties, so `additionalProperties` does not
+        apply to them. This is the same in both modes, matching what
+        validation accepts and what `model_dump` writes.
         """
         json_schema = handler(core_schema)
         definition = handler.resolve_ref_schema(json_schema)
@@ -280,7 +294,7 @@ class ExtraFieldsBase(StrictBase):
         return json_schema
 
     def __repr_args__(self) -> Iterator[tuple[str | None, object]]:
-        """Show `extra_fields` last, and only when the document holds some."""
+        """Show `extra_fields` last, and only if the document has any."""
         extra: object = None
         for name, value in super().__repr_args__():
             if name == EXTRA_FIELDS:
@@ -292,9 +306,11 @@ class ExtraFieldsBase(StrictBase):
 
     def _replaced(self, changes: Mapping[str, object]) -> Self:
         """
-        A revalidated copy of this spec with `changes` applied: the engine of
-        each subclass's `replace`. The extra fields are passed as the
-        `extra_fields` mapping, so a change to `extra_fields` replaces them.
+        Return a revalidated copy of this spec with `changes` applied.
+
+        This is the shared implementation of each subclass's `replace`. The
+        extra fields are passed as the `extra_fields` mapping, so a change to
+        `extra_fields` replaces all of them.
         """
         document = self.model_dump(exclude={EXTRA_FIELDS})
         return type(self).model_validate({**document, EXTRA_FIELDS: self.extra_fields, **changes})
@@ -303,9 +319,11 @@ class ExtraFieldsBase(StrictBase):
 @cache
 def _declared_keys(model: type[BaseModel]) -> frozenset[str]:
     """
-    The keys of an input document that pydantic reads into a field of
-    `model`: a field's alias or validation alias, and its name where pydantic
-    accepts names. Cached per class, since every validation asks.
+    Return the input keys that pydantic validates into the fields of `model`.
+
+    These are each field's alias or validation alias, and the field's name if
+    pydantic accepts names. Cached per class, since every validation calls
+    this.
     """
     config = model.model_config
     by_name = bool(config.get("validate_by_name") or config.get("populate_by_name"))
@@ -330,14 +348,17 @@ _EXTRA_FIELDS_ADAPTER: Final = TypeAdapter(dict[str, object])
 
 def _dumps_extra_field(key: str, value: object, info: SerializationInfo) -> bool:
     """
-    Whether the dump `info` describes writes the extra field `key`: as for a
-    declared field, `include` must name it (when given), and neither
-    `exclude` nor `exclude_none` may drop it whole.
+    Return whether the dump described by `info` writes the extra field `key`.
+
+    The rules are the same as for a declared field. If `include` is passed,
+    it must name the key. Neither `exclude` nor `exclude_none` may drop the
+    whole key.
     """
     include, exclude = info.include, info.exclude
     if include is not None and key not in include:
         return False
-    # a set drops the key; a mapping drops it whole with `True` (or `...`)
+    # An `exclude` set drops the key. An `exclude` mapping drops the whole key
+    # only if its value is `True` (or `...`).
     excluded = (
         exclude is not None
         and key in exclude
@@ -348,21 +369,25 @@ def _dumps_extra_field(key: str, value: object, info: SerializationInfo) -> bool
 
 class _OpenModel(BaseModel):
     """
-    A model that keeps the keys of its input it does not declare ("extra
-    fields"), for documents whose keys are an open namespace: attributes,
-    and the experimental v3 specs.
+    A model that keeps the input keys it does not declare ("extra fields").
 
-    The extra fields are read through `extra_fields` and dumped back as
-    top-level keys, selected by a dump's `include`, `exclude` and
-    `exclude_none` as declared fields are. They are kept apart from the
-    fields rather than as pydantic extras (`extra="allow"`), because pydantic
-    applies a model's `extra` setting to every TypedDict the model holds that
-    has no configuration of its own: `allow` would open plain TypedDicts, and
-    warns for closed ones. They are not a field either, so no input key names
+    It is for documents whose keys are an open namespace: attributes, and the
+    experimental v3 specs.
+
+    The extra fields are available through `extra_fields` and dumped back as
+    top-level keys. A dump's `include`, `exclude` and `exclude_none` select
+    them in the same way as declared fields.
+
+    Extra fields are stored apart from the fields, rather than as pydantic
+    extras (`extra="allow"`). This is because pydantic applies a model's
+    `extra` setting to every TypedDict in the model that has no configuration
+    of its own. `allow` would open plain TypedDicts, and warn for closed ones.
+    Extra fields are not stored in a field either. So no input key names
     their container, and a frozen model hashes by its declared fields alone.
 
     A subclass that sets `extra` to `"forbid"` or `"ignore"` keeps no extra
-    fields; setting `"allow"` is refused, since it would reach the TypedDicts.
+    fields. Setting `"allow"` raises `TypeError` when the subclass is
+    defined, since it would affect the TypedDicts.
     """
 
     _extra_fields: dict[str, object] = PrivateAttr(default_factory=dict)
@@ -381,7 +406,7 @@ class _OpenModel(BaseModel):
 
     @property
     def extra_fields(self) -> Mapping[str, object]:
-        """The keys of the input this model does not declare, with their values as given."""
+        """The input keys that this model does not declare, with their values unchanged."""
         return MappingProxyType(self._extra_fields)
 
     @model_validator(mode="wrap")
@@ -400,14 +425,15 @@ class _OpenModel(BaseModel):
         model._extra_fields = extra
         return model
 
-    # No return annotation, as on `ExtraFieldsBase`: pydantic takes a wrap serializer's return annotation
-    # as the serialization schema, which would replace the fields' schema in
-    # `model_json_schema(mode="serialization")` with an open object.
+    # No return annotation, as on `ExtraFieldsBase`: pydantic uses a wrap
+    # serializer's return annotation as the serialization schema. That would
+    # replace the fields' schema in `model_json_schema(mode="serialization")`
+    # with an open object.
     @model_serializer(mode="wrap")
     def _serialize_document(  # noqa: ANN202
         self, handler: SerializerFunctionWrapHandler, info: SerializationInfo
     ):
-        """Write the extra fields the dump selects as top-level keys of the dumped document."""
+        """Write the extra fields that the dump selects as top-level keys of the document."""
         extra = {
             key: value
             for key, value in self._extra_fields.items()
@@ -426,8 +452,9 @@ class _OpenModel(BaseModel):
     @override
     def model_copy(self, *, update: Mapping[str, object] | None = None, deep: bool = False) -> Self:
         """
-        Copy this model as pydantic does; a key of `update` that names no
-        field is set as an extra field.
+        Copy this model as pydantic does.
+
+        A key of `update` that names no field is set as an extra field.
         """
         changes = {} if update is None else update
         fields = type(self).model_fields
@@ -441,7 +468,7 @@ class _OpenModel(BaseModel):
         return copied
 
     def __repr_args__(self) -> Iterator[tuple[str | None, object]]:
-        """Show `extra_fields` last, and only when the model holds some."""
+        """Show `extra_fields` last, and only if the model has any."""
         yield from super().__repr_args__()
         if self._extra_fields:
             yield EXTRA_FIELDS, self._extra_fields
@@ -452,46 +479,54 @@ class AttributesBase(_OpenModel):
     A base class for models of stored attributes ("spec-style" attributes).
 
     Models of the attribute conventions found in stored metadata (CF, OME,
-    STAC, ...) need two behaviors plain pydantic models lack by default,
-    which this class provides:
+    STAC, ...) need two behaviors that plain pydantic models lack by default.
+    This class provides both:
 
     - Keys that are not Python identifiers (`_FillValue`, `image-label`,
-      `proj:code`) are declared as field aliases; serialization writes the
-      alias, and validation accepts both spellings.
+      `proj:code`) are declared as field aliases. Serialization writes the
+      alias, and validation accepts either the alias or the field name.
     - Optional keys are declared with the [`MISSING`
-      sentinel](https://docs.pydantic.dev/latest/concepts/experimental/#missing-sentinel)
-      (pydantic's, re-exported as `pydantic_zarr.core.MISSING` so one import
-      spans the supported pydantic range) — `units: str | MISSING = MISSING`
-      — and a field left at `MISSING` is
-      excluded from serialization, so "absent key" is a value of its own
-      rather than a serializer policy. The annotation then says exactly what
-      the spec says: where `null` is meaningful it includes `None`
-      (`str | None | MISSING`) and an assigned `None` keeps its key as
-      `null`; where a key is present or absent but never null — most
-      "optional keys are omitted" specs — it leaves `None` out, and an
-      explicit `None` is a validation error.
+      sentinel](https://docs.pydantic.dev/latest/concepts/experimental/#missing-sentinel),
+      for example `units: str | MISSING = MISSING`. The sentinel is
+      pydantic's, re-exported as `pydantic_zarr.core.MISSING` so that one
+      import works across the supported pydantic range. A field left at
+      `MISSING` is excluded from serialization, so "absent key" is a value of
+      its own rather than a serializer policy. The annotation can then match
+      the spec exactly. Where `null` is meaningful, include `None`
+      (`str | None | MISSING`); an assigned `None` keeps its key, written as
+      `null`. Where a key is present or absent but never null (most specs
+      where "optional keys are omitted"), leave `None` out; an explicit
+      `None` is then a validation error.
 
-    Unknown keys are preserved and round-trip: attributes read from a store
-    keep the keys this model does not declare, read through the read-only
-    `extra_fields` mapping, and dump them back as top-level keys (a dump's
-    `include` and `exclude` name them by key), so the model is OPEN by
-    default — declare `model_config` with `extra="forbid"` in a subclass for
-    a closed one (`extra="ignore"` drops unknown keys instead; `extra="allow"`
-    is refused). They are kept apart from pydantic's extras so that this
-    model's openness does not reach the TypedDicts it holds: each nested
-    TypedDict says its own, as it would anywhere else (a plain one drops
-    unknown keys, a closed one rejects them, one with `extra_items` keeps
-    them). `model_copy(update=...)` sets a key that names no field as an
-    extra field; assigning one as an attribute is an error. Subclasses can
-    override this via `model_config`, except alias serialization: a spec
-    dumps its whole tree with `by_alias=True`, so attributes dumped through a
-    spec use aliases whatever this model's own config says, unless the
-    caller passes `by_alias=False` to the spec's dump.
+    Unknown keys are preserved and round-trip, so the model is open by
+    default. Attributes read from a store keep the keys this model does not
+    declare. They are available through the read-only `extra_fields` mapping
+    and dumped back as top-level keys. A dump's `include` and `exclude` name
+    them by key.
+
+    For a closed model, set `extra="forbid"` in a subclass's `model_config`.
+    `extra="ignore"` drops unknown keys instead. `extra="allow"` raises
+    `TypeError`.
+
+    Unknown keys are kept apart from pydantic's extras, so that this model's
+    openness does not affect the TypedDicts it contains. Each nested
+    TypedDict follows its own configuration, as it would anywhere else: a
+    plain one drops unknown keys, a closed one rejects them, and one with
+    `extra_items` keeps them.
+
+    `model_copy(update=...)` sets a key that names no field as an extra
+    field. Assigning an extra field as an attribute is an error.
+
+    Subclasses can override these behaviors through `model_config`, except
+    for alias serialization. A spec dumps its whole tree with
+    `by_alias=True`, so attributes dumped through a spec use aliases
+    regardless of this model's own config. To turn aliases off, pass
+    `by_alias=False` to the spec's dump.
 
     Attributes
     ----------
     extra_fields: Mapping[str, object]
-        The keys this model does not declare, with their values as given.
+        The keys this model does not declare, with their values unchanged.
     """
 
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
@@ -499,14 +534,15 @@ class AttributesBase(_OpenModel):
 
 def get_attribute(attributes: object, key: str, default: object = None) -> object:
     """
-    Read one key from a node's attributes, whichever form they take: a
-    `Mapping` is read by key, and a pydantic model by the field whose name or
-    alias matches the key, extra (undeclared) fields included. Returns
-    `default` when the key is absent — for a model, absent means the key would
-    not appear in its serialization, so a field left at the `MISSING`
-    sentinel reads as the default, exactly as the mapping form of the same
-    document would. A cross-member validator on a group whose attributes
-    type admits both forms needs exactly this.
+    Read one key from a node's attributes, in either form.
+
+    A `Mapping` is read by key. A pydantic model is read through the field
+    whose name or alias matches the key, or else from its extra (undeclared)
+    fields. Returns `default` if the key is absent. For a model, the key is
+    absent if it would not appear in the model's serialization. So a field
+    left at the `MISSING` sentinel returns the default, just as the mapping
+    form of the same document would. A cross-member validator on a group
+    whose attributes type allows both forms needs this behavior.
     """
     if isinstance(attributes, Mapping):
         return attributes.get(key, default)
@@ -537,10 +573,11 @@ def get_attribute(attributes: object, key: str, default: object = None) -> objec
 @runtime_checkable
 class _HasMembers(Protocol):
     """
-    The structural shape path traversal needs from a group: a `members`
-    mapping. The v2 and v3 `GroupSpec`
-    both have it; `ArraySpec` and `BaseGroupSpec` do not, which is how
-    traversal tells a group with members from every other node.
+    The structural type that path traversal requires of a group: a `members` mapping.
+
+    The v2 and v3 `GroupSpec` both have it. `ArraySpec` and `BaseGroupSpec`
+    do not, which is how traversal tells a group with members apart from
+    every other node.
     """
 
     @property
@@ -549,18 +586,19 @@ class _HasMembers(Protocol):
 
 def resolve_member_path(node: object, path: str) -> object:
     """
-    Return the node at a `/`-separated path of member names relative to
-    `node` (`"a"`, `"a/b/c"`; leading and trailing `/` are ignored). The
-    shared engine of the v2 and v3 `GroupSpec.resolve_path`, whose docstrings
-    carry the user-facing contract.
+    Return the node at a `/`-separated path of member names relative to `node`.
+
+    Examples of paths are `"a"` and `"a/b/c"`. Leading and trailing `/` are
+    ignored. This is the shared implementation of the v2 and v3
+    `GroupSpec.resolve_path`. Their docstrings document the public behavior.
 
     Raises
     ------
     ValueError
-        If the path holds no member names, or an empty one (`"a//b"`).
+        If the path contains no member names, or an empty one (`"a//b"`).
     KeyError
-        Naming the segment that failed: a member name that does not exist, or
-        a segment that descends into a node that is not a group.
+        If a segment names a member that does not exist, or descends into a
+        node that is not a group. The message names the segment that failed.
     """
     stripped = path.strip("/")
     if stripped == "":
@@ -586,19 +624,23 @@ def resolve_member_path(node: object, path: str) -> object:
 
 def read_attribute(data: object, name: str) -> object:
     """
-    `data.<name>`, typed as the `object` it is. The `auto_*` readers of the v2
-    and v3 `from_array` probe a duck-typed array (numpy, dask, zarr, a spec)
-    with `hasattr` and read what they find through this function, then check
-    the value before returning it as the type they promise.
+    Return `data.<name>`, typed as `object`.
+
+    The `auto_*` readers of the v2 and v3 `from_array` probe a duck-typed
+    array (numpy, dask, zarr, a spec) with `hasattr`. They read what they find
+    through this function. They then check the value before returning it as
+    the type they promise.
     """
     return getattr(data, name)
 
 
 def as_shape(value: object) -> tuple[int, ...]:
     """
-    `value`, an array's shape or chunk shape read from a duck-typed array, as
-    a tuple of ints. Each element is converted with `operator.index`, which
-    takes Python and numpy integers alike.
+    Convert `value` to a tuple of ints.
+
+    `value` is an array's shape or chunk shape, read from a duck-typed array.
+    Each element is converted with `operator.index`, which accepts both
+    Python and numpy integers.
 
     Raises
     ------
@@ -613,11 +655,13 @@ def as_shape(value: object) -> tuple[int, ...]:
 
 def as_dtype_like(value: object) -> npt.DTypeLike:
     """
-    `value`, the `dtype` read from a duck-typed array, as numpy's `DTypeLike`.
-    `DTypeLike` cannot be checked with `isinstance`, and every consumer of the
-    result (`np.dtype` and the `parse_dtype_*` functions it backs) validates
-    it and raises `TypeError` on a value numpy cannot read as a data type, so
-    the value passes through unchanged.
+    Return `value` unchanged, typed as numpy's `DTypeLike`.
+
+    `value` is the `dtype` read from a duck-typed array. `DTypeLike` cannot be
+    checked with `isinstance`. Every consumer of the result (`np.dtype` and
+    the `parse_dtype_*` functions built on it) validates the value. They
+    raise `TypeError` if numpy cannot interpret it as a data type, so no
+    check is needed here.
     """
     return cast("npt.DTypeLike", value)
 
@@ -695,7 +739,7 @@ def parse_dtype_v2(value: npt.DTypeLike) -> str | list[tuple[object, ...]]:
     See the [Zarr V2 specification](https://zarr-specs.readthedocs.io/en/latest/v2/v2.0.html#data-type-encoding)
     for more details on this encoding of data types.
     """
-    # Assume that a non-string sequence represents a the Zarr V2 JSON form of a structured dtype.
+    # Assume that a non-string sequence is the Zarr V2 JSON form of a structured dtype.
     if isinstance(value, Sequence) and not isinstance(value, str):
         return [tuple(v) for v in value]
     else:
@@ -710,14 +754,15 @@ def parse_dtype_v2(value: npt.DTypeLike) -> str | list[tuple[object, ...]]:
 
 def canonicalize_fill_value(fill_value: object) -> object:
     """
-    Normalize a fill value to the form the Zarr specs write in JSON.
+    Normalize a fill value to the form the Zarr specs use in JSON.
 
-    Numpy scalars become the equivalent Python scalars, complex numbers
-    become ``(real, imaginary)`` pairs, and non-finite floats become the
-    string forms both the Zarr V2 and V3 specs require (``"NaN"``,
-    ``"Infinity"``, ``"-Infinity"``), since a metadata document holds only
-    finite JSON numbers. Sequences (complex pairs, raw byte values) are
-    normalized element-wise. Everything else passes through unchanged.
+    - Numpy scalars become the equivalent Python scalars.
+    - Complex numbers become ``(real, imaginary)`` pairs.
+    - Non-finite floats become the strings that both the Zarr V2 and V3 specs
+      require (``"NaN"``, ``"Infinity"``, ``"-Infinity"``), because a
+      metadata document can only contain finite JSON numbers.
+    - Sequences (complex pairs, raw byte values) are normalized element-wise.
+    - Everything else passes through unchanged.
     """
     if isinstance(fill_value, np.generic):
         fill_value = fill_value.item()
@@ -737,8 +782,10 @@ def canonicalize_fill_value(fill_value: object) -> object:
 
 def ensure_member_name(data: object) -> str:
     """
-    If the input is a string, then ensure that it is a valid
-    name for a subnode in a zarr group
+    Return the input if it is a valid name for a member of a Zarr group.
+
+    Raises `ValueError` if the name contains `/`, or is `""`, `"."` or
+    `".."`. Raises `TypeError` if the input is not a string.
     """
     if isinstance(data, str):
         if "/" in data:
@@ -762,12 +809,12 @@ def copy_members(members: object) -> object:
     """
     Return a `dict` copy of `members` if it is a mapping, or `members` unchanged.
 
-    `GroupSpec` runs this before it validates `members`. Under `GroupSpec[Any, Any]`
-    pydantic keeps the object it is given, so without the copy a frozen spec
-    would share the caller's mapping, and later changes to that mapping would
-    skip validation. A mapping type pydantic cannot serialize, such as
-    `MappingProxyType`, would also make `model_dump_json` fail. A value that is
-    not a mapping is left for validation to refuse.
+    `GroupSpec` runs this before it validates `members`. Under
+    `GroupSpec[Any, Any]`, pydantic keeps the object it receives. Without the
+    copy, a frozen spec would share the caller's mapping, and later changes to
+    that mapping would skip validation. A mapping type that pydantic cannot
+    serialize, such as `MappingProxyType`, would also make `model_dump_json`
+    fail. A value that is not a mapping is left for validation to reject.
     """
     return dict(members) if isinstance(members, Mapping) else members
 
@@ -801,7 +848,7 @@ def ensure_members_mapping(members: object) -> None:
     Raise `ValueError` unless `members` is a mapping with string keys.
 
     `GroupSpec` checks this itself because its members type is a type
-    parameter: pydantic does not enforce a parameter's bound, so under
+    parameter. pydantic does not enforce a type parameter's bound, so under
     `GroupSpec[Any, Any]` the annotation alone would let any value through.
     """
     if not isinstance(members, Mapping):
@@ -815,9 +862,10 @@ def ensure_members_mapping(members: object) -> None:
 
 def model_like(a: BaseModel, b: BaseModel, exclude: IncEx = None, include: IncEx = None) -> bool:
     """
-    A similarity check for a pair pydantic.BaseModel, parametrized over included or excluded fields.
+    Return whether two pydantic models dump to equal JSON documents.
 
-
+    Only the fields selected by `include` and `exclude` are compared. Lists
+    and tuples compare as equal (see `json_eq`).
     """
 
     a_dict = a.model_dump(exclude=exclude, include=include)
@@ -861,10 +909,11 @@ type StoredNodeType = Literal["array", "group"]
 
 type StoredNodes = Mapping[str, tuple[StoredNodeType | None, object]]
 """
-A stored layout read as each node's type and metadata document, keyed by the
-node's key prefix (see `split_store_key`): `""` for the root, `"a/b"` for the
-node at hierarchy path `/a/b`. The type is `None` when the document does not
-say, and the document is then left for validation to judge.
+A stored layout, as each node's type and metadata document.
+
+Each node is keyed by its key prefix (see `split_store_key`): `""` for the
+root, `"a/b"` for the node at hierarchy path `/a/b`. The type is `None` if the
+document does not state it. In that case, validation checks the document.
 """
 
 _A_NODE: dict[StoredNodeType, str] = {"array": "an array", "group": "a group"}
@@ -872,22 +921,26 @@ _A_NODE: dict[StoredNodeType, str] = {"array": "an array", "group": "a group"}
 
 def split_store_key(key: str) -> tuple[str, str]:
     """
-    Split a store key in a stored layout into the node's key prefix and the
-    document's name: `"a/b/zarr.json"` into `("a/b", "zarr.json")`, and
-    `"zarr.json"` into `("", "zarr.json")`.
+    Split a store key into the node's key prefix and the document's name.
 
-    A node's path and its store keys are spelled differently. In Zarr V3 a
-    node's hierarchy path starts with `/` (the root's is `/`, a member's
-    `/a/b`), and its metadata key is that path with the leading `/` stripped,
-    then `/zarr.json` appended (`a/b/zarr.json`); the root's is `zarr.json`
+    For example, `"a/b/zarr.json"` becomes `("a/b", "zarr.json")`, and
+    `"zarr.json"` becomes `("", "zarr.json")`.
+
+    A node's path and its store keys have different forms. In Zarr V3, a
+    node's hierarchy path starts with `/`: the root's path is `/`, and a
+    member's path looks like `/a/b`. Its metadata key is that path with the
+    leading `/` removed and `/zarr.json` appended (`a/b/zarr.json`). The
+    root's metadata key is `zarr.json`
     (https://github.com/zarr-developers/zarr-specs/blob/fc7dd9c9beb5a50b87f9b08b00bf50fc0048482f/docs/v3/core/index.rst#L382-L388).
-    In Zarr V2 a node's logical path is normalized, stripping any leading or
-    trailing `/` and collapsing repeated `/`, before it prefixes the node's
-    keys (`a/b/.zarray`) (https://github.com/zarr-developers/zarr-specs/blob/fc7dd9c9beb5a50b87f9b08b00bf50fc0048482f/docs/v2/v2.0.rst#L250-L276).
-    Either way a store key has no leading `/` and no empty segment, so this
-    raises `ValueError` for one that does: it would name the same node as
-    another key (`"/zarr.json"` as `"zarr.json"`) and replace that key's
-    document.
+    In Zarr V2, a node's logical path is normalized before it is used as the
+    prefix of the node's keys (`a/b/.zarray`). Normalization strips any
+    leading or trailing `/` and collapses repeated `/`
+    (https://github.com/zarr-developers/zarr-specs/blob/fc7dd9c9beb5a50b87f9b08b00bf50fc0048482f/docs/v2/v2.0.rst#L250-L276).
+
+    In both versions, a store key has no leading `/` and no empty segment.
+    This function raises `ValueError` for a key that does. Such a key would
+    name the same node as another key (`"/zarr.json"` as `"zarr.json"`) and
+    replace that key's document.
     """
     *segments, name = key.split("/")
     if "" in segments:
@@ -902,8 +955,10 @@ def split_store_key(key: str) -> tuple[str, str]:
 
 def stored_root(nodes: StoredNodes, node_type: StoredNodeType) -> object:
     """
-    The root's metadata document among `nodes`. Raises `ValueError` when there
-    is none, or the root's document says it is not a `node_type`.
+    Return the root's metadata document from `nodes`.
+
+    Raises `ValueError` if there is no root document, or if the root's
+    document states that it is not a `node_type`.
     """
     if "" not in nodes:
         msg = f"The layout holds no {node_type}'s metadata at the root."
@@ -917,8 +972,10 @@ def stored_root(nodes: StoredNodes, node_type: StoredNodeType) -> object:
 
 def stored_array(nodes: StoredNodes) -> object:
     """
-    The metadata document of the array `nodes` describe. Raises `ValueError`
-    when `nodes` hold no array at the root, or hold any other node.
+    Return the metadata document of the array that `nodes` describe.
+
+    Raises `ValueError` if `nodes` contain no array at the root, or contain
+    any other node.
     """
     document = stored_root(nodes, "array")
     if len(nodes) > 1:
@@ -932,15 +989,17 @@ def stored_flat[A: BaseModel, G: BaseModel](
     nodes: StoredNodes, array_class: type[A], group_class: type[G]
 ) -> dict[str, A | G]:
     """
-    The hierarchy `nodes` describe, as `from_flat` reads one: each node
-    validated as an `array_class` or a `group_class` (a node whose type is not
-    stated as the latter), keyed by its path in `to_flat`'s spelling. That is
-    the key prefix with `/` put back in front (`"/a/b"`, the V3 hierarchy path),
-    except that the root's is `""`, not `/`.
+    Return the hierarchy that `nodes` describe, in the form `from_flat` accepts.
 
-    Raises `ValueError` when `nodes` hold no group at the root, or a node whose
-    parent is not a group among `nodes` (a store holds no implicit groups),
-    and `ValidationError` when a node's document is not valid.
+    A node whose type is `"array"` is validated as an `array_class`. Any other
+    node, including one whose type is not stated, is validated as a
+    `group_class`. Each node is keyed by its path in the form `to_flat` uses.
+    That is the key prefix with a leading `/` (`"/a/b"`, the V3 hierarchy
+    path), except that the root's path is `""`, not `/`.
+
+    Raises `ValueError` if `nodes` contain no group at the root, or contain a
+    node whose parent is not a group in `nodes` (a store has no implicit
+    groups). Raises `ValidationError` if a node's document is not valid.
     """
     stored_root(nodes, "group")
     flat: dict[str, A | G] = {

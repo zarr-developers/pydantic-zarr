@@ -84,23 +84,24 @@ if TYPE_CHECKING:
     import zarr
     from numcodecs.abc import Codec
 
-# SerializeAsAny: see the note on the v3 TBaseAttr — a model held by a spec
-# with un-narrowed attributes must serialize with its own fields, not the
-# empty base schema.
+# SerializeAsAny makes an attributes model serialize with its own fields when
+# the spec's attributes type is not narrowed. Without it, the model would
+# serialize through the empty base schema. See the note on TBaseAttr in v3.
 type TBaseAttr = Mapping[str, object] | SerializeAsAny[BaseModel]
-# TBaseMembers, the widest members mapping, serves as TMembers' bound and
-# default; see the notes on the v3 spellings.
+# TBaseMembers is the widest members mapping. It is both the bound and the
+# default of TMembers. See the notes on these types in v3.
 type TBaseItem = Union["GroupSpec", "ArraySpec"]
 type TBaseMembers = Mapping[str, TBaseItem]
 
-# Aliases for specs of any specialization: ordinary wide types, equal to the
-# bare class names, since the covariant parameters make a narrowed spec
-# substitutable for a wider one — see the note on the v3 aliases.
+# Aliases for specs of any specialization. They are ordinary wide types, equal
+# to the bare class names. The type parameters are covariant, so a narrowed
+# spec can be used where a wider one is expected. See the note on the v3
+# aliases.
 type AnyArraySpec = "ArraySpec[TBaseAttr]"
 type AnyGroupSpec = "GroupSpec[TBaseAttr, TBaseMembers]"
 type AnyBaseGroupSpec = "BaseGroupSpec[TBaseAttr]"
 
-# covariant because the specs are frozen; see the note on the v3 TypeVars
+# Covariant because the specs are frozen. See the note on the v3 TypeVars.
 TAttr = TypeVar("TAttr", bound=TBaseAttr, default=TBaseAttr, covariant=True)
 TMembers = TypeVar("TMembers", bound=TBaseMembers, default=TBaseMembers, covariant=True)
 TDefault = TypeVar("TDefault")
@@ -120,8 +121,9 @@ FillValue = (
 
 FillValueLike = FillValue | np.generic | complex
 """
-A fill value as an input takes it: its JSON form, or a numpy scalar or a Python
-complex number, which validation writes in JSON form.
+A fill value as an input. This is its JSON form, a numpy scalar, or a Python
+complex number. Validation converts a numpy scalar or a complex number to the
+JSON form.
 """
 
 DimensionSeparator = ZarrV2ArrayDimensionSeparator
@@ -130,33 +132,34 @@ MemoryOrder = ZarrV2ArrayOrder
 type ZarrV2StoredDocumentJSON = ZarrV2ZArrayJSON | ZarrV2ZGroupJSON | ZarrV2ZAttrsJSON
 """Any document a Zarr V2 hierarchy stores: a node's `.zarray`, `.zgroup` or `.zattrs`."""
 
-# The documents a store holds for a node, keyed by store key. The keys are not
-# identifiers, hence the functional syntax. The array type is closed, and the
-# group type admits only its members' documents beyond its own, so each is
-# assignable to a `Mapping[str, ...]` of its value types.
+# The documents a store contains for a node, keyed by store key. The keys are
+# not valid identifiers, so these types use the functional syntax. The array
+# type is closed. The group type allows only its members' documents beyond its
+# own. So each type is assignable to a `Mapping[str, ...]` of its value types.
 ZarrV2ArrayStoredJSON = TypedDict(
     "ZarrV2ArrayStoredJSON",
     {".zarray": ZarrV2ZArrayJSON, ".zattrs": ZarrV2ZAttrsJSON},
     closed=True,
 )
-"""A Zarr V2 array's metadata as a store holds it: its `.zarray` and `.zattrs` documents."""
+"""A Zarr V2 array's metadata as stored: its `.zarray` and `.zattrs` documents."""
 ZarrV2GroupStoredJSON = TypedDict(
     "ZarrV2GroupStoredJSON",
     {".zgroup": ZarrV2ZGroupJSON, ".zattrs": ZarrV2ZAttrsJSON},
     extra_items=ZarrV2StoredDocumentJSON,
 )
 """
-A Zarr V2 group's metadata as a store holds it: its own `.zgroup` and
-`.zattrs` documents, and each member's prefixed by the member's normalized
-logical path relative to the group, which has no leading `/`
-(`"a/b/.zarray"` or `"a/b/.zgroup"`, and `"a/b/.zattrs"`).
+A Zarr V2 group's metadata as stored. It contains the group's own `.zgroup`
+and `.zattrs` documents, and the documents of each member. Each member's keys
+are prefixed by the member's normalized logical path relative to the group,
+which has no leading `/` (`"a/b/.zarray"` or `"a/b/.zgroup"`, and
+`"a/b/.zattrs"`).
 """
 
 
 def dictify_codec(value: object) -> object:
     """
     Ensure that a `numcodecs.abc.Codec` is converted to a `dict`. Any other
-    input is returned unaltered, for validation to judge.
+    input is returned unchanged, and validation checks it later.
 
     Parameters
     ----------
@@ -178,8 +181,8 @@ def dictify_codec(value: object) -> object:
 
 def _is_codec(obj: object) -> TypeIs[Codec]:
     """
-    Whether `obj` is a `numcodecs.abc.Codec`, without importing numcodecs: an
-    instance cannot exist unless numcodecs is imported.
+    Whether `obj` is a `numcodecs.abc.Codec`, without importing numcodecs. An
+    instance cannot exist unless numcodecs is already imported.
     """
     numcodecs = sys.modules.get("numcodecs")
     return numcodecs is not None and isinstance(obj, numcodecs.abc.Codec)
@@ -227,22 +230,28 @@ class NodeSpec(StrictBase):
 
     def __replace__(self, **changes: object) -> Self:
         """
-        `copy.replace(spec, **changes)` (Python 3.13 and later): the spec's own
-        `replace`, so it validates the changes, where pydantic's
-        `BaseModel.__replace__` copies without validating. It calls
-        `self.replace`, so a subclass that overrides `replace` is honored.
+        Support `copy.replace(spec, **changes)` (Python 3.13 and later).
+
+        This calls `self.replace`, so the changes are validated, and a
+        subclass that overrides `replace` is respected. Pydantic's
+        `BaseModel.__replace__` copies without validating.
         """
-        # `Any`: each subclass's `replace` takes its own TypedDict of changes,
-        # which no signature declared here can name, and validates `changes`
+        # Cast to `Any` because each subclass's `replace` accepts its own
+        # TypedDict of changes, which no signature here can name. `replace`
+        # validates `changes`.
         return cast("Any", self).replace(**changes)
 
 
 class ArraySpecUpdate(TypedDict, total=False, closed=True):
     """
-    The fields an `ArraySpec.replace` call may replace, of the types an input
-    takes: validation writes them as the types the spec holds (a numpy dtype as
-    its typestr, a numpy scalar fill value in its JSON form, a numcodecs codec
-    as its configuration mapping, a sequence as a tuple).
+    The fields that `ArraySpec.replace` can change, with their input types.
+
+    Validation converts each value to the type the spec stores:
+
+    - a numpy dtype to its typestr
+    - a numpy scalar fill value to its JSON form
+    - a numcodecs codec to its configuration mapping
+    - a `shape` or `chunks` sequence to a tuple
     """
 
     attributes: TBaseAttr
@@ -258,13 +267,13 @@ class ArraySpecUpdate(TypedDict, total=False, closed=True):
 
 
 class BaseGroupSpecUpdate(TypedDict, total=False, closed=True):
-    """The fields a `BaseGroupSpec.replace` call may replace."""
+    """The fields that `BaseGroupSpec.replace` can change."""
 
     attributes: TBaseAttr
 
 
 class GroupSpecUpdate(TypedDict, total=False, closed=True):
-    """The fields a `GroupSpec.replace` call may replace."""
+    """The fields that `GroupSpec.replace` can change."""
 
     attributes: TBaseAttr
     members: Mapping[str, TBaseItem]
@@ -280,10 +289,10 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
     ----------
     attributes: TAttr, default = {}
         User-defined metadata associated with this array. Should be
-        JSON-serializable. The default is the empty dict, matching a stored
-        array with no attributes document; the default is validated against
-        `TAttr`, so a model whose attributes type does not accept the empty
-        dict still requires them.
+        JSON-serializable. The default is the empty dict, which matches a
+        stored array with no attributes document. The default is validated
+        against `TAttr`, so if the attributes type does not accept the empty
+        dict, `attributes` is required.
     shape: tuple[int, ...]
         The shape of this array.
     dtype: str
@@ -295,11 +304,11 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         AKA lexicographic ordering or "F", which designates "F order", AKA colexicographic ordering.
         The default is "C".
     fill_value: FillValue
-        The fill value for this array, in its Zarr V2 JSON form: numpy scalars
+        The fill value for this array, in its Zarr V2 JSON form. Numpy scalars
         are stored as Python scalars, complex numbers as ``(real, imaginary)``
         pairs, and non-finite floats as ``"NaN"``, ``"Infinity"`` or
-        ``"-Infinity"``. It must be a fill value the dtype accepts. The
-        default is the one `zarr-metadata` derives for the dtype (see
+        ``"-Infinity"``. The dtype must accept the fill value. The default is
+        the fill value that `zarr-metadata` derives for the dtype (see
         `dtype_default_fill_value`).
     compressor: CodecDict | None
         A JSON-serializable representation of a compression codec, or None. The default is None.
@@ -311,22 +320,23 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         Must be either "/" or ".", or absent, in which case it is interpreted as ".".
         The default is "/".
     extra_fields: Mapping[str, JSONValue], default = {}
-        The members of the array metadata document that the Zarr V2 spec
-        does not define. The spec says such keys "SHOULD NOT be present
-        within the metadata object and SHOULD be ignored by implementations",
-        so any key with a JSON value is accepted, given no meaning, and kept
-        for `model_dump`, `model_dump_json`, `replace` and `like`.
-        zarr-python drops them when it reads or writes an array. Group
-        metadata, where "Other keys MUST NOT be present", takes none.
+        Keys in the array metadata document that the Zarr V2 spec does not
+        define. The spec says such keys "SHOULD NOT be present within the
+        metadata object and SHOULD be ignored by implementations". So any key
+        with a JSON value is accepted and kept, with no meaning attached.
+        `model_dump`, `model_dump_json`, `replace` and `like` include these
+        keys. zarr-python drops them when it reads or writes an array. Group
+        metadata accepts no extra fields, because the spec says "Other keys
+        MUST NOT be present".
     """
 
     attributes: TAttr = Field(default={}, validate_default=True)
     shape: tuple[int, ...]
     chunks: tuple[int, ...]
     dtype: DtypeStr | list[tuple[object, ...]]
-    # validation replaces this declared default with the dtype's (see
-    # `default_fill_value`); `model_construct` and the JSON schema, which do
-    # not validate, still report 0 for every dtype
+    # Validation replaces this declared default with the dtype's default (see
+    # `default_fill_value`). `model_construct` and the JSON schema do not
+    # validate, so they still report 0 for every dtype.
     fill_value: Annotated[FillValue, BeforeValidator(canonicalize_fill_value)] = 0
     order: MemoryOrder = "C"
     filters: list[CodecDict] | None = None
@@ -339,10 +349,10 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
     @classmethod
     def default_fill_value(cls, data: object) -> object:
         """
-        Give a spec built without a `fill_value` the default `zarr-metadata`
-        derives for its dtype (see `dtype_default_fill_value`). A subclass that
+        Fill in a missing `fill_value` with the default that `zarr-metadata`
+        derives for the dtype (see `dtype_default_fill_value`). If a subclass
         declares its own `fill_value` default, or makes the field required,
-        keeps that instead.
+        this validator does nothing.
         """
         declared = cls.model_fields["fill_value"].default
         if type(declared) is not int or declared != 0:
@@ -362,7 +372,7 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
     @model_validator(mode="after")
     def check_ndim(self) -> Self:
         """
-        Check that the `shape` and `chunks` and attributes have the same length.
+        Check that `shape` and `chunks` have the same length.
         """
         if (lshape := len(self.shape)) != (lchunks := len(self.chunks)):
             msg = (
@@ -377,12 +387,12 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         """
         Validate this spec as a Zarr V2 array metadata document, via `zarr-metadata`.
 
-        The document assembled from this spec's fields is read in
-        `zarr_metadata`'s core Zarr V2 scope, which judges the fill value
-        against the dtype among other things, so a spec holds only what a
-        Zarr V2 `.zarray` document can store. The `attributes` field is not
-        part of this check: its type and contents are governed by this
-        class's `TAttr` parameter alone.
+        The document built from this spec's fields is validated in
+        `zarr_metadata`'s core Zarr V2 scope. Among other things, this checks
+        the fill value against the dtype. As a result, a spec contains only
+        what a Zarr V2 `.zarray` document can store. The `attributes` field
+        is not part of this check. Only this class's `TAttr` parameter
+        governs its type and contents.
         """
         document = self.model_dump()
         document["attributes"] = {}
@@ -394,17 +404,17 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
 
     def to_metadata_json(self) -> ZarrV2ArrayMetadataJSON:
         """
-        This array's Zarr V2 metadata, as one document holding its `.zarray`
-        and, under `attributes`, its `.zattrs`.
+        Return this array's Zarr V2 metadata as one document.
 
-        Unlike `model_dump`, this takes no options, so its result has one
-        static type, `zarr_metadata`'s `ZarrV2ArrayMetadataJSON`. The stored
-        `.zarray` is this document without `attributes` (the type
-        `zarr_metadata.ZarrV2ZArrayJSON`), and the stored `.zattrs` is
-        `attributes`. The JSON arrays the type declares as tuples (the
-        `filters` pipeline, and a structured `dtype`) are tuples here too;
-        JSON arrays inside a codec's configuration are left as they are.
-        Its `extra_fields` are written as top-level members.
+        The document contains the `.zarray` fields, and the `.zattrs` under
+        `attributes`. Unlike `model_dump`, this method accepts no options, so
+        its result has one static type: `zarr_metadata`'s
+        `ZarrV2ArrayMetadataJSON`. The stored `.zarray` is this document
+        without `attributes` (type `zarr_metadata.ZarrV2ZArrayJSON`). The
+        stored `.zattrs` is `attributes`. Where the type declares a JSON array
+        as a tuple (the `filters` pipeline, and a structured `dtype`), the
+        value is a tuple. JSON arrays inside a codec's configuration are left
+        as they are. The `extra_fields` are written as top-level keys.
         """
         document = self.model_dump()
         document["dtype"] = tuplify_json(document["dtype"])
@@ -414,13 +424,13 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
 
     def to_stored_metadata_json(self) -> ZarrV2ArrayStoredJSON:
         """
-        This array's Zarr V2 metadata as a store holds it: a mapping from each
+        Return this array's Zarr V2 metadata as stored: a mapping from each
         store key to the JSON document stored there.
 
-        The `.zarray` document is `to_metadata_json()` without `attributes`,
-        and the `.zattrs` document is `attributes`. `.zattrs` is written even
-        when the attributes are empty, as zarr-python writes it.
-        `from_stored_metadata_json` reads it back.
+        The `.zarray` document is `to_metadata_json()` without `attributes`.
+        The `.zattrs` document is `attributes`. Like zarr-python, this method
+        writes `.zattrs` even when the attributes are empty.
+        `from_stored_metadata_json` converts the result back to a spec.
         """
         document = self.to_metadata_json()
         zattrs = document.pop("attributes", {})
@@ -432,12 +442,15 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
     @classmethod
     def from_stored_metadata_json(cls, data: Mapping[str, object]) -> Self:
         """
-        Read an array from its metadata as a store holds it: a mapping from
-        store key to parsed JSON document, as `to_stored_metadata_json`
-        returns it. A missing `.zattrs` reads as empty attributes. Raises
-        `ValueError` when `data` holds no array's `.zarray` at the root, or
-        holds documents of any other node, and `ValidationError` when the
-        documents are not a valid array.
+        Create an array spec from the array's stored metadata.
+
+        `data` is a mapping from store key to parsed JSON document, in the
+        form that `to_stored_metadata_json` returns. A missing `.zattrs` is
+        treated as empty attributes.
+
+        Raises `ValueError` if `data` contains no `.zarray` at the root, or
+        contains documents for any other node. Raises `ValidationError` if the
+        documents do not form a valid array.
         """
         return cls.model_validate(stored_array(_stored_nodes(data)))
 
@@ -541,8 +554,8 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         else:
             dimension_separator_actual = dimension_separator
 
-        # validated as a document: the fill value and codecs read from `array`
-        # are whatever its attributes hold, for validation to judge
+        # Validate as a document. The fill value and codecs read from `array`
+        # can be any value, and validation checks them.
         return cls.model_validate(
             {
                 "shape": shape_actual,
@@ -565,16 +578,16 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         """
         Return a revalidated copy of this model with `changes` applied.
 
-        All changes land in one validation pass, so correlated fields (a new
-        `dtype` with a matching `fill_value`, or a new `shape` with matching
-        `chunks`) change together atomically. A new `dtype` keeps the current
-        `fill_value`, which is not re-derived: when the new dtype does not
-        accept it, pass a `fill_value` in the same call. Unlike
-        `model_copy(update=...)`, the result is validated. Passing
-        `extra_fields` replaces the extra fields as a whole.
+        All changes are validated in one pass, so related fields can change
+        together (for example, a new `dtype` with a matching `fill_value`, or
+        a new `shape` with matching `chunks`). A new `dtype` keeps the current
+        `fill_value`. The fill value is not derived again. If the new dtype
+        does not accept the current fill value, pass a `fill_value` in the
+        same call. Unlike `model_copy(update=...)`, the result is validated.
+        Passing `extra_fields` replaces all the extra fields.
 
-        `copy.replace` (Python 3.13 and later) calls this method too (see
-        `NodeSpec.__replace__`), so it validates as well.
+        `copy.replace` (Python 3.13 and later) also calls this method (see
+        `NodeSpec.__replace__`), so it validates too.
         """
         return self._replaced(changes)
 
@@ -628,17 +641,17 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
     """
     A model of a Zarr Version 2 Group's own metadata, without members.
 
-    This is the shape of a group in a flattened hierarchy (`to_flat` emits it
-    for every group), and of a group loaded without traversing its children.
+    This class represents a group in a flattened hierarchy (`to_flat` returns
+    one for every group), and a group loaded without its children.
     `GroupSpec` subclasses this model and adds `members`.
 
     Attributes
     ----------
     attributes: TAttr, default = {}
         The user-defined attributes of this group. The default is the empty
-        dict, matching a stored group with no attributes document; the default
-        is validated against `TAttr`, so a model whose attributes type does
-        not accept the empty dict still requires them.
+        dict, which matches a stored group with no attributes document. The
+        default is validated against `TAttr`, so if the attributes type does
+        not accept the empty dict, `attributes` is required.
     """
 
     attributes: TAttr = Field(default={}, validate_default=True)
@@ -648,41 +661,41 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         Return a revalidated copy of this model with `changes` applied.
 
         Unlike `model_copy(update=...)`, the result is validated, so an
-        invalid change is refused.
+        invalid change raises a `ValidationError`.
 
-        `copy.replace` (Python 3.13 and later) calls this method too (see
-        `NodeSpec.__replace__`), so it validates as well.
+        `copy.replace` (Python 3.13 and later) also calls this method (see
+        `NodeSpec.__replace__`), so it validates too.
         """
         return type(self).model_validate({**self.model_dump(), **changes})
 
     def to_metadata_json(self) -> ZarrV2GroupMetadataJSON:
         """
-        This group's Zarr V2 metadata, as one document holding its `.zgroup`
-        and, under `attributes`, its `.zattrs`.
+        Return this group's Zarr V2 metadata as one document.
 
-        Unlike `model_dump`, this takes no options, so its result has one
-        static type, `zarr_metadata`'s `ZarrV2GroupMetadataJSON`. The stored
-        `.zgroup` is this document without `attributes` (the type
-        `zarr_metadata.ZarrV2ZGroupJSON`), and the stored `.zattrs` is
-        `attributes`. A group's members are not part of its metadata, so a
-        `GroupSpec`'s `members` are left out.
+        The document contains the `.zgroup` fields, and the `.zattrs` under
+        `attributes`. Unlike `model_dump`, this method accepts no options, so
+        its result has one static type: `zarr_metadata`'s
+        `ZarrV2GroupMetadataJSON`. The stored `.zgroup` is this document
+        without `attributes` (type `zarr_metadata.ZarrV2ZGroupJSON`). The
+        stored `.zattrs` is `attributes`. A group's members are not part of
+        its metadata, so a `GroupSpec`'s `members` are left out.
         """
         return cast("ZarrV2GroupMetadataJSON", self.model_dump(exclude={"members"}))
 
     def to_stored_metadata_json(self) -> ZarrV2GroupStoredJSON:
         """
-        This group's Zarr V2 metadata as a store holds it: a mapping from each
+        Return this group's Zarr V2 metadata as stored: a mapping from each
         store key to the JSON document stored there.
 
-        The `.zgroup` document is `to_metadata_json()` without `attributes`,
-        and the `.zattrs` document is `attributes`. `.zattrs` is written even
-        when the attributes are empty, as zarr-python writes it. A
-        `BaseGroupSpec` holds no members, so these are the only keys;
+        The `.zgroup` document is `to_metadata_json()` without `attributes`.
+        The `.zattrs` document is `attributes`. Like zarr-python, this method
+        writes `.zattrs` even when the attributes are empty. A
+        `BaseGroupSpec` has no members, so these are the only keys.
         `GroupSpec` adds each member's documents.
         """
         document = self.to_metadata_json()
         return {
-            # `.zgroup` holds no other members
+            # `.zgroup` contains no other keys
             ZARR_V2_GROUP_METADATA_STORE_KEY: {"zarr_format": document["zarr_format"]},
             ZARR_V2_ATTRIBUTES_STORE_KEY: document.get("attributes", {}),
         }
@@ -690,13 +703,15 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
     @classmethod
     def from_stored_metadata_json(cls, data: Mapping[str, object]) -> Self:
         """
-        Read a group's own metadata from a stored layout: a mapping from store
-        key to parsed JSON document, as `to_stored_metadata_json` returns it.
-        Only the root's `.zgroup` and `.zattrs` are read; members' documents
-        are left unread. A missing `.zattrs`
-        reads as empty attributes. Raises `ValueError` when `data` holds no
-        group's `.zgroup` at the root, and `ValidationError` when the
-        documents are not a valid group.
+        Create a group spec from the group's own stored metadata.
+
+        `data` is a mapping from store key to parsed JSON document, in the
+        form that `to_stored_metadata_json` returns. Only the root's `.zgroup`
+        and `.zattrs` are read. Members' documents are ignored. A missing
+        `.zattrs` is treated as empty attributes.
+
+        Raises `ValueError` if `data` contains no `.zgroup` at the root.
+        Raises `ValidationError` if the documents do not form a valid group.
         """
         own = {key: document for key, document in data.items() if "/" not in key}
         return cls.model_validate(stored_root(_stored_nodes(own), "group"))
@@ -709,9 +724,9 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         exclude: IncEx = None,
     ) -> bool:
         """
-        Compare this group's own metadata to another group's. Members never
-        participate in the comparison: a `GroupSpec` is reduced to its own
-        metadata first.
+        Compare this group's own metadata to another group's. Members are
+        never compared. If `other` is a `GroupSpec`, only its own metadata is
+        used.
         """
         other_parsed: AnyBaseGroupSpec
         if isinstance(other, GroupSpec):
@@ -729,10 +744,13 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
     class can be found in the
     [Zarr specification](https://zarr.readthedocs.io/en/stable/spec/v2.html#groups).
 
-    The second type parameter is the type of the whole `members` mapping. Leave it
-    out for a group of any members, give a `Mapping` to constrain every member's
-    type (`GroupSpec[Attrs, Mapping[str, MyArraySpec]]`), or give a closed
-    `TypedDict` to fix the member names (`GroupSpec[Attrs, MyMembers]`).
+    The second type parameter is the type of the whole `members` mapping:
+
+    - Leave it out to allow any members.
+    - Pass a `Mapping` to constrain the type of every member
+      (`GroupSpec[Attrs, Mapping[str, MyArraySpec]]`).
+    - Pass a closed `TypedDict` to fix the member names
+      (`GroupSpec[Attrs, MyMembers]`).
 
     Attributes
     ----------
@@ -740,25 +758,27 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
     attributes: TAttr
         The user-defined attributes of this group. Should be JSON-serializable.
     members: TMembers, default = {}
-        The members of this group: a mapping from member name to member, of the
-        type `TMembers`. With the default `TMembers` every member is validated as an
-        `ArraySpec` or a `GroupSpec`; under `Any` the values are not validated. The
-        spec holds its own `dict` copy of the mapping it is given. A `GroupSpec` is a
-        complete hierarchy, so an empty mapping means the group has no members. A
-        group whose members are unknown is a `BaseGroupSpec`, which has no `members`
-        field and is never a member. The default is validated against `TMembers`, so
-        a group whose members type requires a member still requires `members`.
+        The members of this group: a mapping from member name to member, of
+        type `TMembers`. With the default `TMembers`, every member is validated
+        as an `ArraySpec` or a `GroupSpec`. With `Any`, the values are not
+        validated. The spec stores its own `dict` copy of the mapping you pass.
+        A `GroupSpec` is a complete hierarchy, so an empty mapping means the
+        group has no members. Use `BaseGroupSpec` for a group whose members are
+        unknown. It has no `members` field and is never a member. The default
+        is validated against `TMembers`, so if the members type requires a
+        member, `members` is required.
     """
 
-    # the default is cast so that a checker does not solve TMembers from it:
-    # an unparameterized GroupSpec() then has the default members type
+    # Cast the default so that type checkers do not infer TMembers from it. An
+    # unparameterized GroupSpec() then gets the default members type.
     members: TMembers = Field(default=cast("TMembers", {}), validate_default=True)
 
     @model_validator(mode="before")
     @classmethod
     def _copy_members(cls, data: object) -> object:
-        # a model validator, not a field one: pyrefly and ty widen the
-        # `__init__` parameter of a field with a before validator to `Any`
+        # This is a model validator, not a field validator, because pyrefly and
+        # ty widen the `__init__` parameter of a field with a before validator
+        # to `Any`.
         if isinstance(data, Mapping) and "members" in data:
             return {**data, "members": copy_members(data["members"])}
         return data
@@ -788,47 +808,52 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
         """
         Return a revalidated copy of this model with `changes` applied.
 
-        All changes land in one validation pass, so `attributes` and `members`
-        change together atomically. Unlike `model_copy(update=...)`, the
-        result is validated.
+        All changes are validated in one pass, so `attributes` and `members`
+        can change together. Unlike `model_copy(update=...)`, the result is
+        validated.
 
-        `copy.replace` (Python 3.13 and later) calls this method too (see
-        `NodeSpec.__replace__`), so it validates as well.
+        `copy.replace` (Python 3.13 and later) also calls this method (see
+        `NodeSpec.__replace__`), so it validates too.
         """
         return type(self).model_validate({**self.model_dump(), **changes})
 
     def resolve_path(self, path: str) -> AnyArraySpec | AnyGroupSpec:
         """
-        Return the node at a `/`-separated path of member names relative to
-        this group (`"a"`, `"a/b/c"`; leading and trailing `/` are ignored).
-        Metadata conventions that reference nodes by relative path resolve
-        with this method.
+        Return the node at a `/`-separated path of member names, relative to
+        this group.
+
+        Example paths are `"a"` and `"a/b/c"`. Leading and trailing `/` are
+        ignored. Use this method to resolve metadata conventions that
+        reference nodes by relative path.
 
         Raises
         ------
         ValueError
-            If the path holds no member names, or an empty one (`"a//b"`).
+            If the path contains no member names, or contains an empty one
+            (`"a//b"`).
         KeyError
-            Naming the segment that failed: a member name that does not
-            exist, or a segment that descends into a node that is not a
-            group.
+            If a segment names a member that does not exist, or descends into
+            a node that is not a group. The error names the segment that
+            failed.
         """
         node = resolve_member_path(self, path)
         return cast("AnyArraySpec | AnyGroupSpec", node)
 
     def __getitem__(self, path: str) -> AnyArraySpec | AnyGroupSpec:
-        """`group[path]` resolves a member path: see `resolve_path`."""
+        """Resolve a member path with `group[path]`. See `resolve_path`."""
         return self.resolve_path(path)
 
     def get_path(
         self, path: str, default: TDefault | None = None
     ) -> AnyArraySpec | AnyGroupSpec | TDefault | None:
         """
-        `resolve_path` that returns `default` instead of raising when the path
-        does not resolve (a missing member, or a non-group on the way); a
-        malformed path still raises `ValueError`. This non-raising
-        form suits pydantic validators, which turn `ValueError` into a
-        validation error but let `KeyError` escape.
+        Like `resolve_path`, but return `default` if the path does not resolve.
+
+        A path does not resolve if a member is missing, or if a segment
+        descends into a node that is not a group. A malformed path still
+        raises `ValueError`. This method is useful in pydantic validators,
+        which turn `ValueError` into a validation error but let `KeyError`
+        escape.
         """
         try:
             return self.resolve_path(path)
@@ -847,8 +872,9 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
         Compare a `GroupSpec` to another `GroupSpec` or `BaseGroupSpec`,
         parameterized over the fields to exclude or include in the comparison. Models are first
         converted to dict via the `model_dump` method of `pydantic.BaseModel`, then compared with
-        the `==` operator. A `BaseGroupSpec` — a group considered without members — compares as
-        that projection: by the group's own metadata alone, whatever this side's members hold.
+        the `==` operator. If `other` is a `BaseGroupSpec` but not a `GroupSpec` (a group without
+        members), only the two groups' own metadata is compared, and this group's members are
+        ignored.
 
         Parameters
         ----------
@@ -885,9 +911,9 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
         True
         """
         if not isinstance(other, GroupSpec):
-            # a group without members compares by the group's own metadata;
-            # this side projects to its own metadata too, or the comparison
-            # would always fail on the members field itself
+            # `other` has no members, so compare only the groups' own metadata.
+            # Drop this group's members too, or the comparison would always
+            # fail on the `members` field.
             projection = BaseGroupSpec(attributes=self.attributes)
             return projection.like(other, include=include, exclude=exclude)
 
@@ -896,13 +922,12 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
     def to_flat(self, root_path: str = "") -> dict[str, AnyArraySpec | AnyBaseGroupSpec]:
         """
         Flatten this `GroupSpec`.
-        This method returns a `dict` with string keys and values that are `GroupSpec` or
-        `ArraySpec`.
 
-        Then the resulting `dict` will contain the input's own metadata, as a `BaseGroupSpec`,
-        under the key `root_path`, as well as copies of the result of calling `node.to_flat` on each
-        element of `node.members`, each under a key created by joining `root_path` with a '/`
-        character to the name of each member, and so on recursively for each sub-member.
+        This method returns a `dict` with string keys and values that are `BaseGroupSpec` or
+        `ArraySpec`. The group's own metadata, as a `BaseGroupSpec`, is stored under the key
+        `root_path`. Each member is flattened recursively, and copies of its entries are stored
+        under keys made by joining `root_path` and the member's name with a `/` character. The
+        entries are sorted by key length.
 
         Parameters
         ----------
@@ -912,7 +937,7 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
 
         Returns
         -------
-        Dict[str, ArraySpec | GroupSpec]
+        Dict[str, ArraySpec | BaseGroupSpec]
             A flattened representation of the hierarchy.
 
         Examples
@@ -932,18 +957,20 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
     @override
     def to_stored_metadata_json(self) -> ZarrV2GroupStoredJSON:
         """
-        This hierarchy's Zarr V2 metadata as a store holds it: a mapping from
-        each store key to the JSON document stored there. That is this
-        group's `.zgroup` and `.zattrs`, and each member's at any depth,
-        prefixed by the member's path (`"a/.zgroup"`, `"a/b/.zarray"`,
-        `"a/b/.zattrs"`). The prefix is the member's path as `to_flat` spells
-        it (`"/a/b"`) normalized as the Zarr V2 spec normalizes logical paths,
-        which strips the leading `/`
+        Return this hierarchy's Zarr V2 metadata as stored: a mapping from
+        each store key to the JSON document stored there.
+
+        The mapping contains this group's `.zgroup` and `.zattrs`, and the
+        documents of each member at any depth. A member's keys are prefixed
+        by the member's path (`"a/.zgroup"`, `"a/b/.zarray"`, `"a/b/.zattrs"`).
+        The prefix is the member's path from `to_flat` (`"/a/b"`), normalized
+        as the Zarr V2 spec normalizes logical paths. This removes the leading
+        `/`
         (https://github.com/zarr-developers/zarr-specs/blob/fc7dd9c9beb5a50b87f9b08b00bf50fc0048482f/docs/v2/v2.0.rst#L250-L276).
-        These are the metadata documents zarr-python writes,
-        so a consumer can write the hierarchy by writing each document, as
-        JSON, at its key under the hierarchy's root.
-        `from_stored_metadata_json` reads it back.
+        These are the metadata documents that zarr-python writes. To write the
+        hierarchy, write each document as JSON at its key under the
+        hierarchy's root. `from_stored_metadata_json` converts the result back
+        to a spec.
         """
         members: dict[str, ZarrV2StoredDocumentJSON] = {
             f"{path.removeprefix('/')}/{key}": document
@@ -951,38 +978,46 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
             if path
             for key, document in _node_documents(node)
         }
-        # each member's document is of the type's `extra_items`; the cast is for
-        # checkers that do not yet type writes to `extra_items` (pyrefly)
+        # Each member's document matches the type's `extra_items`. The cast is
+        # for checkers that do not yet support writes to `extra_items` (pyrefly).
         return cast("ZarrV2GroupStoredJSON", {**super().to_stored_metadata_json(), **members})
 
     @override
     @classmethod
     def from_stored_metadata_json(cls, data: Mapping[str, object]) -> Self:
         """
-        Read a hierarchy from its metadata as a store holds it: a mapping from
-        store key to parsed JSON document, as `to_stored_metadata_json`
-        returns it. Each node's documents are read, a missing `.zattrs` as
-        empty attributes, and the nodes are assembled with `from_flat`. A
-        layout cannot tell a group whose members were not read from one with
-        none, so every group is read as a `GroupSpec`, with the members the
-        layout holds.
+        Create a hierarchy from its stored metadata.
 
-        Raises `ValueError` when `data` holds no group's `.zgroup` at the
-        root, a key with a leading `/` or an empty segment, a key other than
-        a `.zarray`, `.zgroup` or `.zattrs`, a path
-        with both a `.zarray` and a `.zgroup`, a `.zattrs` with neither, or a
-        node whose parent is not a group in `data` (a store holds no implicit
-        groups), and `ValidationError` when a node's documents are not valid.
+        `data` is a mapping from store key to parsed JSON document, in the
+        form that `to_stored_metadata_json` returns. Each node's documents are
+        read, and a missing `.zattrs` is treated as empty attributes. The
+        nodes are then assembled with `from_flat`. Stored metadata cannot
+        distinguish a group whose members were not read from a group with no
+        members. So every group is read as a `GroupSpec`, with the members
+        found in `data`.
+
+        Raises `ValueError` if `data` contains:
+
+        - no `.zgroup` at the root
+        - a key with a leading `/` or an empty segment
+        - a key other than a `.zarray`, `.zgroup` or `.zattrs`
+        - a path with both a `.zarray` and a `.zgroup`
+        - a `.zattrs` with neither
+        - a node whose parent is not a group in `data` (a store contains no
+          implicit groups)
+
+        Raises `ValidationError` if a node's documents are not valid.
         """
         return cls.from_flat(stored_flat(_stored_nodes(data), ArraySpec, BaseGroupSpec))
 
     @classmethod
     def from_flat(cls, data: Mapping[str, AnyArraySpec | AnyGroupSpec | AnyBaseGroupSpec]) -> Self:
         """
-        Create a `GroupSpec` from a flat hierarchy representation. The flattened hierarchy is a
-        `dict` with the following constraints: keys must be valid paths; values must
-        be `ArraySpec` or `BaseGroupSpec` instances, as `to_flat` emits them. A `GroupSpec`
-        value is read as its own metadata: its members are ignored, since a group's members
+        Create a `GroupSpec` from a flat hierarchy representation.
+
+        The flat hierarchy is a `dict`. Its keys must be valid paths. Its values must be
+        `ArraySpec` or `BaseGroupSpec` instances, as `to_flat` returns them. For a `GroupSpec`
+        value, only its own metadata is used. Its members are ignored, because a group's members
         are the entries under its path.
 
         Parameters
@@ -1038,14 +1073,18 @@ _STORED_NODE_KEYS = (
 
 def _stored_nodes(data: Mapping[str, object]) -> StoredNodes:
     """
-    Read a stored layout, a mapping from store key to parsed JSON document,
-    as each node's type and merged metadata document (its `.zarray` or
-    `.zgroup` with its `.zattrs` under `attributes`, empty when missing),
-    keyed by the node's key prefix (see `split_store_key`): `""` for the
-    root, `"a/b"` for the node at logical path `a/b`. Raises `ValueError` naming
-    a malformed key, a key other than a node's `.zarray`, `.zgroup` or
-    `.zattrs`, a path with both a `.zarray` and a `.zgroup`, or a `.zattrs`
-    with neither.
+    Parse stored metadata into nodes.
+
+    `data` is a mapping from store key to parsed JSON document. The result maps
+    each node's key prefix (see `split_store_key`) to the node's type and
+    merged metadata document. The prefix is `""` for the root and `"a/b"` for
+    the node at logical path `a/b`. The merged document is the node's
+    `.zarray` or `.zgroup`, with its `.zattrs` under `attributes` (empty if
+    missing).
+
+    Raises `ValueError` if `data` contains a malformed key, a key other than a
+    node's `.zarray`, `.zgroup` or `.zattrs`, a path with both a `.zarray` and
+    a `.zgroup`, or a `.zattrs` with neither. The error names the key or path.
     """
     files_by_path: dict[str, dict[str, object]] = {}
     for key, document in data.items():
@@ -1080,7 +1119,7 @@ def _stored_nodes(data: Mapping[str, object]) -> StoredNodes:
             )
             raise ValueError(msg)
         attributes = files.get(ZARR_V2_ATTRIBUTES_STORE_KEY, {})
-        # a document that is not a JSON object is passed on for validation to refuse
+        # Pass on a document that is not a JSON object, so validation rejects it.
         document = (
             {**metadata, "attributes": attributes} if isinstance(metadata, Mapping) else metadata
         )
@@ -1094,16 +1133,17 @@ def to_flat(
     """
     Flatten a `GroupSpec` or `ArraySpec`.
 
-    Converts a `GroupSpec` or `ArraySpec` and a string, into a `dict` with string keys and
-    values that are `GroupSpec` or `ArraySpec`.
+    Converts a `GroupSpec` or `ArraySpec` and a string into a `dict` with string keys and
+    values that are `BaseGroupSpec` or `ArraySpec`.
 
-    If the input is an `ArraySpec`, then this function just returns the dict `{root_path: node}`.
+    If the input is an `ArraySpec`, this function returns `{root_path: copy}`, where `copy` is
+    a deep copy of the input.
 
-    If the input is a `GroupSpec`, then the resulting `dict` will contain the input's own
-    metadata, as a `BaseGroupSpec`, under the key `root_path`, as well as copies of the result of
-    calling `flatten_node` on each element of `node.members`, each under a key created by joining
-    `root_path` with a '/` character to the name of each member, and so on recursively for each
-    sub-member.
+    If the input is a `GroupSpec`, the result contains the input's own metadata, as a
+    `BaseGroupSpec`, under the key `root_path`. It also contains the result of calling `to_flat`
+    on each member in `node.members`. Each member's entries are stored under keys made by
+    joining `root_path` and the member's name with a `/` character. This repeats recursively for
+    each sub-member. The entries are sorted by key length.
 
     Parameters
     ----------
@@ -1115,7 +1155,7 @@ def to_flat(
 
     Returns
     -------
-    Dict[str, ArraySpec | GroupSpec]
+    Dict[str, ArraySpec | BaseGroupSpec]
         A flattened representation of the hierarchy.
 
     Examples
@@ -1316,11 +1356,13 @@ _DATA_TYPE_ADAPTER: Final = TypeAdapter(ZarrV2DataTypeMetadata)
 
 def dtype_default_fill_value(dtype: npt.DTypeLike) -> FillValue:
     """
-    The fill value a spec of data type `dtype` gets when none is given: the
-    default `zarr-metadata` derives for the data type, the value zarr-python
-    uses (zero, `False`, the empty string, null bytes, `"NaT"`), or `None`
-    for `|O`, whose values may be of any type. A `dtype` that is not a valid
-    Zarr V2 data type gets `0`, and validation reports the data type.
+    Return the default fill value for a spec with data type `dtype`.
+
+    This is the default that `zarr-metadata` derives for the data type. It is
+    the value zarr-python uses (zero, `False`, the empty string, null bytes,
+    `"NaT"`), or `None` for `|O`, whose values can be of any type. If `dtype`
+    is not a valid Zarr V2 data type, this returns `0`, and validation reports
+    the invalid data type.
     """
     try:
         data_type = _DATA_TYPE_ADAPTER.validate_python(parse_dtype_v2(dtype))
@@ -1347,8 +1389,8 @@ def auto_fill_value(data: object) -> object:
 
 def _as_codec(value: object) -> Mapping[str, object] | Codec:
     """
-    `value`, a codec read from a duck-typed array: a `numcodecs` codec, or the
-    JSON form of one (as a spec holds it).
+    Return `value`, a codec read from a duck-typed array, if it is a
+    `numcodecs` codec or the JSON form of one (as a spec stores it).
 
     Raises
     ------
@@ -1369,7 +1411,7 @@ def auto_compresser(data: object) -> Mapping[str, object] | Codec | None:
     Raises
     ------
     TypeError
-        If the `compressor` attribute holds anything else.
+        If the `compressor` attribute is anything else.
     """
     if hasattr(data, "compressor"):
         compressor = read_attribute(data, "compressor")
@@ -1433,14 +1475,14 @@ def is_group_spec(node: object) -> TypeIs[AnyGroupSpec]:
     """
     Whether `node` is a `GroupSpec` (a group with members), narrowing the type
     in both branches. A `BaseGroupSpec` that is not a `GroupSpec` returns
-    `False`: use this to tell the two apart in a flattened hierarchy.
+    `False`. Use this to tell the two apart in a flattened hierarchy.
     """
     return isinstance(node, GroupSpec)
 
 
 def is_base_group_spec(node: object) -> TypeIs[AnyBaseGroupSpec]:
     """
-    Whether `node` models a group, with or without members: `GroupSpec` is a
-    subclass of `BaseGroupSpec`, so this holds for both.
+    Whether `node` models a group, with or without members. `GroupSpec` is a
+    subclass of `BaseGroupSpec`, so this returns `True` for both.
     """
     return isinstance(node, BaseGroupSpec)
