@@ -47,6 +47,9 @@ zarr = ["zarr>=3.0.0"]
 test-base = [
     "coverage",
     "hypothesis>=6.100",
+    # an independent RFC 6902 implementation, which applies the patches that
+    # `diff` returns (tests/test_pydantic_zarr/test_diff.py)
+    "jsonpatch>=1.33",
     # the testing extra holds zarr-metadata's own strategies, which draw the
     # documents the property tests check the readers against
     # (tests/test_pydantic_zarr/test_zarr_metadata_strategies.py); the floor

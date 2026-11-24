@@ -412,6 +412,7 @@ def _make_array_spec() -> AnyArraySpec:
     )
 
 
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_arrayspec_like_spec_vs_spec() -> None:
     """
     Regression test: ArraySpec.like(other_spec) must not raise NameError.
@@ -866,6 +867,7 @@ def test_zarr_scope_strict_refuses_unclaimed_storage_transformer() -> None:
         _StrictCoreArraySpec(**_v3_array_kwargs(storage_transformers=({"name": "chunk-manifest"},)))
 
 
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_like_compares_documents_canonically() -> None:
     """
     With no include/exclude filters, `like` compares the metadata documents by
@@ -1183,6 +1185,7 @@ def test_replace_spellings_refuse_invalid_change(replace: Callable[..., Any]) ->
         replace(spec, shape="nonsense")
 
 
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_base_group_spec() -> None:
     """
     `BaseGroupSpec` models a group without members: `to_flat` emits it for
@@ -1283,6 +1286,7 @@ def test_member_name_validation_survives_narrowing() -> None:
         Narrowed(attributes={}, members={"__reserved": array})
 
 
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_group_like_canonical() -> None:
     """
     With no `include`/`exclude` filters, `GroupSpec.like` compares each member
@@ -1316,6 +1320,7 @@ def test_group_like_canonical() -> None:
     ],
     ids=["no_members", "renamed_member", "kind_mismatch", "unalike_member"],
 )
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_group_like_canonical_unalike(other_members: dict[str, object]) -> None:
     """
     The canonical group comparison still distinguishes groups that differ in
@@ -1360,6 +1365,7 @@ def test_attributes_default_narrowed_type_rejected() -> None:
         GroupSpec[RequiredAttrs]()
 
 
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_like_filters_keyword_only() -> None:
     """`like` takes its `include`/`exclude` filters as keyword arguments only."""
     group: AnyGroupSpec = GroupSpec()
@@ -1482,7 +1488,7 @@ def test_bytes_codec_canonicalized_for_single_byte_dtypes() -> None:
         bare: AnyArraySpec = ArraySpec.create_default(shape=(4,), data_type=data_type)
         assert with_endian.codecs == ({"name": "bytes"},)
         assert with_endian == bare
-        assert with_endian.like(bare)
+        assert not with_endian.diff(bare)
     assert (
         ArraySpec.create_default(shape=(4,), data_type="uint16", codecs=endian_codecs).codecs
         == endian_codecs
@@ -1703,6 +1709,7 @@ def test_get_path() -> None:
         root.resolve_path("a/zz")
 
 
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_group_like_base_group_projection() -> None:
     """
     A `BaseGroupSpec` compares as the projection it is: by the group's own
@@ -1749,7 +1756,7 @@ def test_bytes_codec_canonicalized_inside_sharding() -> None:
     with_endian = sharded(True)
     bare = sharded(False)
     assert with_endian == bare
-    assert with_endian.like(bare)
+    assert not with_endian.diff(bare)
     outer = with_endian.codecs[0]
     assert isinstance(outer, dict)
     config = outer["configuration"]

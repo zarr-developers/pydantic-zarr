@@ -27,7 +27,7 @@ from pydantic import (
     model_validator,
 )
 from pydantic.functional_validators import BeforeValidator
-from typing_extensions import TypedDict, TypeIs, TypeVar
+from typing_extensions import TypedDict, TypeIs, TypeVar, deprecated
 from zarr_metadata import (
     ZARR_V2_ARRAY_DEFAULT_DIMENSION_SEPARATOR,
     ZARR_V2_ARRAY_DIMENSION_SEPARATOR,
@@ -55,8 +55,11 @@ from zarr_metadata.v2.data_type.scalar import ZarrV2FloatSpecial
 
 from pydantic_zarr._metadata import format_problems
 from pydantic_zarr.core import (
+    LIKE_DEPRECATION,
     ExtraFieldsBase,
     IncEx,
+    NodeView,
+    PatchOperation,
     StoredNodes,
     StoredNodeType,
     StrictBase,
@@ -68,6 +71,7 @@ from pydantic_zarr.core import (
     ensure_members_mapping,
     guess_chunks,
     model_like,
+    node_patch,
     parse_dtype_v2,
     read_attribute,
     resolve_member_path,
@@ -322,7 +326,7 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         define. The spec says such keys "SHOULD NOT be present within the
         metadata object and SHOULD be ignored by implementations". So any key
         with a JSON value is accepted and kept, with no meaning attached.
-        `model_dump`, `model_dump_json`, `replace` and `like` include these
+        `model_dump`, `model_dump_json`, `replace` and `diff` include these
         keys. zarr-python drops them when it reads or writes an array. Group
         metadata accepts no extra fields, because the spec says "Other keys
         MUST NOT be present".
@@ -589,6 +593,60 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         """
         return self._replaced(changes)
 
+    def diff(self, other: ArraySpec, *, semantic: bool = False) -> list[PatchOperation]:
+        """
+        Return the JSON Patch that turns this array's document into `other`'s.
+
+        The patch follows RFC 6902 (https://www.rfc-editor.org/rfc/rfc6902).
+        It turns the JSON document `self.model_dump()` into
+        `other.model_dump()`. Each path is a JSON Pointer into that document,
+        such as
+        `"/compressor"`. So the patch is empty exactly when the two
+        specs have the same document. To apply the patch with a JSON Patch
+        library, apply it to the document as JSON, with lists for tuples:
+        `json.loads(json.dumps(self.model_dump()))`.
+
+        With `semantic=True`, only the operations that change what the
+        metadata means are returned, so the result is empty exactly when the
+        two specs mean the same. An array document that `zarr-metadata`
+        cannot read cannot be judged, so every change to it is returned. `zarr-metadata` reads both documents to
+        judge this. For example, a `zlib` compressor written without
+        `level` means the same as one written with `level` 1, its default. A
+        change to attributes always changes the meaning, because attributes
+        are not interpreted.
+
+        Parameters
+        ----------
+        other : ArraySpec
+            The Zarr V2 array spec to compare with.
+        semantic : bool, default False
+            Whether to return only the operations that change the meaning.
+
+        Returns
+        -------
+        list[PatchOperation]
+            The operations, in the order they apply.
+
+        Raises
+        ------
+        TypeError
+            If `other` is not a Zarr V2 node spec.
+        ValueError
+            If `other` is a group.
+
+        Examples
+        --------
+        >>> from pydantic_zarr.v2 import ArraySpec
+        >>> a = ArraySpec(shape=(4,), chunks=(2,), dtype="<i4", compressor={"id": "zlib"})
+        >>> b = a.replace(chunks=(4,), compressor={"id": "zlib", "level": 1})
+        >>> a.diff(b)
+        [{'op': 'replace', 'path': '/chunks/0', 'value': 4}, {'op': 'add', 'path': '/compressor/level', 'value': 1}]
+        >>> a.diff(b, semantic=True)
+        [{'op': 'replace', 'path': '/chunks/0', 'value': 4}]
+        """
+        return node_patch(self, _checked_node(other), _view, semantic=semantic)
+
+    @deprecated(LIKE_DEPRECATION, category=DeprecationWarning)
     def like(
         self,
         other: ArraySpec,
@@ -597,41 +655,26 @@ class ArraySpec(NodeSpec, ExtraFieldsBase, Generic[TAttr]):
         exclude: IncEx = None,
     ) -> bool:
         """
-        Compare an `ArraySpec` to another `ArraySpec`, parameterized over the
-        fields to exclude or include in the comparison. Models are first converted to `dict` via the
-        `model_dump` method of `pydantic.BaseModel`, then compared with the `==` operator.
+        Return whether this array spec matches `other`.
 
-        Parameters
-        ----------
-        other : ArraySpec
-            The array spec to compare with.
-        include : IncEx, default = None
-            A specification of fields to include in the comparison. The default value is `None`,
-            which means that all fields will be included. See the documentation of
-            `pydantic.BaseModel.model_dump` for more details.
-        exclude : IncEx, default = None
-            A specification of fields to exclude from the comparison. The default value is `None`,
-            which means that no fields will be excluded. See the documentation of
-            `pydantic.BaseModel.model_dump` for more details.
+        Deprecated: use `diff`. `not a.diff(b)` checks that the two specs have
+        the same document, and `not a.diff(b, semantic=True)` checks that they
+        mean the same. To compare only some fields, filter the operations by
+        their `path`.
 
-        Returns
-        -------
-        bool
-            `True` if the two models have identical fields, `False` otherwise, given
-            the set of fields specified by the `include` and `exclude` keyword arguments.
-
-        Examples
-        --------
-        >>> from pydantic_zarr.v2 import ArraySpec
-        >>> x = ArraySpec(shape=(10, 10), chunks=(10, 10), dtype='uint8', attributes={'foo': 10})
-        >>> print(x.like(x)) # it is like itself.
-        True
-        >>> y = ArraySpec(shape=(10, 10), chunks=(10, 10), dtype='uint8', attributes={'foo': 11})
-        >>> print(x.like(y)) # x and y are the same, other than their attributes
-        False
-        >>> print(x.like(y, exclude={'attributes'}))
-        True
+        The fields of `model_dump` selected by `include` and `exclude` are
+        compared as plain values.
         """
+        return self._like(other, include=include, exclude=exclude)
+
+    def _like(
+        self,
+        other: ArraySpec,
+        *,
+        include: IncEx = None,
+        exclude: IncEx = None,
+    ) -> bool:
+        """Make the comparison that `like` makes."""
         return model_like(self, other, include=include, exclude=exclude)
 
 
@@ -714,6 +757,75 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         own = {key: document for key, document in data.items() if "/" not in key}
         return cls.model_validate(stored_root(_stored_nodes(own), "group"))
 
+    def diff(
+        self, other: AnyBaseGroupSpec | AnyGroupSpec, *, semantic: bool = False
+    ) -> list[PatchOperation]:
+        """
+        Return the JSON Patch that turns this group's document into `other`'s.
+
+        The patch follows RFC 6902 (https://www.rfc-editor.org/rfc/rfc6902).
+        It turns the JSON document `self.model_dump()` into
+        `other.model_dump()`. Each path is a JSON Pointer into that document,
+        such as
+        `"/members/x/compressor"`. So the patch is empty exactly when the two
+        specs have the same document. To apply the patch with a JSON Patch
+        library, apply it to the document as JSON, with lists for tuples:
+        `json.loads(json.dumps(self.model_dump()))`.
+
+        The patch is built node by node. A member that only one side has is
+        added or removed whole. So is a member that is a different kind on
+        each side: an array on one side and a group on the other, or a group
+        with members on one side and a group without on the other. Everything else is compared key by key,
+        as `pydantic_zarr.core.json_patch` does.
+
+        With `semantic=True`, only the operations that change what the
+        metadata means are returned, so the result is empty exactly when the
+        two specs mean the same. An array document that `zarr-metadata`
+        cannot read cannot be judged, so every change to it is returned. `zarr-metadata` reads each array's document
+        to judge this. For example, a `zlib` compressor written without
+        `level` means the same as one written with `level` 1, its default. A
+        change to attributes always changes the meaning, because attributes
+        are not interpreted. So does adding, removing or replacing a member. A
+        group's document holds only its attributes.
+
+        Parameters
+        ----------
+        other : GroupSpec | BaseGroupSpec
+            The Zarr V2 group spec to compare with.
+        semantic : bool, default False
+            Whether to return only the operations that change the meaning.
+
+        Returns
+        -------
+        list[PatchOperation]
+            The operations, in the order they apply.
+
+        Raises
+        ------
+        TypeError
+            If `other` is not a Zarr V2 node spec.
+        ValueError
+            If `other` is an array, or if one of the two groups is a
+            `GroupSpec` and the other a `BaseGroupSpec`. A `GroupSpec` is a
+            hierarchy, and a `BaseGroupSpec` is one group's own metadata. To
+            compare a hierarchy's root with a `BaseGroupSpec`, diff
+            `group.to_flat()[""]` with it.
+
+        Examples
+        --------
+        >>> from pydantic_zarr.v2 import ArraySpec, GroupSpec
+        >>> a = ArraySpec(shape=(4,), chunks=(2,), dtype="<i4", compressor={"id": "zlib"})
+        >>> b = a.replace(compressor={"id": "zlib", "level": 1})
+        >>> old = GroupSpec(members={"x": a, "y": a})
+        >>> new = GroupSpec(members={"x": b}, attributes={"title": "run 1"})
+        >>> old.diff(new)
+        [{'op': 'add', 'path': '/attributes/title', 'value': 'run 1'}, {'op': 'add', 'path': '/members/x/compressor/level', 'value': 1}, {'op': 'remove', 'path': '/members/y'}]
+        >>> old.diff(new, semantic=True)
+        [{'op': 'add', 'path': '/attributes/title', 'value': 'run 1'}, {'op': 'remove', 'path': '/members/y'}]
+        """
+        return node_patch(self, _checked_node(other), _view, semantic=semantic)
+
+    @deprecated(LIKE_DEPRECATION, category=DeprecationWarning)
     def like(
         self,
         other: AnyBaseGroupSpec | AnyGroupSpec,
@@ -722,10 +834,27 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         exclude: IncEx = None,
     ) -> bool:
         """
-        Compare this group's own metadata to another group's. Members are
-        never compared. If `other` is a `GroupSpec`, only its own metadata is
-        used.
+        Return whether this group spec matches `other`.
+
+        Deprecated: use `diff`. `not a.diff(b)` checks that the two specs have
+        the same document, and `not a.diff(b, semantic=True)` checks that they
+        mean the same. To compare only some fields, filter the operations by
+        their `path`.
+
+        If either group is a `BaseGroupSpec` (a group without members), only
+        the groups' own metadata is compared. The fields of `model_dump`
+        selected by `include` and `exclude` are compared as plain values.
         """
+        return self._like(other, include=include, exclude=exclude)
+
+    def _like(
+        self,
+        other: AnyBaseGroupSpec | AnyGroupSpec,
+        *,
+        include: IncEx = None,
+        exclude: IncEx = None,
+    ) -> bool:
+        """Make the comparison that `like` makes."""
         other_parsed: AnyBaseGroupSpec
         if isinstance(other, GroupSpec):
             other_parsed = BaseGroupSpec(attributes=other.attributes)
@@ -852,61 +981,20 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
             return default
 
     @override
-    def like(
+    def _like(
         self,
         other: AnyBaseGroupSpec | AnyGroupSpec,
         *,
         include: IncEx = None,
         exclude: IncEx = None,
     ) -> bool:
-        """
-        Compare a `GroupSpec` to another `GroupSpec` or `BaseGroupSpec`,
-        parameterized over the fields to exclude or include in the comparison. Models are first
-        converted to dict via the `model_dump` method of `pydantic.BaseModel`, then compared with
-        the `==` operator. If `other` is a `BaseGroupSpec` but not a `GroupSpec` (a group without
-        members), only the two groups' own metadata is compared, and this group's members are
-        ignored.
-
-        Parameters
-        ----------
-        other : GroupSpec | BaseGroupSpec
-            The group spec to compare with.
-        include : IncEx, default = None
-            A specification of fields to include in the comparison. The default is `None`,
-            which means that all fields will be included. See the documentation of
-            `pydantic.BaseModel.model_dump` for more details.
-        exclude : IncEx, default = None
-            A specification of fields to exclude from the comparison. The default is `None`,
-            which means that no fields will be excluded. See the documentation of
-            `pydantic.BaseModel.model_dump` for more details.
-
-        Returns
-        -------
-        bool
-            `True` if the two models have identical fields, `False` otherwise.
-
-        Examples
-        --------
-        >>> from pydantic_zarr.v2 import ArraySpec, GroupSpec
-        >>> foo = ArraySpec(shape=(10,), chunks=(10,), dtype='int64')
-        >>> z1 = GroupSpec(members={'foo': foo})
-        >>> print(z1.like(z1)) # it is like itself
-        True
-        >>> z2 = GroupSpec(members={'foo': foo})
-        >>> print(z1.like(z2))
-        True
-        >>> z2 = z2.replace(attributes={'foo': 100}) # now they have different attributes
-        >>> print(z1.like(z2))
-        False
-        >>> print(z1.like(z2, exclude={'attributes'}))
-        True
-        """
+        """Make the comparison that `like` makes."""
         if not isinstance(other, GroupSpec):
             # `other` has no members, so compare only the groups' own metadata.
             # Drop this group's members too, or the comparison would always
             # fail on the `members` field.
             projection = BaseGroupSpec(attributes=self.attributes)
-            return projection.like(other, include=include, exclude=exclude)
+            return projection._like(other, include=include, exclude=exclude)
 
         return model_like(self, other, include=include, exclude=exclude)
 
@@ -1036,6 +1124,37 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
         """
         from_flated = from_flat_group(data)
         return cls.model_validate(from_flated.model_dump())
+
+
+def _read_array_document(document: Mapping[str, object]) -> object:
+    """Read an array document as a `zarr-metadata` model for `diff`, or return `None`."""
+    try:
+        return ZarrV2ArrayMetadataModel.from_json(document)
+    except MetadataValidationError:
+        return None
+
+
+def _checked_node(node: object) -> NodeSpec:
+    """Return `node` if it is a Zarr V2 node spec. Raise `TypeError` otherwise."""
+    if isinstance(node, ArraySpec | BaseGroupSpec):
+        return node
+    kind = f"{type(node).__module__}.{type(node).__qualname__}"
+    msg = f"Expected a Zarr V2 ArraySpec, GroupSpec or BaseGroupSpec, got {kind}"
+    raise TypeError(msg)
+
+
+def _view(node: NodeSpec) -> NodeView[NodeSpec]:
+    """
+    Describe a node for `diff`.
+
+    An array's metadata is read by `zarr-metadata`. A group's document holds
+    only its attributes, which are compared as plain values.
+    """
+    if isinstance(node, ArraySpec):
+        return NodeView("array", _read_array_document, None)
+    group = cast("AnyBaseGroupSpec", _checked_node(node))
+    members = group.members if isinstance(group, GroupSpec) else None
+    return NodeView("group", None, members)
 
 
 def _node_documents(

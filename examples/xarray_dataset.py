@@ -220,7 +220,7 @@ assert temperature.attributes.FillValue == "AAAAAICHw8A="
 store = MemoryStore()
 group = write_hierarchy(dataset, store)
 back = ClimateDataset.from_stored_metadata_json(read_documents(group))
-assert back.like(dataset)
+assert not back.diff(dataset)
 assert back == dataset
 print("store round trip: the documents read back are the same model")
 

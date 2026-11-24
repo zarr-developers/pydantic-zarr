@@ -546,6 +546,7 @@ def test_flatten_unflatten(
 
 
 # todo: parametrize
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_array_like() -> None:
     a = ArraySpec.from_array(np.arange(10))
     assert a.like(a)
@@ -566,10 +567,11 @@ def test_array_like_with_zarr() -> None:
     arr: AnyArraySpec = ArraySpec(shape=(1,), dtype="uint8", chunks=(1,), attributes={})
     store = zarr.storage.MemoryStore()
     arr_stored = write_hierarchy(arr, store, path="arr")
-    assert arr.like(ArraySpec.from_stored_metadata_json(read_documents(arr_stored)))
+    assert not arr.diff(ArraySpec.from_stored_metadata_json(read_documents(arr_stored)))
 
 
 # todo: parametrize
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_group_like() -> None:
     tree: dict[str, BaseGroupSpec | ArraySpec] = {
         "": BaseGroupSpec(attributes={"path": ""}),
@@ -671,6 +673,7 @@ def test_replace_dtype_v2() -> None:
     assert spec.replace(dtype=np.dtype("float64")).dtype == "<f8"
 
 
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_base_group_spec_v2() -> None:
     """`BaseGroupSpec` models a v2 group without members, and `like` ignores members."""
     array: AnyArraySpec = ArraySpec(shape=(4,), dtype="uint8", chunks=(2,), attributes={})
@@ -740,6 +743,7 @@ def test_attributes_default_narrowed_type_rejected() -> None:
         GroupSpec[RequiredAttrs]()
 
 
+@pytest.mark.filterwarnings("ignore:`like` is deprecated:DeprecationWarning")
 def test_like_filters_keyword_only() -> None:
     """`like` takes its `include`/`exclude` filters as keyword arguments only."""
     group: AnyGroupSpec = GroupSpec()

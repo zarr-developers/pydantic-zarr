@@ -213,7 +213,7 @@ store = zarr.storage.MemoryStore()
 write_hierarchy(image, store, "image.zarr")
 stored = zarr.open_group(store, path="image.zarr", mode="r")
 round_tripped = MultiscaleImage.from_stored_metadata_json(read_documents(stored))
-assert image.like(round_tripped)
+assert not image.diff(round_tripped)
 assert image == round_tripped
 print("store round trip compares equal")
 

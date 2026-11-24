@@ -421,45 +421,68 @@ guide](usage_zarr_v3.md#reading-and-writing-with-zarr-python) discusses them.
 --8<-- "examples/zarr_io.py:read"
 ```
 
-## Comparing `GroupSpec` and `ArraySpec` models
+## Comparing specs
 
-`GroupSpec` and `ArraySpec` both have `like` methods that take another `GroupSpec` or `ArraySpec` as an argument and return `True` (the models are like each other) or `False` (the models are not like each other).
-
-The `like` method works by converting both input models to `dict` via `pydantic.BaseModel.model_dump`, and comparing the `dict` representation of the models. This means that instances of two different subclasses of `GroupSpec`, which would not be considered equal according to the `==` operator, will be considered `like` if and only if they serialize to identical `dict` instances.
-
-The `like` method takes keyword arguments `include` and `exclude`, which determine the attributes included or excluded from the model comparison. So it's possible to use `like` to check if two `ArraySpec` instances have the same `shape`, `dtype` and `chunks` by calling `array_a.like(array_b, include={'shape', 'dtype', 'chunks'})`. This is useful if you don't care about the compressor or filters and just want to ensure that you can safely write an in-memory array to a Zarr array, which depends just on the two arrays having matching `shape`, `dtype`, and `chunks` attributes.
+`diff` returns the changes that turn one spec's document into another's, as a
+JSON Patch ([RFC 6902](https://www.rfc-editor.org/rfc/rfc6902)). The document
+is what `model_dump()` returns, and each operation's `path` is a JSON Pointer
+([RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)) into it. So any JSON
+Patch library, such as [`jsonpatch`](https://pypi.org/project/jsonpatch/), can
+apply `a.diff(b)` to `a`'s document to get `b`'s. Apply it to the document as
+JSON, with lists for tuples: `json.loads(json.dumps(a.model_dump()))`.
 
 ```python
 from pydantic_zarr.v2 import ArraySpec, GroupSpec
 
-arr_a = ArraySpec(shape=(1,), dtype='uint8', chunks=(1,), attributes={})
-# make an array with a different shape
-arr_b = ArraySpec(shape=(2,), dtype='uint8', chunks=(1,), attributes={})
+arr = ArraySpec(shape=(4,), dtype='uint8', chunks=(2,), compressor={'id': 'zlib'})
+g_a = GroupSpec(attributes={'foo': 10}, members={'a': arr, 'b': arr})
+g_b = GroupSpec(
+    attributes={'foo': 11},
+    members={'a': arr.replace(compressor={'id': 'zlib', 'level': 1})},
+)
+for operation in g_a.diff(g_b):
+    print(operation)
+    #> {'op': 'replace', 'path': '/attributes/foo', 'value': 11}
+    #> {'op': 'add', 'path': '/members/a/compressor/level', 'value': 1}
+    #> {'op': 'remove', 'path': '/members/b'}
 
-# Returns False, because of mismatched shape
-print(arr_a.like(arr_b))
-#> False
-
-# Returns True, because we exclude shape.
-print(arr_a.like(arr_b, exclude={'shape'}))
-#> True
-
-# The same thing, but for groups
-g_a = GroupSpec(attributes={'foo': 10}, members={'a': arr_a, 'b': arr_b})
-g_b = GroupSpec(attributes={'foo': 11}, members={'a': arr_a, 'b': arr_b})
-
-# g_a is like itself
-print(g_a.like(g_a))
-#> True
-
-# Returns False, because of mismatched attributes
-print(g_a.like(g_b))
-#> False
-
-# Returns True, because we ignore attributes
-print(g_a.like(g_b, exclude={'attributes'}))
-#> True
+# level 1 is the zlib default, so adding it does not change the meaning
+for operation in g_a.diff(g_b, semantic=True):
+    print(operation)
+    #> {'op': 'replace', 'path': '/attributes/foo', 'value': 11}
+    #> {'op': 'remove', 'path': '/members/b'}
 ```
+
+With `semantic=True`, `diff` returns only the operations that change what the
+metadata means. `zarr-metadata` reads each array's document to decide this.
+Attributes are not interpreted, so a change to them always counts, and so
+does adding, removing or replacing a member.
+
+So `not a.diff(b)` checks that two specs have the same document, and
+`not a.diff(b, semantic=True)` checks that they mean the same. To compare only
+some fields, filter the operations by their path. For example, to check that
+an in-memory array fits an existing one, compare only `shape`, `dtype` and
+`chunks`:
+
+```python
+from pydantic_zarr.v2 import ArraySpec
+
+arr_a = ArraySpec(shape=(4,), dtype='uint8', chunks=(2,), compressor=None)
+arr_b = arr_a.replace(compressor={'id': 'zlib'})
+fields = {'shape', 'dtype', 'chunks'}
+print([op for op in arr_a.diff(arr_b) if op['path'].split('/')[1] in fields])
+#> []
+```
+
+`diff` compares two specs of the same kind: two arrays, two `GroupSpec`s or
+two `BaseGroupSpec`s. Comparing an array with a group raises a `ValueError`.
+So does comparing a `GroupSpec`, which is a hierarchy, with a `BaseGroupSpec`,
+which is one group's own metadata and says nothing about its members. To
+compare a hierarchy's root with a `BaseGroupSpec`, diff `group.to_flat()[""]`
+with it. Inside a group, a member that is an array on one side and a group on
+the other is replaced whole.
+
+The `like` method is deprecated, and will be removed in pydantic-zarr 0.14.
 
 To compare a spec with a stored node, read the node's documents into a spec first
 (see [Reading and writing with zarr-python](#reading-and-writing-with-zarr-python)).
