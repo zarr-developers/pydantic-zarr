@@ -151,13 +151,17 @@ Notes for type checkers and for `TypedDict` members:
   an array or a group ([PEP 728](https://peps.python.org/pep-0728/)). mypy
   does not implement that rule yet and reports the argument as outside the
   parameter's bound.
-- **Unknown keys.** A spec refuses keys it does not declare, and pydantic
-  passes that setting on to a plain `TypedDict` of members or attributes,
-  which then refuses unknown keys too. A closed `TypedDict` follows its own
-  declaration, and so does one with `extra_items`, whose other keys take the
-  `extra_items` type; it needs no pydantic configuration of its own.
-- **Member order.** A group holds its members in the order they were given,
-  not the order a `TypedDict` declares them in.
+- **`extra_items` and pydantic.** Decorate a `TypedDict` that has
+  `extra_items` with `@with_config(ConfigDict())` (both from `pydantic`).
+  Without its own configuration pydantic warns that the group's
+  `extra="forbid"` setting does not apply to the `TypedDict`. Type checkers
+  accept the decorator, where they refuse a `__pydantic_config__` assignment
+  in the `TypedDict` body.
+- **Member order.** A group keeps its members in the order they were given.
+  pydantic builds a `TypedDict` in declaration order, so the group puts the
+  members back in the given order afterwards. A members type with its own
+  validators (`Annotated[..., AfterValidator(...)]`) keeps the order those
+  validators produce.
 - **Read-only members.** A spec is frozen, but type checkers let code assign
   to a key of a `TypedDict`, so `group.members["band"] = other` type-checks.
   Declare the items `ReadOnly[...]` (from `typing_extensions`) for checkers to

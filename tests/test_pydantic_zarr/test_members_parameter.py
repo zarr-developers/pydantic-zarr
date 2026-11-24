@@ -6,13 +6,19 @@ parameter is the type of the whole `members` mapping.
 from __future__ import annotations
 
 import pickle
-import warnings
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Generic, NotRequired
+from typing import TYPE_CHECKING, Annotated, Any, Generic, NotRequired
 
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    ValidationError,
+    model_validator,
+    with_config,
+)
 from typing_extensions import TypedDict, TypeVar
 
 from pydantic_zarr import v2, v3
@@ -60,10 +66,16 @@ class OptionalNamesV3(TypedDict, closed=True, total=False):
     g: v3.GroupSpec
 
 
+# its own configuration, so that the group's `extra="forbid"` is not offered
+# to a TypedDict that allows extra items (pydantic warns of that)
+@with_config(ConfigDict())
 class NamedAndExtraV2(TypedDict, extra_items=v2.ArraySpec):
     g: NotRequired[v2.GroupSpec]
 
 
+# its own configuration, so that the group's `extra="forbid"` is not offered
+# to a TypedDict that allows extra items (pydantic warns of that)
+@with_config(ConfigDict())
 class NamedAndExtraV3(TypedDict, extra_items=v3.ArraySpec):
     g: NotRequired[v3.GroupSpec]
 
@@ -284,39 +296,44 @@ def test_member_type_as_members_type_fails_validation(
 
 
 @VERSIONS
-def test_extra_items_typed_dict_needs_no_configuration(module: ModuleType, named: type) -> None:
+def test_member_order_set_by_validators_is_kept(module: ModuleType, named: type) -> None:
     """
-    A `TypedDict` with `extra_items`, as the members type or the attributes
-    type, needs no pydantic configuration of its own: the group's
-    `extra="forbid"` gives way to it without pydantic's warning that the
-    setting is ignored, whether the schema is built when the class is created
-    or later, when a forward reference resolves. Its other keys take the
-    `extra_items` type.
+    Restoring the given member order undoes only pydantic's `TypedDict`
+    ordering. An order that a subclass validator or a validator on the members
+    type sets on purpose is kept.
     """
+    array = _array(module)
+    given = {"c": array, "b": array, "a": array}
 
-    class Members(TypedDict, extra_items=module.ArraySpec):
-        g: NotRequired[module.GroupSpec]
+    class Closed(TypedDict, closed=True):
+        c: module.ArraySpec
+        b: module.ArraySpec
+        a: module.ArraySpec
 
-    class Attributes(TypedDict, extra_items=int):
-        units: str
+    class SortsMembers(module.GroupSpec[module.TBaseAttr, Closed]):
+        @model_validator(mode="before")
+        @classmethod
+        def _sort(cls, data: Any) -> Any:
+            return {**data, "members": dict(sorted(data["members"].items()))}
 
-    def deferred() -> type:
-        class Group(module.GroupSpec):
-            members: Later
+    def sort(members: dict[str, Any]) -> dict[str, Any]:
+        return dict(sorted(members.items()))
 
-        class Later(TypedDict, extra_items=module.ArraySpec):
-            pass
+    sorted_type = Annotated[dict[str, module.ArraySpec], AfterValidator(sort)]
+    sorted_typed_dict = Annotated[Closed, AfterValidator(sort)]
 
-        Group.model_rebuild()
-        return Group
+    assert list(SortsMembers(members=given).members) == ["a", "b", "c"]
+    assert list(module.GroupSpec[Any, sorted_type](members=given).members) == ["a", "b", "c"]
+    assert list(module.GroupSpec[Any, sorted_typed_dict](members=given).members) == ["a", "b", "c"]
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        cls = module.GroupSpec[Attributes, Members]
-        late = deferred()
-        spec = cls(attributes={"units": "m", "scale": 2}, members={"s0": _array(module)})
-        late_spec = late(members={"s0": _array(module)})
 
-    assert spec.attributes == {"units": "m", "scale": 2}
-    assert list(spec.members) == ["s0"]
-    assert list(late_spec.members) == ["s0"]
+@VERSIONS
+def test_member_order_does_not_change_the_given_mapping(module: ModuleType, named: type) -> None:
+    """Putting members back in the given order builds a new mapping; the input is untouched."""
+    array = _array(module)
+    given = {"g": module.GroupSpec(), "a": array}
+    spec = module.GroupSpec[module.TBaseAttr, named](members=given)
+
+    assert list(spec.members) == ["g", "a"]
+    assert list(given) == ["g", "a"]
+    assert spec.members is not given

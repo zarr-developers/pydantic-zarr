@@ -25,10 +25,11 @@ from pydantic import (
     BaseModel,
     BeforeValidator,
     Field,
-    ModelWrapValidatorHandler,
     SerializeAsAny,
     SerializerFunctionWrapHandler,
     ValidationInfo,
+    ValidatorFunctionWrapHandler,
+    field_validator,
     model_serializer,
     model_validator,
 )
@@ -117,7 +118,6 @@ from pydantic_zarr.core import (
     ensure_members_mapping,
     ensure_multiple,
     flatten_extra_fields,
-    given_members,
     guess_chunks,
     model_like,
     read_attribute,
@@ -1647,14 +1647,12 @@ class GroupSpec(BaseGroupSpec[TAttr], Generic[TAttr, TMembers]):
             return {**data, "members": copy_members(data["members"])}
         return data
 
-    @model_validator(mode="wrap")
+    @field_validator("members", mode="wrap")
     @classmethod
-    def _keep_member_order(cls, data: object, handler: ModelWrapValidatorHandler[Self]) -> Self:
-        # pydantic builds a TypedDict of members in its declaration order;
-        # the group keeps the order its members were given in
-        spec = handler(data)
-        restore_member_order(spec.members, given_members(data))
-        return spec
+    def _keep_member_order(cls, value: object, handler: ValidatorFunctionWrapHandler) -> object:
+        # pydantic builds a TypedDict of members in declaration order; the
+        # group keeps the order the members were given in
+        return restore_member_order(cls.model_fields["members"], value, handler(value))
 
     @model_validator(mode="after")
     def validate_member_names(self) -> Self:
