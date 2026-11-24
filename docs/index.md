@@ -114,6 +114,9 @@ A `GroupSpec` is always a complete hierarchy: every group in it has known member
 - `BaseGroupSpec.from_stored_metadata_json(documents)` reads a group's own documents, without its members.
 - `to_flat(GroupSpec.from_stored_metadata_json(documents))` turns however many levels of documents were read into a flat mapping from paths to `ArraySpec` and `BaseGroupSpec` values. A flat mapping makes no claim that it lists every node, so it can stop at any depth.
 - `to_flat` emits a `BaseGroupSpec` for every group, and `from_flat` builds a `GroupSpec` from a flat mapping, reading it as the complete hierarchy.
+- `GroupSpec.own_metadata()` returns a hierarchy's root as a `BaseGroupSpec`.
+
+`GroupSpec` and `BaseGroupSpec` are separate classes, and neither is a subclass of the other: a hierarchy is not one group's metadata, and one group's metadata is not a hierarchy. So `isinstance(group, BaseGroupSpec)` is false for a `GroupSpec`. To check for either kind of group, use `isinstance(node, GroupSpec | BaseGroupSpec)`.
 
 ## Standardization
 

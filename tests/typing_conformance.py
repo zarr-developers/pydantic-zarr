@@ -20,7 +20,7 @@ override in pyproject.toml), so each refusal is asserted, not only allowed.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Generic, NotRequired, Protocol, Unpack
+from typing import TYPE_CHECKING, Any, Generic, NotRequired
 
 import numpy as np
 from pydantic import BaseModel
@@ -325,28 +325,48 @@ def input_paths_accept_input_types_v2(spec: v2.AnyArraySpec, codec: Codec) -> v2
     )
 
 
-# `GroupSpec.replace` overrides `BaseGroupSpec.replace` and adds `members`. That
-# override is sound only while `BaseGroupSpecUpdate` is closed: an open one
-# could carry `members` of any type, which `GroupSpecUpdate` narrows. pyright
-# checks the override only where the class is defined, which no CI checker
-# covers in the library source, so these assign a group to a protocol holding
-# the base signature.
+# A GroupSpec is a hierarchy and a BaseGroupSpec is one group's own metadata,
+# so neither is a kind of the other. Type checkers refuse one where the other
+# is expected, including as the other side of `diff`. `own_metadata` returns a
+# hierarchy's root as a BaseGroupSpec.
 
 
-class ReplacesLikeBaseGroupV3(Protocol):
-    def replace(self, **changes: Unpack[v3.BaseGroupSpecUpdate]) -> object: ...
+def group_is_not_a_base_group_v3(group: v3.AnyGroupSpec) -> v3.AnyBaseGroupSpec:
+    return group  # pyright: ignore[reportReturnType]  # ty: ignore[invalid-return-type]  # pyrefly: ignore[bad-return]
 
 
-class ReplacesLikeBaseGroupV2(Protocol):
-    def replace(self, **changes: Unpack[v2.BaseGroupSpecUpdate]) -> object: ...
+def base_group_is_not_a_group_v3(base: v3.AnyBaseGroupSpec) -> v3.AnyGroupSpec:
+    return base  # pyright: ignore[reportReturnType]  # ty: ignore[invalid-return-type]  # pyrefly: ignore[bad-return]
 
 
-def group_replaces_like_a_base_group_v3(group: v3.AnyGroupSpec) -> ReplacesLikeBaseGroupV3:
-    return group
+def diff_refuses_the_other_group_class_v3(
+    group: v3.AnyGroupSpec, base: v3.AnyBaseGroupSpec
+) -> None:
+    group.diff(base)  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]  # pyrefly: ignore[bad-argument-type]
+    base.diff(group)  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]  # pyrefly: ignore[bad-argument-type]
 
 
-def group_replaces_like_a_base_group_v2(group: v2.AnyGroupSpec) -> ReplacesLikeBaseGroupV2:
-    return group
+def own_metadata_is_a_base_group_v3(group: v3.AnyGroupSpec) -> v3.AnyBaseGroupSpec:
+    return group.own_metadata()
+
+
+def group_is_not_a_base_group_v2(group: v2.AnyGroupSpec) -> v2.AnyBaseGroupSpec:
+    return group  # pyright: ignore[reportReturnType]  # ty: ignore[invalid-return-type]  # pyrefly: ignore[bad-return]
+
+
+def base_group_is_not_a_group_v2(base: v2.AnyBaseGroupSpec) -> v2.AnyGroupSpec:
+    return base  # pyright: ignore[reportReturnType]  # ty: ignore[invalid-return-type]  # pyrefly: ignore[bad-return]
+
+
+def diff_refuses_the_other_group_class_v2(
+    group: v2.AnyGroupSpec, base: v2.AnyBaseGroupSpec
+) -> None:
+    group.diff(base)  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]  # pyrefly: ignore[bad-argument-type]
+    base.diff(group)  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]  # pyrefly: ignore[bad-argument-type]
+
+
+def own_metadata_is_a_base_group_v2(group: v2.AnyGroupSpec) -> v2.AnyBaseGroupSpec:
+    return group.own_metadata()
 
 
 # A GroupSpec's members must be a mapping of GroupSpec and ArraySpec members,

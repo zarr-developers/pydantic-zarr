@@ -1179,7 +1179,7 @@ def _refuse_different_kinds(
     msg = (
         f"Cannot diff a GroupSpec ({hierarchy}) with a BaseGroupSpec ({metadata}). "
         f"{_SAME_KIND} To compare the group's own metadata, diff the BaseGroupSpec "
-        'with the root of the GroupSpec, `group.to_flat()[""]`.'
+        "with the root of the GroupSpec, `group.own_metadata()`."
     )
     raise ValueError(msg)
 

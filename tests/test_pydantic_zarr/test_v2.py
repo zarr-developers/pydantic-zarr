@@ -700,8 +700,27 @@ def test_narrowing_helpers_v2() -> None:
     assert is_group_spec(group)
     assert not is_group_spec(base)
     assert is_base_group_spec(base)
-    assert is_base_group_spec(group)
+    assert not is_base_group_spec(group)
     assert not is_base_group_spec(array)
+
+
+def test_group_spec_and_base_group_spec_are_siblings_v2() -> None:
+    """
+    A `GroupSpec` is a hierarchy and a `BaseGroupSpec` one group's own
+    metadata, so neither is a kind of the other. `own_metadata` returns a
+    hierarchy's root as a `BaseGroupSpec`.
+    """
+    array: AnyArraySpec = ArraySpec(shape=(4,), dtype="uint8", chunks=(2,), attributes={})
+    group: AnyGroupSpec = GroupSpec(attributes={"a": 1}, members={"x": array})
+    assert not isinstance(group, BaseGroupSpec)
+    assert not isinstance(BaseGroupSpec(), GroupSpec)
+    root = group.own_metadata()
+    assert type(root) is BaseGroupSpec
+    assert root == BaseGroupSpec(attributes={"a": 1})
+    assert root == group.to_flat()[""]
+    assert root.to_stored_metadata_json() == {
+        key: document for key, document in group.to_stored_metadata_json().items() if "/" not in key
+    }
 
 
 def test_member_name_validation_survives_narrowing_v2() -> None:

@@ -92,11 +92,6 @@ _MixedMembers = Mapping[str, ArraySpec | GroupSpec | BaseGroupSpec]
 # pyrefly: ignore[bad-specialization]
 _GroupOfMixedGroups = GroupSpec[dict[str, object], _MixedMembers]
 
-# Type checkers refuse this members type, which is outside the bound, but
-# pydantic accepts it, and dumps each member as a group without members.
-_BaseGroupMembers = Mapping[str, BaseGroupSpec]
-# pyrefly: ignore[bad-specialization]
-_GroupOfBaseGroups = GroupSpec[dict[str, object], _BaseGroupMembers]
 
 ARRAY_V2 = ArraySpecV2(shape=(4,), chunks=(2,), dtype="<f8", compressor={"id": "zlib"})
 
@@ -219,13 +214,6 @@ CASES: list[tuple[str, object, object, list[PatchOperation], list[PatchOperation
         [],
     ),
     (
-        "member-declared-without-members",
-        _GroupOfBaseGroups(members={"g": GroupSpec(members={"x": ARRAY})}),
-        _GroupOfBaseGroups(members={"g": GroupSpec(members={}, attributes={"a": 1})}),
-        [{"op": "add", "path": "/members/g/attributes/a", "value": 1}],
-        [{"op": "add", "path": "/members/g/attributes/a", "value": 1}],
-    ),
-    (
         "member-changes-from-group-to-base-group",
         _GroupOfMixedGroups(members={"g": GroupSpec(members={"x": ARRAY})}),
         _GroupOfMixedGroups(members={"g": BaseGroupSpec()}),
@@ -326,7 +314,7 @@ def test_diff_refuses_a_group_spec_and_a_base_group_spec(
     with pytest.raises(ValueError) as error:
         cast("Any", left).diff(right)
     assert f"Cannot diff {message}." in str(error.value)
-    assert 'group.to_flat()[""]' in str(error.value)
+    assert "group.own_metadata()" in str(error.value)
 
 
 @pytest.mark.parametrize(
