@@ -1081,8 +1081,9 @@ def node_patch[N: BaseModel](
       when they are applied together. If they do not, they are all kept. So
       an empty result always means that the metadata means the same.
 
-    Raises `ValueError` if one of `left` and `right` is an array and the
-    other a group.
+    Raises `ValueError` if `left` and `right` are not the same kind of spec:
+    one is an array and the other a group, or one is a group with members (a
+    `GroupSpec`) and the other a group without (a `BaseGroupSpec`).
     """
     operations: list[PatchOperation] = []
     _extend_node_patch(
@@ -1111,13 +1112,9 @@ def _extend_node_patch[N: BaseModel](
 ) -> None:
     """Append the operations that turn node `left`, dumped as `left_dump`, into `right`."""
     left_view, right_view = view(left), view(right)
+    if not path:
+        _check_same_kind(left_view, right_view)
     if left_view.node_type != right_view.node_type:
-        if not path:
-            msg = (
-                f"Cannot diff {_A_NODE[left_view.node_type]} with "
-                f"{_A_NODE[right_view.node_type]}. A diff compares two arrays or two groups."
-            )
-            raise ValueError(msg)
         # a member that changed type is a new value in the members mapping
         operations.append({"op": "replace", "path": path, "value": right_dump})
         return
@@ -1161,6 +1158,30 @@ def _extend_node_patch[N: BaseModel](
         if name not in left_members:
             member_path = f"{path}/{_MEMBERS}/{_pointer_token(name)}"
             operations.append({"op": "add", "path": member_path, "value": right_dumps[name]})
+
+
+_SAME_KIND: Final = "A diff compares two arrays, two GroupSpecs or two BaseGroupSpecs."
+
+
+def _check_same_kind(left: NodeView[object], right: NodeView[object]) -> None:
+    """
+    Raise `ValueError` unless two nodes are the same kind of spec.
+
+    An array and a group are different kinds. So are a `GroupSpec`, which is
+    a hierarchy, and a `BaseGroupSpec`, which is one group's own metadata and
+    says nothing about its members.
+    """
+    if left.node_type != right.node_type:
+        msg = f"Cannot diff {_A_NODE[left.node_type]} with {_A_NODE[right.node_type]}. {_SAME_KIND}"
+        raise ValueError(msg)
+    if (left.members is None) != (right.members is None):
+        hierarchy, metadata = ("left", "right") if left.members is not None else ("right", "left")
+        msg = (
+            f"Cannot diff a GroupSpec ({hierarchy}) with a BaseGroupSpec ({metadata}). "
+            f"{_SAME_KIND} To compare the group's own metadata, diff the BaseGroupSpec "
+            'with the root of the GroupSpec, `group.to_flat()[""]`.'
+        )
+        raise ValueError(msg)
 
 
 def _own_document(dump: Mapping[str, object], *, has_members: bool) -> dict[str, object]:

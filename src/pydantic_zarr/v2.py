@@ -773,9 +773,8 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         `json.loads(json.dumps(self.model_dump()))`.
 
         The patch is built node by node. A member that only one side has is
-        added or removed whole, and so is a `"members"` mapping that only a
-        `GroupSpec` has. A member that is an array on one side and a group on
-        the other is replaced whole. Everything else is compared key by key,
+        added or removed whole. A member that is an array on one side and a
+        group on the other is replaced whole. Everything else is compared key by key,
         as `pydantic_zarr.core.json_patch` does.
 
         With `semantic=True`, only the operations that change what the
@@ -805,7 +804,11 @@ class BaseGroupSpec(NodeSpec, Generic[TAttr]):
         TypeError
             If `other` is not a Zarr V2 node spec.
         ValueError
-            If `other` is an array.
+            If `other` is an array, or if one of the two groups is a
+            `GroupSpec` and the other a `BaseGroupSpec`. A `GroupSpec` is a
+            hierarchy, and a `BaseGroupSpec` is one group's own metadata. To
+            compare a hierarchy's root with a `BaseGroupSpec`, diff
+            `group.to_flat()[""]` with it.
 
         Examples
         --------

@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from pydantic_zarr.core import NodeView, _json_equal, json_patch, node_patch
 from pydantic_zarr.v2 import ArraySpec as ArraySpecV2
+from pydantic_zarr.v2 import BaseGroupSpec as BaseGroupSpecV2
 from pydantic_zarr.v2 import GroupSpec as GroupSpecV2
 from pydantic_zarr.v3 import ArraySpec, BaseGroupSpec, CodecLike, GroupSpec
 
@@ -207,44 +208,11 @@ CASES: list[tuple[str, object, object, list[PatchOperation], list[PatchOperation
         [{"op": "replace", "path": "/members/x", "value": GroupSpec(members={}).model_dump()}],
     ),
     (
-        "group-and-base-group",
-        GroupSpec(members={"x": ARRAY}),
-        BaseGroupSpec(),
-        [{"op": "remove", "path": "/members"}],
-        [{"op": "remove", "path": "/members"}],
-    ),
-    (
-        "base-group-and-group",
-        BaseGroupSpec(attributes={"a": 1}),
-        GroupSpec(members={"x": ARRAY}),
-        [
-            {"op": "remove", "path": "/attributes/a"},
-            {"op": "add", "path": "/members", "value": {"x": ARRAY.model_dump()}},
-        ],
-        [
-            {"op": "remove", "path": "/attributes/a"},
-            {"op": "add", "path": "/members", "value": {"x": ARRAY.model_dump()}},
-        ],
-    ),
-    (
         "member-subclass-field-not-in-the-group-document",
         GroupSpec(members={"x": _Noted(**ARRAY.model_dump())}),
         GroupSpec(members={"x": _Noted(**ARRAY.model_dump(), note="changed")}),
         [],
         [],
-    ),
-    (
-        "base-group-extra-field-named-members",
-        GroupSpec(members={"x": ARRAY}),
-        BaseGroupSpec.model_validate({"members": {"must_understand": False}}),
-        [
-            {"op": "remove", "path": "/members/x"},
-            {"op": "add", "path": "/members/must_understand", "value": False},
-        ],
-        [
-            {"op": "remove", "path": "/members/x"},
-            {"op": "add", "path": "/members/must_understand", "value": False},
-        ],
     ),
     (
         "member-declared-without-members",
@@ -310,7 +278,29 @@ def test_diff(
     ids=["v3-array-group", "v3-group-array", "v3-base-group-array", "v2-array-group"],
 )
 def test_diff_refuses_an_array_and_a_group(left: object, right: object) -> None:
-    with pytest.raises(ValueError, match="A diff compares two arrays or two groups"):
+    with pytest.raises(ValueError, match="Cannot diff an? (array|group) with an? (array|group)"):
+        cast("Any", left).diff(right)
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        (GroupSpec(members={}), BaseGroupSpec()),
+        (BaseGroupSpec(attributes={"a": 1}), GroupSpec(members={"x": ARRAY})),
+        (
+            GroupSpec(members={"x": ARRAY}),
+            BaseGroupSpec.model_validate({"members": {"must_understand": False}}),
+        ),
+        (GroupSpecV2(members={}), BaseGroupSpecV2()),
+    ],
+    ids=["v3-group-base-group", "v3-base-group-group", "v3-base-group-extra-members", "v2"],
+)
+def test_diff_refuses_a_group_spec_and_a_base_group_spec(left: object, right: object) -> None:
+    """
+    A `GroupSpec` is a hierarchy, and a `BaseGroupSpec` is one group's own
+    metadata, which says nothing about its members.
+    """
+    with pytest.raises(ValueError, match="Cannot diff a GroupSpec .* with a BaseGroupSpec"):
         cast("Any", left).diff(right)
 
 

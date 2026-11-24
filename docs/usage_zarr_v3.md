@@ -397,9 +397,13 @@ So `not a.diff(b)` checks that two specs have the same document, and
 `not a.diff(b, semantic=True)` checks that they mean the same. To compare only
 some fields, filter the operations by their path.
 
-`diff` compares two arrays or two groups. Comparing an array with a group
-raises a `ValueError`. Inside a group, a member that is an array on one side
-and a group on the other is replaced whole.
+`diff` compares two specs of the same kind: two arrays, two `GroupSpec`s or
+two `BaseGroupSpec`s. Comparing an array with a group raises a `ValueError`.
+So does comparing a `GroupSpec`, which is a hierarchy, with a `BaseGroupSpec`,
+which is one group's own metadata and says nothing about its members. To
+compare a hierarchy's root with a `BaseGroupSpec`, diff `group.to_flat()[""]`
+with it. Inside a group, a member that is an array on one side and a group on
+the other is replaced whole.
 
 The `like` method is deprecated, and will be removed in pydantic-zarr 0.14.
 
