@@ -38,6 +38,7 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+from typing_extensions import is_typeddict
 
 # pydantic resolves the `extra_fields` annotation at runtime
 from zarr_metadata import JSONValue  # noqa: TC002
@@ -61,6 +62,7 @@ else:
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from pydantic.fields import FieldInfo
     from pydantic.json_schema import JsonSchemaValue
     from pydantic_core import CoreSchema, SchemaSerializer
 
@@ -815,6 +817,30 @@ def copy_members(members: object) -> object:
     fail. A value that is not a mapping is left for validation to reject.
     """
     return dict(members) if isinstance(members, Mapping) else members
+
+
+def restore_member_order(members_field: FieldInfo, given: object, validated: object) -> object:
+    """
+    Return a group's validated members with their keys in the order of `given`,
+    the members the field received.
+
+    pydantic builds a `TypedDict` with its keys in the order the class
+    declares them, followed by any extra items. So when a group's members
+    type is a `TypedDict`, this puts the members back in the order they were
+    given. Other members types keep their order already. A members type that
+    carries validators of its own (`Annotated[..., AfterValidator(...)]`) may
+    reorder on purpose, so it is left alone, and so is a value that is not a
+    `dict`.
+    """
+    if not is_typeddict(members_field.annotation) or members_field.metadata:
+        return validated
+    if not isinstance(validated, dict) or not isinstance(given, Mapping):
+        return validated
+    order = [key for key in given if key in validated]
+    if list(validated)[: len(order)] == order:
+        return validated
+    # the given keys first, then any others in their validated order
+    return {**{key: validated[key] for key in order}, **validated}
 
 
 def ensure_members_mapping(members: object) -> None:
