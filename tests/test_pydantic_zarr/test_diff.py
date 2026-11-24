@@ -36,10 +36,14 @@ def _applied(document: object, patch: list[PatchOperation]) -> object:
         ({"a": [1, 2]}, {"a": [1, 3]}, [{"op": "replace", "path": "/a/1", "value": 3}]),
         ({"a": [1, 2]}, {"a": [1]}, [{"op": "replace", "path": "/a", "value": [1]}]),
         ({"a": {"b": 1}}, {"a": {"b": True}}, [{"op": "replace", "path": "/a/b", "value": True}]),
-        ({"a/b": 1, "c~d": 1}, {"a/b": 2}, [
-            {"op": "replace", "path": "/a~1b", "value": 2},
-            {"op": "remove", "path": "/c~0d"},
-        ]),
+        (
+            {"a/b": 1, "c~d": 1},
+            {"a/b": 2},
+            [
+                {"op": "replace", "path": "/a~1b", "value": 2},
+                {"op": "remove", "path": "/c~0d"},
+            ],
+        ),
         (1, "1", [{"op": "replace", "path": "", "value": "1"}]),
         ({"a": float("nan")}, {"a": float("nan")}, []),
         ({"a": 0.0}, {"a": -0.0}, [{"op": "replace", "path": "/a", "value": -0.0}]),
@@ -47,7 +51,11 @@ def _applied(document: object, patch: list[PatchOperation]) -> object:
         ({"a": 1}, {"a": 1.0}, []),
         ({"a": 1}, {"a": True}, [{"op": "replace", "path": "/a", "value": True}]),
         ({"a": 10**400}, {"a": 10**400}, []),
-        ({"a": 2**53 + 1}, {"a": float(2**53)}, [{"op": "replace", "path": "/a", "value": 2.0**53}]),
+        (
+            {"a": 2**53 + 1},
+            {"a": float(2**53)},
+            [{"op": "replace", "path": "/a", "value": 2.0**53}],
+        ),
         ({"a": None}, {"a": 0}, [{"op": "replace", "path": "/a", "value": 0}]),
     ],
 )
@@ -72,6 +80,7 @@ ARRAY = ArraySpec.create_default(shape=(4,), data_type="float32", fill_value="Na
 ARRAY_HEX_NAN = ARRAY.replace(fill_value="0x7fc00000")
 """`ARRAY` with its fill value written as the bits of the same NaN."""
 
+
 class _Noted(ArraySpec):
     """An array spec with a field that a plain `GroupSpec` does not dump for its members."""
 
@@ -80,7 +89,9 @@ class _Noted(ArraySpec):
 
 # Type checkers refuse this members type, which is outside the bound, but
 # pydantic accepts it, and dumps each member as a group without members.
-_GroupOfBaseGroups = GroupSpec[dict[str, object], Mapping[str, BaseGroupSpec]]  # pyrefly: ignore[bad-specialization]
+_GroupOfBaseGroups = GroupSpec[
+    dict[str, object], Mapping[str, BaseGroupSpec]
+]  # pyrefly: ignore[bad-specialization]
 
 ARRAY_V2 = ArraySpecV2(shape=(4,), chunks=(2,), dtype="<f8", compressor={"id": "zlib"})
 
@@ -89,7 +100,11 @@ CODECS_WITH_GZIP: tuple[CodecLike, ...] = (
     {"name": "gzip", "configuration": {"level": 1}},
 )
 
-FILL_VALUE_SPELLING: PatchOperation = {"op": "replace", "path": "/fill_value", "value": "0x7fc00000"}
+FILL_VALUE_SPELLING: PatchOperation = {
+    "op": "replace",
+    "path": "/fill_value",
+    "value": "0x7fc00000",
+}
 
 CASES: list[tuple[str, object, object, list[PatchOperation], list[PatchOperation]]] = [
     # (id, left, right, the patch, the operations that change the meaning)
@@ -321,7 +336,7 @@ class _Letters(BaseModel):
 def _letters_view(node: _Letters) -> NodeView[_Letters]:
     def read(document: Mapping[str, object]) -> object:
         # the meaning: whether most of a, b and c are "new", and the value of d
-        return (sum(document[key] == "new" for key in "abc") >= 2, document["d"])  # noqa: PLR2004
+        return (sum(document[key] == "new" for key in "abc") >= 2, document["d"])
 
     return NodeView("array", read, None)
 
