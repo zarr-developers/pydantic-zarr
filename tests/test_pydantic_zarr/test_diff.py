@@ -89,9 +89,9 @@ class _Noted(ArraySpec):
 
 # Type checkers refuse this members type, which is outside the bound, but
 # pydantic accepts it, and dumps each member as a group without members.
-_GroupOfBaseGroups = GroupSpec[
-    dict[str, object], Mapping[str, BaseGroupSpec]
-]  # pyrefly: ignore[bad-specialization]
+_BaseGroupMembers = Mapping[str, BaseGroupSpec]
+# pyrefly: ignore[bad-specialization]
+_GroupOfBaseGroups = GroupSpec[dict[str, object], _BaseGroupMembers]
 
 ARRAY_V2 = ArraySpecV2(shape=(4,), chunks=(2,), dtype="<f8", compressor={"id": "zlib"})
 
