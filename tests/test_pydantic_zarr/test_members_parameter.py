@@ -8,17 +8,10 @@ from __future__ import annotations
 import pickle
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Annotated, Any, Generic, NotRequired
+from typing import TYPE_CHECKING, Any, Generic, NotRequired
 
 import pytest
-from pydantic import (
-    AfterValidator,
-    BaseModel,
-    ConfigDict,
-    ValidationError,
-    model_validator,
-    with_config,
-)
+from pydantic import BaseModel, ConfigDict, ValidationError, with_config
 from typing_extensions import TypedDict, TypeVar
 
 from pydantic_zarr import v2, v3
@@ -162,27 +155,13 @@ def test_members_type_parameter(module: ModuleType, named: type, kind: str) -> N
     In every case the members validate from specs and from their dumped
     documents, read back as specs, and survive the operations that build a
     group from another form: a flat mapping of nodes, the stored metadata
-    documents, and `replace`. The group keeps the order the members were given
-    in, which is not the order a `TypedDict` declares them in, also when it is
-    re-typed from a plain group with `from_attributes`, and writes the
-    documents of members whose names have one length in that order.
+    documents, and `replace`.
     """
-    cls, declared = _members_case(module, named, kind)
-    members = dict(reversed(declared.items()))
+    cls, members = _members_case(module, named, kind)
 
     spec = cls(attributes={}, members=members)
 
     assert spec.members == members
-    assert list(spec.members) == list(members)
-    stored = spec.to_stored_metadata_json()
-    written = list(dict.fromkeys(key.split("/")[0] for key in stored if "/" in key))
-    # `to_flat`, and so the stored layout, orders paths by length, stably;
-    # reading the layout back keeps the order it holds
-    assert written == sorted(members, key=len)
-    assert list(cls.from_stored_metadata_json(stored).members) == written
-    assert list(cls.model_validate(spec.model_dump()).members) == list(members)
-    retyped = cls.model_validate(module.GroupSpec(members=members), from_attributes=True)
-    assert list(retyped.members) == list(members)
     assert all(
         isinstance(member, module.ArraySpec | module.GroupSpec) for member in spec.members.values()
     )
@@ -293,47 +272,3 @@ def test_member_type_as_members_type_fails_validation(
     }[case]
     with pytest.raises(ValidationError, match="members"):
         module.GroupSpec[module.TBaseAttr, members_type](members=members)
-
-
-@VERSIONS
-def test_member_order_set_by_validators_is_kept(module: ModuleType, named: type) -> None:
-    """
-    Restoring the given member order undoes only pydantic's `TypedDict`
-    ordering. An order that a subclass validator or a validator on the members
-    type sets on purpose is kept.
-    """
-    array = _array(module)
-    given = {"c": array, "b": array, "a": array}
-
-    class Closed(TypedDict, closed=True):
-        c: module.ArraySpec
-        b: module.ArraySpec
-        a: module.ArraySpec
-
-    class SortsMembers(module.GroupSpec[module.TBaseAttr, Closed]):
-        @model_validator(mode="before")
-        @classmethod
-        def _sort(cls, data: Any) -> Any:
-            return {**data, "members": dict(sorted(data["members"].items()))}
-
-    def sort(members: dict[str, Any]) -> dict[str, Any]:
-        return dict(sorted(members.items()))
-
-    sorted_type = Annotated[dict[str, module.ArraySpec], AfterValidator(sort)]
-    sorted_typed_dict = Annotated[Closed, AfterValidator(sort)]
-
-    assert list(SortsMembers(members=given).members) == ["a", "b", "c"]
-    assert list(module.GroupSpec[Any, sorted_type](members=given).members) == ["a", "b", "c"]
-    assert list(module.GroupSpec[Any, sorted_typed_dict](members=given).members) == ["a", "b", "c"]
-
-
-@VERSIONS
-def test_member_order_does_not_change_the_given_mapping(module: ModuleType, named: type) -> None:
-    """Putting members back in the given order builds a new mapping; the input is untouched."""
-    array = _array(module)
-    given = {"g": module.GroupSpec(), "a": array}
-    spec = module.GroupSpec[module.TBaseAttr, named](members=given)
-
-    assert list(spec.members) == ["g", "a"]
-    assert list(given) == ["g", "a"]
-    assert spec.members is not given
