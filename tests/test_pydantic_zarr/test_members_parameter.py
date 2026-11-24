@@ -15,6 +15,7 @@ from pydantic import (
     AfterValidator,
     BaseModel,
     ConfigDict,
+    Field,
     ValidationError,
     model_validator,
     with_config,
@@ -100,6 +101,35 @@ class OwnDatasetV3(v3.GroupSpec[v3.TBaseAttr, TOwnMembersV3], Generic[TOwnMember
     """A generic subclass with a members type variable of its own."""
 
 
+TMember = TypeVar("TMember")
+
+
+class GenericNamedV2(TypedDict, Generic[TMember], closed=True):
+    """A generic v2 group with exactly a member `a` of the given type and a group `g`."""
+
+    a: TMember
+    g: v2.GroupSpec
+
+
+class GenericNamedV3(TypedDict, Generic[TMember], closed=True):
+    """A generic v3 group with exactly a member `a` of the given type and a group `g`."""
+
+    a: TMember
+    g: v3.GroupSpec
+
+
+TBoundMembersV2 = TypeVar("TBoundMembersV2", bound=NamedV2)
+TBoundMembersV3 = TypeVar("TBoundMembersV3", bound=NamedV3)
+
+
+class BoundDatasetV2(v2.GroupSpec[v2.TBaseAttr, TBoundMembersV2], Generic[TBoundMembersV2]):
+    """A generic subclass whose members type variable is bound to a `TypedDict`."""
+
+
+class BoundDatasetV3(v3.GroupSpec[v3.TBaseAttr, TBoundMembersV3], Generic[TBoundMembersV3]):
+    """A generic subclass whose members type variable is bound to a `TypedDict`."""
+
+
 # parameterized at module level, as a group class usually is, so that pydantic
 # registers the classes where pickle looks them up
 NamedGroupV2 = v2.GroupSpec[v2.TBaseAttr, NamedV2]
@@ -110,6 +140,8 @@ OWN_DATASET: dict[Any, Any] = {v2: OwnDatasetV2, v3: OwnDatasetV3}
 NAMED_GROUP: dict[Any, Any] = {v2: NamedGroupV2, v3: NamedGroupV3}
 NAMED_AND_EXTRA = {v2: NamedAndExtraV2, v3: NamedAndExtraV3}
 DATASET: dict[Any, Any] = {v2: DatasetV2, v3: DatasetV3}
+GENERIC_NAMED: dict[Any, Any] = {v2: GenericNamedV2, v3: GenericNamedV3}
+BOUND_DATASET: dict[Any, Any] = {v2: BoundDatasetV2, v3: BoundDatasetV3}
 
 KINDS = [
     "default",
@@ -119,6 +151,10 @@ KINDS = [
     "named and extra",
     "subclass",
     "subclass with its own type variable",
+    "union of named types",
+    "generic named type",
+    "annotated named type",
+    "unparameterized subclass with a bound type variable",
 ]
 
 
@@ -145,6 +181,24 @@ def _members_case(module: ModuleType, named: type, kind: str) -> tuple[Any, dict
             OWN_DATASET[module][named],
             {"a": array, "g": group},
         ),
+        "union of named types": (
+            module.GroupSpec[module.TBaseAttr, named | OPTIONAL_NAMES[module]],
+            {"a": array, "g": group},
+        ),
+        "generic named type": (
+            module.GroupSpec[module.TBaseAttr, GENERIC_NAMED[module][module.ArraySpec]],
+            {"a": array, "g": group},
+        ),
+        "annotated named type": (
+            module.GroupSpec[
+                module.TBaseAttr, Annotated[named, Field(description="named members"), "doc"]
+            ],
+            {"a": array, "g": group},
+        ),
+        "unparameterized subclass with a bound type variable": (
+            BOUND_DATASET[module],
+            {"a": array, "g": group},
+        ),
     }[kind]
 
 
@@ -156,8 +210,11 @@ def test_members_type_parameter(module: ModuleType, named: type, kind: str) -> N
     a group holds any arrays and groups. A `Mapping` constrains the type of
     every member. A closed `TypedDict` fixes the member names and the type of
     each; its names may be optional, and `extra_items` types the members it
-    does not name. A generic subclass passes the members type through, with
-    the class's type variable or one of its own.
+    does not name. The members type may also be a union of `TypedDict`s, a
+    generic `TypedDict`, or a `TypedDict` with plain `Annotated` metadata. A
+    generic subclass passes the members type through, with the class's type
+    variable or one of its own, or uses the bound of its type variable when
+    it is not parameterized.
 
     In every case the members validate from specs and from their dumped
     documents, read back as specs, and survive the operations that build a
@@ -174,6 +231,7 @@ def test_members_type_parameter(module: ModuleType, named: type, kind: str) -> N
 
     assert spec.members == members
     assert list(spec.members) == list(members)
+    assert list(spec.model_dump()["members"]) == list(members)
     stored = spec.to_stored_metadata_json()
     written = list(dict.fromkeys(key.split("/")[0] for key in stored if "/" in key))
     # `to_flat`, and so the stored layout, orders paths by length, stably;
@@ -300,7 +358,8 @@ def test_member_order_set_by_validators_is_kept(module: ModuleType, named: type)
     """
     Restoring the given member order undoes only pydantic's `TypedDict`
     ordering. An order that a subclass validator or a validator on the members
-    type sets on purpose is kept.
+    type sets on purpose is kept, also when that validator is on one arm of a
+    union.
     """
     array = _array(module)
     given = {"c": array, "b": array, "a": array}
@@ -321,10 +380,12 @@ def test_member_order_set_by_validators_is_kept(module: ModuleType, named: type)
 
     sorted_type = Annotated[dict[str, module.ArraySpec], AfterValidator(sort)]
     sorted_typed_dict = Annotated[Closed, AfterValidator(sort)]
+    sorted_union = Annotated[Closed, AfterValidator(sort)] | dict[str, int]
 
     assert list(SortsMembers(members=given).members) == ["a", "b", "c"]
     assert list(module.GroupSpec[Any, sorted_type](members=given).members) == ["a", "b", "c"]
     assert list(module.GroupSpec[Any, sorted_typed_dict](members=given).members) == ["a", "b", "c"]
+    assert list(module.GroupSpec[Any, sorted_union](members=given).members) == ["a", "b", "c"]
 
 
 @VERSIONS

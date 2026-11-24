@@ -4,7 +4,7 @@ import math
 import operator
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from functools import cache
-from types import MappingProxyType
+from types import MappingProxyType, UnionType
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -13,7 +13,10 @@ from typing import (
     Protocol,
     Self,
     TypeVar,
+    Union,
     cast,
+    get_args,
+    get_origin,
     overload,
     override,
     runtime_checkable,
@@ -38,7 +41,6 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
-from typing_extensions import is_typeddict
 
 # pydantic resolves the `extra_fields` annotation at runtime
 from zarr_metadata import JSONValue  # noqa: TC002
@@ -825,22 +827,56 @@ def restore_member_order(members_field: FieldInfo, given: object, validated: obj
     the members the field received.
 
     pydantic builds a `TypedDict` with its keys in the order the class
-    declares them, followed by any extra items. So when a group's members
-    type is a `TypedDict`, this puts the members back in the order they were
-    given. Other members types keep their order already. A members type that
-    carries validators of its own (`Annotated[..., AfterValidator(...)]`) may
-    reorder on purpose, so it is left alone, and so is a value that is not a
-    `dict`.
+    declares them, followed by any extra items. This puts the members back in
+    the order they were given. That covers a plain `TypedDict`, a union of
+    them, a generic `TypedDict` and a type variable bound to one. Other
+    members types keep their order already, so for them this changes nothing.
+
+    A members type with validators of its own
+    (`Annotated[..., AfterValidator(...)]`) may reorder on purpose, so it is
+    left alone. So is a value that is not a `dict`.
     """
-    if not is_typeddict(members_field.annotation) or members_field.metadata:
-        return validated
     if not isinstance(validated, dict) or not isinstance(given, Mapping):
         return validated
     order = [key for key in given if key in validated]
     if list(validated)[: len(order)] == order:
         return validated
+    if any(map(_is_validator, members_field.metadata)) or _has_validators(members_field.annotation):
+        return validated
     # the given keys first, then any others in their validated order
     return {**{key: validated[key] for key in order}, **validated}
+
+
+def _is_validator(metadata: object) -> bool:
+    # pydantic's validators (`AfterValidator` and the others) change the
+    # schema through this hook; plain metadata such as a docstring, a
+    # `Field(...)` or an `annotated_types` constraint has no such hook
+    return hasattr(metadata, "__get_pydantic_core_schema__")
+
+
+def _has_validators(annotation: object) -> bool:
+    """
+    Return whether `annotation` carries pydantic validators that act on the
+    members mapping as a whole.
+
+    This looks through `Annotated`, unions and type variables. It does not
+    look into type arguments such as the value type of `dict[str, X]`,
+    because validators there act on single members.
+    """
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        inner, *metadata = get_args(annotation)
+        return any(map(_is_validator, metadata)) or _has_validators(inner)
+    if origin is Union or origin is UnionType:
+        return any(map(_has_validators, get_args(annotation)))
+    if isinstance(annotation, TypeVar):
+        candidates = (
+            annotation.__bound__,
+            getattr(annotation, "__default__", None),
+            *annotation.__constraints__,
+        )
+        return any(map(_has_validators, candidates))
+    return False
 
 
 def ensure_members_mapping(members: object) -> None:
